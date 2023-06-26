@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/charmbracelet/log"
+	"github.com/ivanvc/ares/internal/config"
 )
 
 type Server struct {
@@ -13,12 +14,12 @@ type Server struct {
 const addr = ":8080"
 
 // New returns a new Server.
-func New() *Server {
+func New(config *config.Config) *Server {
 	stdlog := log.Default().StandardLog(log.StandardLogOptions{
 		ForceLevel: log.ErrorLevel,
 	})
 	return &Server{&http.Server{
-		Addr:     addr,
+		Addr:     config.Listen,
 		ErrorLog: stdlog,
 	}}
 }
