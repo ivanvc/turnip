@@ -1,7 +1,10 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httputil"
 
@@ -29,6 +32,17 @@ func (h *webhookHandler) handle(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, fmt.Sprint(err), http.StatusInternalServerError)
 		return
 	}
-	log.Info("Dump of request", "dump", string(dump))
+
+	var v map[string]any
+	var b bytes.Buffer
+	if req.Body != nil {
+		io.Copy(&b, req.Body)
+	}
+
+	if err := json.Unmarshal(b.Bytes(), &v); err != nil {
+		log.Error("Error unmarshalling", "error", err)
+	}
+	log.Info("Dump of request", "dump", string(dump), "body", v)
+
 	w.WriteHeader(http.StatusOK)
 }
