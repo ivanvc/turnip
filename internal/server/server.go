@@ -37,4 +37,6 @@ func (s *Server) Start() error {
 	return nil
 }
 
-func (s *Server) registerHandlers() {}
+func (s *Server) registerHandlers() {
+	(&webhookHandler{}).registerHandler()
+}
