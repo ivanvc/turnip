@@ -10,14 +10,17 @@ type Config struct {
 	ListenRPC   string
 	LogLevel    string
 	GitHubToken string
+	Namespace   string
 }
 
 func Load() *Config {
 	c := new(Config)
-	flag.StringVar(&c.ListenRPC, "listen-rpc", envOrDefault("ARES_LISTEN_RPC", ":50001"), "The address the RPC server binds to.")
-	flag.StringVar(&c.ListenHTTP, "listen-http", envOrDefault("ARES_LISTEN_HTTP", ":8080"), "The address the HTTP server binds to.")
-	flag.StringVar(&c.LogLevel, "log-level", envOrDefault("ARES_LOG_LEVEL", "info"), "The log level. (default: INFO).")
-	flag.StringVar(&c.LogLevel, "github-token", envOrDefault("ARES_GITHUB_TOKEN", ""), "GitHub token.")
+	flag.StringVar(&c.ListenRPC, "listen-rpc", envOrDefault("TURNIP_LISTEN_RPC", ":50001"), "The address the RPC server binds to.")
+	flag.StringVar(&c.ListenHTTP, "listen-http", envOrDefault("TURNIP_LISTEN_HTTP", ":8080"), "The address the HTTP server binds to.")
+	flag.StringVar(&c.LogLevel, "log-level", envOrDefault("TURNIP_LOG_LEVEL", "info"), "The log level.")
+	flag.StringVar(&c.GitHubToken, "github-token", envOrDefault("TURNIP_GITHUB_TOKEN", ""), "GitHub token.")
+	flag.StringVar(&c.Namespace, "namespace", envOrDefault("TURNIP_NAMESPACE", ""), "Namespace where turnip has access to create jobs.")
+	flag.Parse()
 
 	return c
 }

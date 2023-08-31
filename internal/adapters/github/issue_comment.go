@@ -1,5 +1,7 @@
 package github
 
+import "encoding/json"
+
 // IssueComment holds the comment received.
 type IssueComment struct {
 	Action     string `json:"action"`
@@ -11,6 +13,7 @@ type IssueComment struct {
 // Issue holds the issue from the issue comment.
 type Issue struct {
 	CommentsURL string `json:"comments_url"`
+	PullRequest `json:"pull_request"`
 }
 
 // Comment holds the comment from the IssueComment.
@@ -23,4 +26,9 @@ type Comment struct {
 // Repository holds the repository from the IssueComment.
 type Repository struct {
 	CloneURL string `json:"clone_url"`
+}
+
+// Converts the IssueComment into a JSON.
+func (ic IssueComment) ToJSON() ([]byte, error) {
+	return json.Marshal(ic)
 }

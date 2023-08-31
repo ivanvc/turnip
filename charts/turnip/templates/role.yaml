@@ -1,0 +1,15 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    {{- include "turnip.labels" . | nindent 4 }}
+  name: {{ include "turnip.fullname" . }}
+rules:
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - create
+{{- end }}

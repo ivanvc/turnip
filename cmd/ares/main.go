@@ -5,18 +5,24 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/ivanvc/ares/internal/config"
-	"github.com/ivanvc/ares/internal/http"
-	"github.com/ivanvc/ares/internal/rpc"
-	"github.com/ivanvc/ares/internal/services/kubernetes"
+	"github.com/ivanvc/turnip/internal/adapters/github"
+	"github.com/ivanvc/turnip/internal/common"
+	"github.com/ivanvc/turnip/internal/config"
+	"github.com/ivanvc/turnip/internal/http"
+	"github.com/ivanvc/turnip/internal/rpc"
+	"github.com/ivanvc/turnip/internal/services/kubernetes"
 )
 
 func main() {
-	c := config.Load()
+	cfg := config.Load()
+	common := &common.Common{
+		Config:           cfg,
+		KubernetesClient: kubernetes.LoadClient(cfg),
+		GitHubClient:     github.NewClient(cfg),
+	}
 
-	cl := kubernetes.LoadClient("default")
-	s := http.New(c, cl)
-	gs := rpc.New(c)
+	s := http.NewServer(common)
+	gs := rpc.NewServer(common)
 
 	done := make(chan os.Signal, 1)
 

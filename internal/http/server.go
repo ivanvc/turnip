@@ -4,24 +4,23 @@ import (
 	"net/http"
 
 	"github.com/charmbracelet/log"
-	"github.com/ivanvc/ares/internal/config"
-	"github.com/ivanvc/ares/internal/services/kubernetes"
+	"github.com/ivanvc/turnip/internal/common"
 )
 
 type Server struct {
 	*http.Server
-	*kubernetes.Client
+	*common.Common
 }
 
 // New returns a new Server.
-func New(config *config.Config, client *kubernetes.Client) *Server {
+func NewServer(common *common.Common) *Server {
 	stdlog := log.Default().StandardLog(log.StandardLogOptions{
 		ForceLevel: log.ErrorLevel,
 	})
 	return &Server{&http.Server{
-		Addr:     config.ListenHTTP,
+		Addr:     common.Config.ListenHTTP,
 		ErrorLog: stdlog,
-	}, client}
+	}, common}
 }
 
 // Starts the HTTP server.

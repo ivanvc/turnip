@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/log"
 
-	"github.com/ivanvc/ares/internal/adapters/github"
+	"github.com/ivanvc/turnip/internal/adapters/github"
 )
 
 // webhookHandler holds the HTTP endpoint to handle GitHub's webhook.
@@ -33,7 +33,9 @@ func (h *webhookHandler) handle(s *Server) func(http.ResponseWriter, *http.Reque
 				log.Error("Error unmarshalling", "error", err)
 			}
 			log.Info("Payload", "payload", ic)
-			if err := s.Client.CreateJob(&ic); err != nil {
+			ic.PullRequest = *s.Common.GitHubClient.GetPullRequestFromIssueComment(&ic)
+			log.Info("After PR", "payload", ic)
+			if err := s.Common.KubernetesClient.CreateJob(&ic); err != nil {
 				log.Error("Error creating job", "error", err)
 			}
 		}

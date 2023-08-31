@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "turnip.fullname" . }}-config
+  labels:
+    {{- include "turnip.labels" . | nindent 4 }}
+data:
+  ARES_NAMESPACE: {{ include "turnip.namespace" . }}
+  ARES_LISTEN_HTTP: ":{{ .Values.service.httpPort }}"
+  ARES_LISTEN_RPC: ":{{ .Values.service.rpcPort }}"
+  {{- if .Values.config.log_level }}
+  ARES_LOG_LEVEL: {{ .Values.config.log_level }}
+  {{- end }}
