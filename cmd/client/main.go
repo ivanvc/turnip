@@ -11,9 +11,10 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
+	"gopkg.in/yaml.v2"
 
 	"github.com/ivanvc/turnip/internal/adapters/github"
-	"github.com/ivanvc/turnip/internal/yaml"
+	yamlconfig "github.com/ivanvc/turnip/internal/yaml"
 )
 
 func main() {
@@ -67,7 +68,7 @@ func main() {
 		log.Fatal("Error reading configuration", "error", err)
 	}
 
-	var cfg *yaml.Config
+	var cfg *yamlconfig.Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		log.Fatal("Error parsing configuration", "error", err)
 	}
