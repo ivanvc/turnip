@@ -76,15 +76,15 @@ func getJob(namespace, token string, ic *github.IssueComment) *batchv1.Job {
 							},
 							Env: []corev1.EnvVar{
 								{
-									Name:  "ARES_PAYLOAD",
+									Name:  "TURNIP_PAYLOAD",
 									Value: string(payload),
 								},
 								{
-									Name:  "ARES_GITHUB_TOKEN",
+									Name:  "TURNIP_GITHUB_TOKEN",
 									Value: token,
 								},
 								{
-									Name:  "ARES_COMMAND",
+									Name:  "TURNIP_COMMAND",
 									Value: "plan",
 								},
 							},

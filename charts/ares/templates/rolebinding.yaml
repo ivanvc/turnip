@@ -3,14 +3,14 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   labels:
-    {{- include "ares.labels" . | nindent 4 }}
-  name: {{ include "ares.fullname" . }}
+    {{- include "turnip.labels" . | nindent 4 }}
+  name: {{ include "turnip.fullname" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "ares.serviceAccountName" . }}
+    name: {{ include "turnip.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "ares.fullname" . }}
+  name: {{ include "turnip.fullname" . }}
 {{- end }}

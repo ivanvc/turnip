@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ares.fullname" . }}
+  name: {{ include "turnip.fullname" . }}
   labels:
-    {{- include "ares.labels" . | nindent 4 }}
+    {{- include "turnip.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   ports:
@@ -16,4 +16,4 @@ spec:
       protocol: TCP
       name: rpc
   selector:
-    {{- include "ares.selectorLabels" . | nindent 4 }}
+    {{- include "turnip.selectorLabels" . | nindent 4 }}

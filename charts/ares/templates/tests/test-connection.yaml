@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: "{{ include "ares.fullname" . }}-test-connection"
+  name: "{{ include "turnip.fullname" . }}-test-connection"
   labels:
-    {{- include "ares.labels" . | nindent 4 }}
+    {{- include "turnip.labels" . | nindent 4 }}
   annotations:
     "helm.sh/hook": test
 spec:
@@ -11,5 +11,5 @@ spec:
     - name: wget
       image: busybox
       command: ['wget']
-      args: ['{{ include "ares.fullname" . }}:{{ .Values.service.port }}']
+      args: ['{{ include "turnip.fullname" . }}:{{ .Values.service.port }}']
   restartPolicy: Never

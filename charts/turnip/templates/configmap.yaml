@@ -5,9 +5,9 @@ metadata:
   labels:
     {{- include "turnip.labels" . | nindent 4 }}
 data:
-  ARES_NAMESPACE: {{ include "turnip.namespace" . }}
-  ARES_LISTEN_HTTP: ":{{ .Values.service.httpPort }}"
-  ARES_LISTEN_RPC: ":{{ .Values.service.rpcPort }}"
+  TURNIP_NAMESPACE: {{ include "turnip.namespace" . }}
+  TURNIP_LISTEN_HTTP: ":{{ .Values.service.httpPort }}"
+  TURNIP_LISTEN_RPC: ":{{ .Values.service.rpcPort }}"
   {{- if .Values.config.log_level }}
-  ARES_LOG_LEVEL: {{ .Values.config.log_level }}
+  TURNIP_LOG_LEVEL: {{ .Values.config.log_level }}
   {{- end }}
