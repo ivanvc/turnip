@@ -12,13 +12,23 @@ import (
 )
 
 type Server struct {
-	pb.UnimplementedGreeterServer
+	pb.UnimplementedTurnipServer
 	listen string
 }
 
 func (s *Server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
 	log.Info("Received", "name", in.GetName())
 	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
+}
+
+func (s *Server) StorePlanOutput(ctx context.Context, in *pb.StorePlanOutputRequest) (*pb.StorePlanOutputReply, error) {
+	log.Info("Received", "in", in)
+	return &pb.StorePlanOutputReply{}, nil
+}
+
+func (s *Server) JobStarted(ctx context.Context, in *pb.JobStartedRequest) (*pb.JobStartedReply, error) {
+	log.Info("Received", "in", in)
+	return &pb.JobStartedReply{}, nil
 }
 
 func NewServer(common *common.Common) *Server {
@@ -32,7 +42,7 @@ func (s *Server) Start() {
 	}
 
 	gs := grpc.NewServer()
-	pb.RegisterGreeterServer(gs, s)
+	pb.RegisterTurnipServer(gs, s)
 	log.Infof("Server listening at %v", lis.Addr())
 	if err := gs.Serve(lis); err != nil {
 		log.Fatal("Failed to serve", "error", err)

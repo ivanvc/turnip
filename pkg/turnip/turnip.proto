@@ -4,9 +4,25 @@ option go_package = "github.com/ivanvc/turnip/pkg/turnip";
 
 package turnip;
 
-service Greeter {
+service Turnip {
+rpc JobStarted(JobStartedRequest) returns (JobStartedReply) {}
+  rpc StorePlanOutput (StorePlanOutputRequest) returns (StorePlanOutputReply) {}
   rpc SayHello (HelloRequest) returns (HelloReply) {}
 }
+
+message StorePlanOutputRequest {
+  string plan_output = 1;
+}
+
+message JobStartedRequest {
+  string repository_full_name = 1;
+  string commit_sha = 2;
+  string check_url = 3;
+}
+
+message JobStartedReply {}
+
+message StorePlanOutputReply {}
 
 message HelloRequest {
   string name = 1;

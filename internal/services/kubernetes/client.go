@@ -13,8 +13,8 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/ivanvc/turnip/internal/adapters/github"
 	"github.com/ivanvc/turnip/internal/config"
+	"github.com/ivanvc/turnip/internal/yaml"
 )
 
 // Client holds a wrapped Kubernetes client.
@@ -23,6 +23,7 @@ type Client struct {
 	config      *rest.Config
 	namespace   string
 	githubToken string
+	serverName  string
 }
 
 // LoadClient creates a new Client singleton.
@@ -35,13 +36,13 @@ func LoadClient(config *config.Config) *Client {
 	if err != nil {
 		log.Fatal("Error initializing Kubernetes client", "error", err)
 	}
-	return &Client{cs, cfg, config.Namespace, config.GitHubToken}
+	return &Client{cs, cfg, config.Namespace, config.GitHubToken, config.ServerName}
 }
 
-func (c *Client) CreateJob(ic *github.IssueComment) error {
+func (c *Client) CreateJob(command, cloneURL, baseRef, repoFullName, checkURL string, project *yaml.Project) error {
 	if _, err := c.BatchV1().Jobs(c.namespace).Create(
 		context.Background(),
-		getJob(c.namespace, c.githubToken, ic),
+		getJob(c.namespace, c.githubToken, c.serverName, command, cloneURL, baseRef, repoFullName, checkURL, project),
 		metav1.CreateOptions{},
 	); err != nil {
 		return err
@@ -50,17 +51,19 @@ func (c *Client) CreateJob(ic *github.IssueComment) error {
 	return nil
 }
 
-func getJob(namespace, token string, ic *github.IssueComment) *batchv1.Job {
-	payload, err := ic.ToJSON()
-	if err != nil {
-		log.Error("Error generating payload JSON", "error", err)
-		return nil
-	}
+func getJob(namespace, token, serverName, command, cloneURL, baseRef, repoFullName, checkURL string, project *yaml.Project) *batchv1.Job {
+	projectYAML := marshalProjectYAML(project)
+	generatedName := getGeneratedName(command, repoFullName, project)
+
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: fmt.Sprintf("turnip-job-%s-", strings.ReplaceAll(strings.ToLower(ic.Comment.NodeID), "_", "-")),
+			GenerateName: generatedName,
 			Namespace:    namespace,
-			Labels:       map[string]string{},
+			Labels: map[string]string{
+				"app":                    "turnip",
+				"turnip.ivan.vc/repo":    repoFullName,
+				"turnip.ivan.vc/command": command,
+			},
 		},
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{
@@ -72,20 +75,36 @@ func getJob(namespace, token string, ic *github.IssueComment) *batchv1.Job {
 							ImagePullPolicy: corev1.PullAlways,
 							Args: []string{"/usr/local/go/bin/go",
 								"run", "cmd/client/main.go",
-								//fmt.Sprintf("git clone %s repo && cd repo && terraform init . && terraform plan", ic.Repository.CloneURL),
 							},
 							Env: []corev1.EnvVar{
 								{
-									Name:  "TURNIP_PAYLOAD",
-									Value: string(payload),
+									Name:  "TURNIP_CLONE_URL",
+									Value: cloneURL,
 								},
 								{
-									Name:  "TURNIP_GITHUB_TOKEN",
-									Value: token,
+									Name:  "TURNIP_BASE_REF",
+									Value: baseRef,
 								},
 								{
 									Name:  "TURNIP_COMMAND",
-									Value: "plan",
+									Value: command,
+								},
+								{
+									Name:  "TURNIP_CHECK_URL",
+									Value: checkURL,
+								},
+								{
+									Name:  "TURNIP_PROJECT_YAML",
+									Value: string(projectYAML),
+								},
+								{
+									Name:  "TURNIP_SERVER_NAME",
+									Value: serverName,
+								},
+								// TODO: Move to a secret
+								{
+									Name:  "TURNIP_GITHUB_TOKEN",
+									Value: token,
 								},
 							},
 						},
@@ -95,4 +114,27 @@ func getJob(namespace, token string, ic *github.IssueComment) *batchv1.Job {
 			},
 		},
 	}
+}
+
+func getGeneratedName(command, repoFullName string, project *yaml.Project) string {
+	r := strings.NewReplacer("/", "-", "_", "-")
+	nameTpl := fmt.Sprintf("turnip-%s-%s-",
+		command,
+		r.Replace(strings.ToLower(repoFullName)),
+	)
+	if project != nil {
+		nameTpl = fmt.Sprintf("%s-%s-", nameTpl, project.Dir)
+	}
+	if len(nameTpl) > 47 {
+		nameTpl = fmt.Sprintf("%s-", strings.TrimSuffix(nameTpl[:47], "-"))
+	}
+	return nameTpl
+}
+
+func marshalProjectYAML(project *yaml.Project) []byte {
+	result, err := project.ToYAML()
+	if err != nil {
+		log.Error("error marshaling project YAML", "error", err)
+	}
+	return result
 }

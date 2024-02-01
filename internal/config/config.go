@@ -11,6 +11,7 @@ type Config struct {
 	LogLevel    string
 	GitHubToken string
 	Namespace   string
+	ServerName  string
 }
 
 func Load() *Config {
@@ -20,6 +21,7 @@ func Load() *Config {
 	flag.StringVar(&c.LogLevel, "log-level", envOrDefault("TURNIP_LOG_LEVEL", "info"), "The log level.")
 	flag.StringVar(&c.GitHubToken, "github-token", envOrDefault("TURNIP_GITHUB_TOKEN", ""), "GitHub token.")
 	flag.StringVar(&c.Namespace, "namespace", envOrDefault("TURNIP_NAMESPACE", ""), "Namespace where turnip has access to create jobs.")
+	flag.StringVar(&c.ServerName, "server-name", envOrDefault("TURNIP_SERVER_NAME", "turnip"), "Server name to use to communicate using RPC.")
 	flag.Parse()
 
 	return c

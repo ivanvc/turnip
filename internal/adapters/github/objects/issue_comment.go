@@ -1,4 +1,4 @@
-package github
+package objects
 
 import "encoding/json"
 
@@ -12,20 +12,29 @@ type IssueComment struct {
 
 // Issue holds the issue from the issue comment.
 type Issue struct {
-	CommentsURL string `json:"comments_url"`
-	PullRequest `json:"pull_request"`
+	CommentsURL string       `json:"comments_url"`
+	PullRequest *PullRequest `json:"pull_request"`
 }
 
 // Comment holds the comment from the IssueComment.
 type Comment struct {
-	Body   string `json:"body"`
-	NodeID string `json:"node_id"`
-	ID     uint64 `json:"id"`
+	Body      string    `json:"body"`
+	NodeID    string    `json:"node_id"`
+	ID        uint64    `json:"id"`
+	Reactions Reactions `json:"reactions"`
+}
+
+// Reactions holds the reactions from the Comment of the IssueComment.
+type Reactions struct {
+	URL string `json:"url"`
 }
 
 // Repository holds the repository from the IssueComment.
 type Repository struct {
-	CloneURL string `json:"clone_url"`
+	CloneURL    string `json:"clone_url"`
+	ContentsURL string `json:"contents_url"`
+	URL         string `json:"url"`
+	FullName    string `json:"full_name"`
 }
 
 // Converts the IssueComment into a JSON.

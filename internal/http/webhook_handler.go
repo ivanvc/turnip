@@ -6,7 +6,8 @@ import (
 
 	"github.com/charmbracelet/log"
 
-	"github.com/ivanvc/turnip/internal/adapters/github"
+	"github.com/ivanvc/turnip/internal/adapters/github/handlers"
+	"github.com/ivanvc/turnip/internal/adapters/github/objects"
 )
 
 // webhookHandler holds the HTTP endpoint to handle GitHub's webhook.
@@ -28,15 +29,31 @@ func (h *webhookHandler) handle(s *Server) func(http.ResponseWriter, *http.Reque
 		switch req.Header.Get("X-Github-Event") {
 		case "issue_comment":
 			decoder := json.NewDecoder(req.Body)
-			var ic github.IssueComment
+			var ic objects.IssueComment
 			if err := decoder.Decode(&ic); err != nil {
 				log.Error("Error unmarshalling", "error", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
 			}
-			log.Info("Payload", "payload", ic)
-			ic.PullRequest = *s.Common.GitHubClient.GetPullRequestFromIssueComment(&ic)
-			log.Info("After PR", "payload", ic)
-			if err := s.Common.KubernetesClient.CreateJob(&ic); err != nil {
-				log.Error("Error creating job", "error", err)
+
+			if err := handlers.HandleIssueComment(s.Common, &ic); err != nil {
+				log.Error("Error handling issue comment", "error", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		case "pull_request":
+			decoder := json.NewDecoder(req.Body)
+			var pr objects.PullRequestWebhook
+			if err := decoder.Decode(&pr); err != nil {
+				log.Error("Error unmarshalling", "error", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+			if err := handlers.HandlePullRequest(s.Common, &pr); err != nil {
+				log.Error("Error handling pull request", "error", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
 			}
 		}
 
