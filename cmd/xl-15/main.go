@@ -54,11 +54,13 @@ func main() {
 		log.Fatal("error cloning", "error", err)
 	}
 
-	if err := commands.InstallTool(tmpDir, repoDir, project); err != nil {
+	binDir, err := commands.Install(tmpDir, project)
+	if err != nil {
 		log.Fatal("error installing tool", "error", err)
 	}
 
-	if err := commands.RunToolPlan(tmpDir, repoDir, project); err != nil {
+	// TOOD: Capture output, send to server
+	if _, err := commands.Plan(binDir, repoDir, project); err != nil {
 		log.Fatal("error running plan", "error", err)
 	}
 }

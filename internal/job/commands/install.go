@@ -1,20 +1,16 @@
 package commands
 
 import (
-	"path/filepath"
-
 	"github.com/ivanvc/turnip/internal/job/plugin"
 	"github.com/ivanvc/turnip/internal/yaml"
 )
 
-func InstallTool(dir, repoDir string, project yaml.Project) error {
+func Install(dir string, project yaml.Project) (string, error) {
 	p := plugin.Load(project)
-	return p.InstallTool(dir, repoDir)
+	return p.Install(dir)
 }
 
-func RunToolPlan(dir, repoDir string, project yaml.Project) ([]byte, error) {
-	b := filepath.Join(dir, "pulumi")
-	d := filepath.Join(repoDir, project.Dir)
+func Plan(binDir, repoDir string, project yaml.Project) ([]byte, error) {
 	p := plugin.Load(project)
-	return p.RunToolPlan(b, d, project.Stack)
+	return p.Plan(binDir, repoDir)
 }
