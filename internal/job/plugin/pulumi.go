@@ -68,3 +68,9 @@ func (p Pulumi) InstallTool(dest, repoDir string) error {
 
 	return nil
 }
+
+func (p Pulumi) RunToolPlan(binDir, repoDir, stack string) ([]byte, error) {
+	cmd := exec.Command(pulumiBin, "--non-interactive", "preview", "--stack", "staging", "--json")
+
+	cmd.Env = append(cmd.Environ(), []string{`PULUMI_CONFIG_PASSPHRASE=test`}...)
+}

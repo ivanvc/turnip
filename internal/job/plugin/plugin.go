@@ -11,7 +11,9 @@ type Plugin interface {
 	//Workspace() string
 	// Version returns the version of the plugin.
 	//Version() string
-	InstallTool(string, string) error
+	InstallTool(string, string, yaml.Project) error
+
+	RunToolPlan(string, string, yaml.Project) ([]byte, error)
 }
 
 func Load(project yaml.Project) Plugin {

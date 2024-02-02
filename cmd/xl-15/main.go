@@ -57,6 +57,10 @@ func main() {
 	if err := commands.InstallTool(tmpDir, repoDir, project); err != nil {
 		log.Fatal("error installing tool", "error", err)
 	}
+
+	if err := commands.RunToolPlan(tmpDir, repoDir, project); err != nil {
+		log.Fatal("error running plan", "error", err)
+	}
 }
 
 /*
