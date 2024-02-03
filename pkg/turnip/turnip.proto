@@ -2,27 +2,35 @@ syntax = "proto3";
 
 option go_package = "github.com/ivanvc/turnip/pkg/turnip";
 
+enum JobStatus {
+  UNKNOWN = 0;
+  FAILED  = 1;
+  SUCCESS = 2;
+}
+
 package turnip;
 
 service Turnip {
-rpc JobStarted(JobStartedRequest) returns (JobStartedReply) {}
-  rpc StorePlanOutput (StorePlanOutputRequest) returns (StorePlanOutputReply) {}
+  rpc JobStarted(JobStartedRequest) returns (JobStartedReply) {}
+  rpc JobFinished (JobFinishedRequest) returns (JobFinishedReply) {}
   rpc SayHello (HelloRequest) returns (HelloReply) {}
 }
 
-message StorePlanOutputRequest {
-  string plan_output = 1;
-}
-
 message JobStartedRequest {
-  string repository_full_name = 1;
-  string commit_sha = 2;
-  string check_url = 3;
+  string check_url = 1;
 }
 
 message JobStartedReply {}
 
-message StorePlanOutputReply {}
+message JobFinishedRequest {
+  string    check_url = 1;
+  JobStatus status    = 2;
+  string    output    = 3;
+}
+
+message JobFinishedReply {}
+
+
 
 message HelloRequest {
   string name = 1;

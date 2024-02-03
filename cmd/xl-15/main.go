@@ -17,31 +17,54 @@ import (
 )
 
 func main() {
-	if os.Getenv("TURNIP_PROJECT") == "" {
-		return
-	}
-
 	conn, err := grpc.Dial(fmt.Sprintf("%s:50001", os.Getenv("TURNIP_SERVER_NAME")), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}
 	defer conn.Close()
+
 	cli := pb.NewTurnipClient(conn)
 	log.Info("Connected to server", "client", cli)
 
+	if os.Getenv("TURNIP_PROJECT") == "" {
+		return
+	}
+
+	go func(checkURL string) {
+		r, err := cli.JobStarted(ctx, &pb.JobStartedRequest{CheckURL: checkURL})
+		if err != nil {
+			log.Fatalf("could not send job started message: %v", err)
+		}
+		log.Debug("Job started response", "resp", r)
+	}(os.Getenv("TURNIP_CHECK_URL"))
+
+	req := new(pb.JobFinshedRequest)
+	if err := run(); err != nil {
+		r, err := cli.JobFailed(ctx, &pb.JobFailedRequest{CheckURL: checkURL})
+		if err != nil {
+			log.Fatalf("could not send job failed message: %v", err)
+		}
+		log.Debug("Job failed response", "resp", r)
+	}
+}
+
+func run() ([]byte, error) {
 	var project yamlconfig.Project
 	if err := yaml.Unmarshal([]byte(os.Getenv("TURNIP_PROJECT")), &project); err != nil {
-		log.Fatal("error unmarshalling project", "error", err)
+		log.Error("error unmarshalling project", "error", err)
+		return []byte{}, err
 	}
 
 	tmpDir, err := os.MkdirTemp("", "turnip-repo-*")
 	if err != nil {
-		log.Fatal("error creating temp dir", "error", err)
+		log.Error("error creating temp dir", "error", err)
+		return []byte{}, err
 	}
 	defer os.RemoveAll(tmpDir)
 
 	if err := os.Mkdir("repo", 0750); err != nil && !os.IsExist(err) {
-		log.Fatal("Error creating repo dir", "error", err)
+		log.Error("Error creating repo dir", "error", err)
+		return []byte{}, err
 	}
 	repoDir := filepath.Join(tmpDir, "repo")
 
@@ -51,18 +74,22 @@ func main() {
 		os.Getenv("TURNIP_BASE_REF"),
 		os.Getenv("TURNIP_GITHUB_TOKEN"),
 	); err != nil {
-		log.Fatal("error cloning", "error", err)
+		log.Error("error cloning", "error", err)
+		return []byte{}, err
 	}
 
 	binDir, err := commands.Install(tmpDir, project)
 	if err != nil {
-		log.Fatal("error installing tool", "error", err)
+		log.Error("error installing tool", "error", err)
+		return []byte{}, err
 	}
 
-	// TOOD: Capture output, send to server
-	if _, err := commands.Plan(binDir, repoDir, project); err != nil {
-		log.Fatal("error running plan", "error", err)
+	output, err := commands.Plan(binDir, repoDir, project)
+	if err != nil {
+		log.Error("error running plan", "error", err)
 	}
+
+	return output, err
 }
 
 /*
