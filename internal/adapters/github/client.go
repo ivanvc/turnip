@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -16,6 +15,21 @@ import (
 	"github.com/ivanvc/turnip/internal/adapters/github/objects"
 	"github.com/ivanvc/turnip/internal/config"
 )
+
+type statusRequest struct {
+	State       string `json:"state,omitempty"`
+	Description string `json:"description,omitempty"`
+	Context     string `json:"context,omitempty"`
+}
+
+type checkRunRequest struct {
+	Name        string `json:"name,omitempty"`
+	HeadSHA     string `json:"head_sha,omitempty"`
+	Status      string `json:"status,omitempty"`
+	StartedAt   string `json:"started_at,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
+	Conclusion  string `json:"conclusion,omitempty"`
+}
 
 type Client struct {
 	token string
@@ -50,18 +64,24 @@ func (c *Client) GetPullRequestFromIssueComment(ic *objects.IssueComment) (*obje
 }
 
 func (c *Client) CreateCheckRun(pr *objects.PullRequest, name string) (string, error) {
-	u, err := c.parseURL(fmt.Sprintf("%s/check-runs", pr.Base.Repository.URL))
+	u, err := c.parseURL(strings.Replace(pr.Base.Repository.StatusesURL, "{sha}", pr.Head.SHA, 1))
 	if err != nil {
 		log.Error("Error parsing URL", "error", err)
 		return "", err
 	}
 
-	req := checkRunRequest{
-		Name:    fmt.Sprintf("turnip-%s", name),
-		HeadSHA: pr.Head.SHA,
+	req := statusRequest{
+		State:       "pending",
+		Description: "Turnip is planning",
+		Context:     name,
 	}
 
-	jsonValue, _ := json.Marshal(req)
+	jsonValue, err := json.Marshal(req)
+	if err != nil {
+		log.Error("Error marshalling", "error", err, "object", req)
+		return "", err
+	}
+	log.Debug("creating check run", "url", u.String(), "json", string(jsonValue))
 	resp, err := http.Post(u.String(), "application/json", bytes.NewBuffer(jsonValue))
 	if err != nil {
 		log.Error("Error creating check", "error", err)
@@ -100,11 +120,25 @@ func (c *Client) StartCheckRun(checkURL string) error {
 	return err
 }
 
-type checkRunRequest struct {
-	Name      string `json:"name"`
-	HeadSHA   string `json:"head_sha"`
-	Status    string `json:"status",omitempty`
-	StartedAt string `json:"started_at",omitempty`
+func (c *Client) FinishCheckRun(checkURL, checkName, conclusion string) error {
+	u, err := c.parseURL(checkURL)
+	if err != nil {
+		log.Error("Error parsing URL", "error", err)
+		return err
+	}
+
+	req := statusRequest{
+		State:       conclusion,
+		Context:     checkName,
+		Description: "Turnip has finished planning",
+	}
+
+	jsonValue, _ := json.Marshal(req)
+	_, err = http.Post(u.String(), "application/json", bytes.NewBuffer(jsonValue))
+	if err != nil {
+		log.Error("Error updating check", "error", err)
+	}
+	return err
 }
 
 func (c *Client) ReactToCommentWithThumbsUp(reactionsURL string) error {
@@ -128,6 +162,27 @@ func (c *Client) ReactToCommentWithThumbsUp(reactionsURL string) error {
 	return err
 }
 
+func (c *Client) CreateComment(commentsURL, body string) error {
+	u, err := c.parseURL(commentsURL)
+	if err != nil {
+		log.Error("Error parsing URL", "error", err)
+		return err
+	}
+
+	req := struct {
+		Body string `json:"body"`
+	}{body}
+
+	jsonValue, _ := json.Marshal(req)
+	_, err = http.Post(u.String(), "application/json", bytes.NewBuffer(jsonValue))
+
+	if err != nil {
+		log.Error("Error creating comment", "error", err)
+	}
+
+	return err
+}
+
 func (c *Client) FetchFile(path string, repo objects.Repository, ref objects.BranchRef) ([]byte, error) {
 	u, err := c.parseURL(strings.Replace(repo.ContentsURL, "{+path}", path, 1))
 	if err != nil {
@@ -139,6 +194,7 @@ func (c *Client) FetchFile(path string, repo objects.Repository, ref objects.Bra
 	q.Set("ref", ref.Ref)
 	u.RawQuery = q.Encode()
 
+	log.Debug("fetching file", "url", u.String(), "path", path, "ref", ref)
 	resp, err := http.Get(u.String())
 	if err != nil {
 		log.Error("error fetching file", "error", err)
@@ -165,13 +221,22 @@ func (c *Client) FetchFile(path string, repo objects.Repository, ref objects.Bra
 }
 
 func (c *Client) GetPullRequestDiff(pr *objects.PullRequest) ([]byte, error) {
-	u, err := c.parseURL(pr.DiffURL)
+	u, err := c.parseURL(pr.URL)
 	if err != nil {
 		log.Error("error parsing URL", "error", err)
 		return nil, err
 	}
+	log.Debug("pr diff url", "url", u.String())
 
-	resp, err := http.Get(u.String())
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		log.Error("error creating request", "error", err)
+		return nil, err
+	}
+
+	req.Header.Add("Accept", "application/vnd.github.v3.diff")
+	resp, err := client.Do(req)
 	if err != nil {
 		log.Error("error fetching diff", "error", err)
 		return nil, err

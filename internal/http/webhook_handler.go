@@ -28,6 +28,7 @@ func (h *webhookHandler) handle(s *Server) func(http.ResponseWriter, *http.Reque
 
 		switch req.Header.Get("X-Github-Event") {
 		case "issue_comment":
+			log.Info("Handling issue comment")
 			decoder := json.NewDecoder(req.Body)
 			var ic objects.IssueComment
 			if err := decoder.Decode(&ic); err != nil {
@@ -44,12 +45,14 @@ func (h *webhookHandler) handle(s *Server) func(http.ResponseWriter, *http.Reque
 		case "pull_request":
 			decoder := json.NewDecoder(req.Body)
 			var pr objects.PullRequestWebhook
+
 			if err := decoder.Decode(&pr); err != nil {
 				log.Error("Error unmarshalling", "error", err)
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 
+			log.Info("Handling pull request", "pull_request", pr)
 			if err := handlers.HandlePullRequest(s.Common, &pr); err != nil {
 				log.Error("Error handling pull request", "error", err)
 				w.WriteHeader(http.StatusInternalServerError)

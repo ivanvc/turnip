@@ -65,24 +65,63 @@ func (p Pulumi) Install(dest string) (string, error) {
 		return "", err
 	}
 
+	files, err := filepath.Glob(filepath.Join(dest, "pulumi", "*"))
+	if err != nil {
+		log.Error("error globbing", "err", err)
+		return "", err
+	}
+	for _, file := range files {
+		if err := copy(file, "/opt/turnip/bin"); err != nil {
+			log.Error("error copying", "err", err)
+			return "", err
+		}
+	}
+
 	return path.Join(dest, "pulumi"), nil
 }
 
-func (p Pulumi) Plan(binDir, repoDir string) ([]byte, error) {
+func copy(src, dest string) error {
+	srcFileStat, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	if !srcFileStat.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", src)
+	}
+
+	source, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+
+	destination := path.Join(dest, filepath.Base(src))
+	destinationFile, err := os.Create(destination)
+	if err != nil {
+		return err
+	}
+	defer destinationFile.Close()
+
+	_, err = io.Copy(destinationFile, source)
+	return err
+}
+
+func (p Pulumi) Plan(binDir, repoDir string) (bool, []byte, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		log.Error("error getting working directory", "err", err)
-		return []byte{}, err
+		return false, []byte{}, err
 	}
 	defer os.Chdir(wd)
 
 	if err := os.Chdir(filepath.Join(repoDir, p.project.Dir)); err != nil {
 		log.Error("error changing directory", "err", err)
-		return []byte{}, err
+		return false, []byte{}, err
 	}
 
 	cmd := exec.Command(
-		"pulumi",
+		path.Join(binDir, "pulumi"),
 		"--non-interactive",
 		"--color=never",
 		"preview",
@@ -95,27 +134,28 @@ func (p Pulumi) Plan(binDir, repoDir string) ([]byte, error) {
 		fmt.Sprintf("PATH=%s:%s", binDir, os.ExpandEnv("$PATH")),
 	)
 
+	log.Info("running pulumi preview", "cmd", cmd, "env", cmd.Env)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		log.Error("error getting stdout pipe", "err", err)
-		return []byte{}, err
+		return false, []byte{}, err
 	}
 
 	if err := cmd.Start(); err != nil {
 		log.Error("error starting command", "err", err)
-		return []byte{}, err
+		return false, []byte{}, err
 	}
 
 	out, err := io.ReadAll(stdout)
 	if err != nil {
 		log.Error("error reading stdout", "err", err)
-		return []byte{}, err
+		return false, []byte{}, err
 	}
 
 	if err := cmd.Wait(); err != nil {
 		log.Error("error waiting for command", "err", err)
-		return []byte{}, err
+		return false, []byte{}, err
 	}
 
-	return out, nil
+	return cmd.ProcessState.ExitCode() == 0, out, nil
 }

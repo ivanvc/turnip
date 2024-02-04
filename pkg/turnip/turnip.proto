@@ -3,16 +3,16 @@ syntax = "proto3";
 option go_package = "github.com/ivanvc/turnip/pkg/turnip";
 
 enum JobStatus {
-  UNKNOWN = 0;
-  FAILED  = 1;
-  SUCCESS = 2;
+  UNKNOWN   = 0;
+  FAILED    = 1;
+  SUCCEEDED = 2;
 }
 
 package turnip;
 
 service Turnip {
-  rpc JobStarted(JobStartedRequest) returns (JobStartedReply) {}
-  rpc JobFinished (JobFinishedRequest) returns (JobFinishedReply) {}
+  rpc ReportJobStarted(JobStartedRequest) returns (JobStartedReply) {}
+  rpc ReportJobFinished (JobFinishedRequest) returns (JobFinishedReply) {}
   rpc SayHello (HelloRequest) returns (HelloReply) {}
 }
 
@@ -23,9 +23,11 @@ message JobStartedRequest {
 message JobStartedReply {}
 
 message JobFinishedRequest {
-  string    check_url = 1;
-  JobStatus status    = 2;
-  string    output    = 3;
+  string    check_url    = 1;
+  string    check_name   = 2;
+  string    comments_url = 3;
+  JobStatus status       = 4;
+  string    output       = 5;
 }
 
 message JobFinishedReply {}

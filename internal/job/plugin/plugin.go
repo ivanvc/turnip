@@ -13,7 +13,7 @@ type Plugin interface {
 	//Version() string
 	Install(string) (string, error)
 
-	Plan(string, string) ([]byte, error)
+	Plan(string, string) (bool, []byte, error)
 }
 
 func Load(project yaml.Project) Plugin {

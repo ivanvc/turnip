@@ -7,13 +7,24 @@ import (
 	"github.com/charmbracelet/log"
 	"google.golang.org/grpc"
 
+	"github.com/ivanvc/turnip/internal/adapters/github"
 	"github.com/ivanvc/turnip/internal/common"
 	pb "github.com/ivanvc/turnip/pkg/turnip"
 )
 
 type Server struct {
 	pb.UnimplementedTurnipServer
-	listen string
+	listen       string
+	gitHubClient *github.Client
+	lol          string
+}
+
+func NewServer(common *common.Common) *Server {
+	return &Server{
+		listen:       common.Config.ListenRPC,
+		lol:          "true",
+		gitHubClient: common.GitHubClient,
+	}
 }
 
 func (s *Server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
@@ -21,18 +32,28 @@ func (s *Server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloRe
 	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
 }
 
-func (s *Server) StorePlanOutput(ctx context.Context, in *pb.StorePlanOutputRequest) (*pb.StorePlanOutputReply, error) {
+func (s *Server) ReportJobStarted(ctx context.Context, in *pb.JobStartedRequest) (*pb.JobStartedReply, error) {
 	log.Info("Received", "in", in)
-	return &pb.StorePlanOutputReply{}, nil
+	err := s.gitHubClient.StartCheckRun(in.GetCheckUrl())
+	return &pb.JobStartedReply{}, err
 }
 
-func (s *Server) JobStarted(ctx context.Context, in *pb.JobStartedRequest) (*pb.JobStartedReply, error) {
+func (s *Server) ReportJobFinished(ctx context.Context, in *pb.JobFinishedRequest) (*pb.JobFinishedReply, error) {
 	log.Info("Received", "in", in)
-	return &pb.JobStartedReply{}, nil
-}
-
-func NewServer(common *common.Common) *Server {
-	return &Server{listen: common.Config.ListenRPC}
+	var conclusion string
+	switch in.GetStatus() {
+	case pb.JobStatus_SUCCEEDED:
+		conclusion = "success"
+	case pb.JobStatus_FAILED:
+		conclusion = "failure"
+	}
+	err := s.gitHubClient.FinishCheckRun(in.GetCheckUrl(), in.GetCheckName(), conclusion)
+	if err != nil {
+		log.Error("Error finishing check run", "error", err)
+	}
+	err = s.gitHubClient.CreateComment(in.GetCommentsUrl(), in.GetOutput())
+	//, in.GetOutput())
+	return &pb.JobFinishedReply{}, err
 }
 
 func (s *Server) Start() {

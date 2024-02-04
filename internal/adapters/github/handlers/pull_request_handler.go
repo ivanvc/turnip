@@ -17,7 +17,7 @@ import (
 )
 
 func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhook) error {
-	if payload.Action != "created" && payload.Action != "synchronize" {
+	if payload.Action != "opened" && payload.Action != "synchronize" {
 		return nil
 	}
 
@@ -30,10 +30,8 @@ func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhoo
 
 	for _, prj := range projects {
 		p := plugin.Load(prj.Type)
-		checkURL, err := common.GitHubClient.CreateCheckRun(
-			pr,
-			fmt.Sprintf("turnip/%s: %s/%s", p.PlanName(), prj.Dir, p.Workspace(prj)),
-		)
+		name := fmt.Sprintf("turnip/%s: %s/%s", p.PlanName(), prj.Dir, p.Workspace(prj))
+		checkURL, err := common.GitHubClient.CreateCheckRun(pr, name)
 		if err != nil {
 			log.Error("error creating check run", "error", err)
 			return err
@@ -41,7 +39,7 @@ func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhoo
 
 		log.Debug("creating job", "checkURL", checkURL)
 		repo := pr.Base.Repository
-		if err := common.KubernetesClient.CreateJob("plan", repo.CloneURL, pr.Base.Ref, repo.FullName, checkURL, prj); err != nil {
+		if err := common.KubernetesClient.CreateJob("plan", repo.CloneURL, pr.Head.Ref, repo.FullName, checkURL, name, pr.CommentsURL, prj); err != nil {
 			log.Error("error creating job", "error", err)
 			return err
 		}
@@ -51,24 +49,27 @@ func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhoo
 }
 
 func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]*yamlconfig.Project, error) {
-	yml, err := common.GitHubClient.FetchFile("turnip.yaml", pr.Base.Repository, pr.Base)
+	yml, err := common.GitHubClient.FetchFile("turnip.yaml", pr.Head.Repository, pr.Head)
 	output := make([]*yamlconfig.Project, 0)
 	if err != nil {
 		log.Error("error fetching turnip.yaml", "error", err)
 		return output, err
 	}
+	log.Debug("fetched turnip.yaml", "content", string(yml))
 
 	var cfg *yamlconfig.Config
 	if err := yaml.Unmarshal(yml, &cfg); err != nil {
 		log.Error("error parsing configuration", "error", err)
 		return output, err
 	}
+	log.Debug("yaml configuration", "cfg", cfg)
 
 	diff, err := common.GitHubClient.GetPullRequestDiff(pr)
 	if err != nil {
 		log.Error("error getting diff", "error", err)
 		return output, err
 	}
+	log.Debug("pr diff", "diff", string(diff))
 
 	b := bytes.NewReader(diff)
 	changes, _, err := gitdiff.Parse(b)
@@ -79,18 +80,20 @@ func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]
 
 	projectRules := make(map[*yamlconfig.Project][]string)
 	for _, prj := range cfg.Projects {
+		log.Debug("checking project", "project", prj)
 		ap := plugin.Load(prj.Type).AutoPlan(&prj)
 		if ap == nil || ap.Disabled {
 			continue
 		}
 		var dirs []string
 		if len(ap.WhenModified) == 0 {
-			dirs = []string{filepath.Join(prj.Dir, "**/*")}
+			dirs = []string{"**/*"}
 		} else {
 			dirs = ap.WhenModified
 		}
 		projectRules[&prj] = dirs
 	}
+	log.Debug("project rules", "rules", projectRules)
 
 	projectsTriggered := make(map[*yamlconfig.Project]bool)
 	for _, change := range changes {
@@ -100,14 +103,18 @@ func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]
 		} else {
 			changedPath = change.NewName
 		}
+		log.Debug("checking changed path", "path", changedPath)
 		for prj, rules := range projectRules {
 			relativePath, err := filepath.Rel(prj.Dir, changedPath)
 			if err != nil {
 				log.Error("error getting relative path", "error", err)
 				continue
 			}
+			log.Debug("checking relative path", "path", relativePath)
 			for _, rule := range rules {
+				log.Debug("checking rule", "rule", rule)
 				if ok, _ := doublestar.Match(rule, relativePath); ok {
+					log.Debug("rule matched!")
 					projectsTriggered[prj] = true
 				}
 			}
@@ -117,6 +124,7 @@ func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]
 	for prj := range projectsTriggered {
 		output = append(output, prj)
 	}
+	log.Debug("projects to plan", "projects", output)
 
 	return output, nil
 }

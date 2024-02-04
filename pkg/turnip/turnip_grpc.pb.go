@@ -22,8 +22,8 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type TurnipClient interface {
-	JobStarted(ctx context.Context, in *JobStartedRequest, opts ...grpc.CallOption) (*JobStartedReply, error)
-	StorePlanOutput(ctx context.Context, in *StorePlanOutputRequest, opts ...grpc.CallOption) (*StorePlanOutputReply, error)
+	ReportJobStarted(ctx context.Context, in *JobStartedRequest, opts ...grpc.CallOption) (*JobStartedReply, error)
+	ReportJobFinished(ctx context.Context, in *JobFinishedRequest, opts ...grpc.CallOption) (*JobFinishedReply, error)
 	SayHello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloReply, error)
 }
 
@@ -35,18 +35,18 @@ func NewTurnipClient(cc grpc.ClientConnInterface) TurnipClient {
 	return &turnipClient{cc}
 }
 
-func (c *turnipClient) JobStarted(ctx context.Context, in *JobStartedRequest, opts ...grpc.CallOption) (*JobStartedReply, error) {
+func (c *turnipClient) ReportJobStarted(ctx context.Context, in *JobStartedRequest, opts ...grpc.CallOption) (*JobStartedReply, error) {
 	out := new(JobStartedReply)
-	err := c.cc.Invoke(ctx, "/turnip.Turnip/JobStarted", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/turnip.Turnip/ReportJobStarted", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *turnipClient) StorePlanOutput(ctx context.Context, in *StorePlanOutputRequest, opts ...grpc.CallOption) (*StorePlanOutputReply, error) {
-	out := new(StorePlanOutputReply)
-	err := c.cc.Invoke(ctx, "/turnip.Turnip/StorePlanOutput", in, out, opts...)
+func (c *turnipClient) ReportJobFinished(ctx context.Context, in *JobFinishedRequest, opts ...grpc.CallOption) (*JobFinishedReply, error) {
+	out := new(JobFinishedReply)
+	err := c.cc.Invoke(ctx, "/turnip.Turnip/ReportJobFinished", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -66,8 +66,8 @@ func (c *turnipClient) SayHello(ctx context.Context, in *HelloRequest, opts ...g
 // All implementations must embed UnimplementedTurnipServer
 // for forward compatibility
 type TurnipServer interface {
-	JobStarted(context.Context, *JobStartedRequest) (*JobStartedReply, error)
-	StorePlanOutput(context.Context, *StorePlanOutputRequest) (*StorePlanOutputReply, error)
+	ReportJobStarted(context.Context, *JobStartedRequest) (*JobStartedReply, error)
+	ReportJobFinished(context.Context, *JobFinishedRequest) (*JobFinishedReply, error)
 	SayHello(context.Context, *HelloRequest) (*HelloReply, error)
 	mustEmbedUnimplementedTurnipServer()
 }
@@ -76,11 +76,11 @@ type TurnipServer interface {
 type UnimplementedTurnipServer struct {
 }
 
-func (UnimplementedTurnipServer) JobStarted(context.Context, *JobStartedRequest) (*JobStartedReply, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method JobStarted not implemented")
+func (UnimplementedTurnipServer) ReportJobStarted(context.Context, *JobStartedRequest) (*JobStartedReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReportJobStarted not implemented")
 }
-func (UnimplementedTurnipServer) StorePlanOutput(context.Context, *StorePlanOutputRequest) (*StorePlanOutputReply, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method StorePlanOutput not implemented")
+func (UnimplementedTurnipServer) ReportJobFinished(context.Context, *JobFinishedRequest) (*JobFinishedReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReportJobFinished not implemented")
 }
 func (UnimplementedTurnipServer) SayHello(context.Context, *HelloRequest) (*HelloReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SayHello not implemented")
@@ -98,38 +98,38 @@ func RegisterTurnipServer(s grpc.ServiceRegistrar, srv TurnipServer) {
 	s.RegisterService(&Turnip_ServiceDesc, srv)
 }
 
-func _Turnip_JobStarted_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Turnip_ReportJobStarted_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(JobStartedRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(TurnipServer).JobStarted(ctx, in)
+		return srv.(TurnipServer).ReportJobStarted(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/turnip.Turnip/JobStarted",
+		FullMethod: "/turnip.Turnip/ReportJobStarted",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TurnipServer).JobStarted(ctx, req.(*JobStartedRequest))
+		return srv.(TurnipServer).ReportJobStarted(ctx, req.(*JobStartedRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Turnip_StorePlanOutput_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(StorePlanOutputRequest)
+func _Turnip_ReportJobFinished_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(JobFinishedRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(TurnipServer).StorePlanOutput(ctx, in)
+		return srv.(TurnipServer).ReportJobFinished(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/turnip.Turnip/StorePlanOutput",
+		FullMethod: "/turnip.Turnip/ReportJobFinished",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TurnipServer).StorePlanOutput(ctx, req.(*StorePlanOutputRequest))
+		return srv.(TurnipServer).ReportJobFinished(ctx, req.(*JobFinishedRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -160,12 +160,12 @@ var Turnip_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*TurnipServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "JobStarted",
-			Handler:    _Turnip_JobStarted_Handler,
+			MethodName: "ReportJobStarted",
+			Handler:    _Turnip_ReportJobStarted_Handler,
 		},
 		{
-			MethodName: "StorePlanOutput",
-			Handler:    _Turnip_StorePlanOutput_Handler,
+			MethodName: "ReportJobFinished",
+			Handler:    _Turnip_ReportJobFinished_Handler,
 		},
 		{
 			MethodName: "SayHello",

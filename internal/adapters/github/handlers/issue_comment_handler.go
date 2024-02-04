@@ -31,6 +31,8 @@ func HandleIssueComment(common *common.Common, issueComment *objects.IssueCommen
 	args := strings.Fields(issueComment.Comment.Body)
 	switch args[1] {
 	case "plan", "preview", "diff", "pre":
+		//name := fmt.Sprintf("turnip/%s: %s/%s", p.PlanName(), prj.Dir, p.Workspace(prj))
+		name := "plan"
 		common.GitHubClient.ReactToCommentWithThumbsUp(issueComment.Comment.Reactions.URL)
 		checkURL, err := common.GitHubClient.CreateCheckRun(issueComment.PullRequest, "plan")
 		if err != nil {
@@ -38,7 +40,7 @@ func HandleIssueComment(common *common.Common, issueComment *objects.IssueCommen
 			return err
 		}
 		repo := issueComment.Repository
-		if err := common.KubernetesClient.CreateJob("plan", repo.CloneURL, "", repo.FullName, checkURL, nil); err != nil {
+		if err := common.KubernetesClient.CreateJob("plan", repo.CloneURL, "", repo.FullName, checkURL, name, issueComment.PullRequest.CommentsURL, nil); err != nil {
 			log.Error("Error creating job", "error", err)
 		}
 	}

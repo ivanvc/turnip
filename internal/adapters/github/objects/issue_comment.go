@@ -35,6 +35,7 @@ type Repository struct {
 	ContentsURL string `json:"contents_url"`
 	URL         string `json:"url"`
 	FullName    string `json:"full_name"`
+	StatusesURL string `json:"statuses_url"`
 }
 
 // Converts the IssueComment into a JSON.

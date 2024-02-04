@@ -5,6 +5,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/charmbracelet/log"
+
 	"github.com/ivanvc/turnip/internal/adapters/github"
 	"github.com/ivanvc/turnip/internal/common"
 	"github.com/ivanvc/turnip/internal/config"
@@ -14,6 +16,8 @@ import (
 )
 
 func main() {
+	log.Default().SetReportCaller(true)
+	log.Default().SetLevel(log.DebugLevel)
 	cfg := config.Load()
 	common := &common.Common{
 		Config:           cfg,

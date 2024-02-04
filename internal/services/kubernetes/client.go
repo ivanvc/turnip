@@ -17,6 +17,10 @@ import (
 	"github.com/ivanvc/turnip/internal/yaml"
 )
 
+var (
+	stringNormalizer = strings.NewReplacer("/", "-", "_", "-")
+)
+
 // Client holds a wrapped Kubernetes client.
 type Client struct {
 	*k8s.Clientset
@@ -39,10 +43,10 @@ func LoadClient(config *config.Config) *Client {
 	return &Client{cs, cfg, config.Namespace, config.GitHubToken, config.ServerName}
 }
 
-func (c *Client) CreateJob(command, cloneURL, baseRef, repoFullName, checkURL string, project *yaml.Project) error {
+func (c *Client) CreateJob(command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project) error {
 	if _, err := c.BatchV1().Jobs(c.namespace).Create(
 		context.Background(),
-		getJob(c.namespace, c.githubToken, c.serverName, command, cloneURL, baseRef, repoFullName, checkURL, project),
+		getJob(c.namespace, c.githubToken, c.serverName, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL, project),
 		metav1.CreateOptions{},
 	); err != nil {
 		return err
@@ -51,7 +55,7 @@ func (c *Client) CreateJob(command, cloneURL, baseRef, repoFullName, checkURL st
 	return nil
 }
 
-func getJob(namespace, token, serverName, command, cloneURL, baseRef, repoFullName, checkURL string, project *yaml.Project) *batchv1.Job {
+func getJob(namespace, token, serverName, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project) *batchv1.Job {
 	projectYAML := marshalProjectYAML(project)
 	generatedName := getGeneratedName(command, repoFullName, project)
 
@@ -61,7 +65,7 @@ func getJob(namespace, token, serverName, command, cloneURL, baseRef, repoFullNa
 			Namespace:    namespace,
 			Labels: map[string]string{
 				"app":                    "turnip",
-				"turnip.ivan.vc/repo":    repoFullName,
+				"turnip.ivan.vc/repo":    stringNormalizer.Replace(repoFullName),
 				"turnip.ivan.vc/command": command,
 			},
 		},
@@ -74,7 +78,7 @@ func getJob(namespace, token, serverName, command, cloneURL, baseRef, repoFullNa
 							Image:           "ivan/turnip:latest",
 							ImagePullPolicy: corev1.PullAlways,
 							Args: []string{"/usr/local/go/bin/go",
-								"run", "cmd/client/main.go",
+								"run", "cmd/xl-15/main.go",
 							},
 							Env: []corev1.EnvVar{
 								{
@@ -82,8 +86,8 @@ func getJob(namespace, token, serverName, command, cloneURL, baseRef, repoFullNa
 									Value: cloneURL,
 								},
 								{
-									Name:  "TURNIP_BASE_REF",
-									Value: baseRef,
+									Name:  "TURNIP_HEAD_REF",
+									Value: headRef,
 								},
 								{
 									Name:  "TURNIP_COMMAND",
@@ -94,6 +98,10 @@ func getJob(namespace, token, serverName, command, cloneURL, baseRef, repoFullNa
 									Value: checkURL,
 								},
 								{
+									Name:  "TURNIP_CHECK_NAME",
+									Value: checkName,
+								},
+								{
 									Name:  "TURNIP_PROJECT_YAML",
 									Value: string(projectYAML),
 								},
@@ -101,9 +109,25 @@ func getJob(namespace, token, serverName, command, cloneURL, baseRef, repoFullNa
 									Name:  "TURNIP_SERVER_NAME",
 									Value: serverName,
 								},
-								// TODO: Move to a secret
+								{
+									Name:  "TURNIP_COMMENTS_URL",
+									Value: commentsURL,
+								},
+								{
+									Name:  "PATH",
+									Value: "$PATH:/opt/turnip/bin",
+								},
+								// TODO: Move these to a secret
+								{
+									Name:  "PULUMI_CONFIG_PASSPHRASE",
+									Value: "test",
+								},
 								{
 									Name:  "TURNIP_GITHUB_TOKEN",
+									Value: token,
+								},
+								{
+									Name:  "GITHUB_TOKEN",
 									Value: token,
 								},
 							},
@@ -117,13 +141,12 @@ func getJob(namespace, token, serverName, command, cloneURL, baseRef, repoFullNa
 }
 
 func getGeneratedName(command, repoFullName string, project *yaml.Project) string {
-	r := strings.NewReplacer("/", "-", "_", "-")
 	nameTpl := fmt.Sprintf("turnip-%s-%s-",
 		command,
-		r.Replace(strings.ToLower(repoFullName)),
+		stringNormalizer.Replace(strings.ToLower(repoFullName)),
 	)
 	if project != nil {
-		nameTpl = fmt.Sprintf("%s-%s-", nameTpl, project.Dir)
+		nameTpl = fmt.Sprintf("%s%s-", nameTpl, project.Dir)
 	}
 	if len(nameTpl) > 47 {
 		nameTpl = fmt.Sprintf("%s-", strings.TrimSuffix(nameTpl[:47], "-"))

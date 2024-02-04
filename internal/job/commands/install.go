@@ -10,7 +10,7 @@ func Install(dir string, project yaml.Project) (string, error) {
 	return p.Install(dir)
 }
 
-func Plan(binDir, repoDir string, project yaml.Project) ([]byte, error) {
+func Plan(binDir, repoDir string, project yaml.Project) (bool, []byte, error) {
 	p := plugin.Load(project)
 	return p.Plan(binDir, repoDir)
 }

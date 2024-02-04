@@ -8,8 +8,8 @@ type PullRequestWebhook struct {
 
 // PullRequest holds the pull request GitHub resource.
 type PullRequest struct {
-	URL     string `json:"url"`
-	DiffURL string `json:"diff_url"`
+	URL         string `json:"url"`
+	CommentsURL string `json:"comments_url"`
 
 	State string    `json:"state",omitempty`
 	Head  BranchRef `json:"head",omitempty`
