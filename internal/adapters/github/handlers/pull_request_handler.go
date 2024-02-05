@@ -8,12 +8,11 @@ import (
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 	"github.com/bmatcuk/doublestar"
 	"github.com/charmbracelet/log"
-	"gopkg.in/yaml.v3"
 
 	"github.com/ivanvc/turnip/internal/adapters/github/objects"
 	"github.com/ivanvc/turnip/internal/common"
 	"github.com/ivanvc/turnip/internal/plugin"
-	yamlconfig "github.com/ivanvc/turnip/internal/yaml"
+	"github.com/ivanvc/turnip/internal/yaml"
 )
 
 func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhook) error {
@@ -29,7 +28,7 @@ func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhoo
 	}
 
 	for _, prj := range projects {
-		p := plugin.Load(prj.Type)
+		p := plugin.Load(prj.LoadedWorkflow.Type)
 		name := fmt.Sprintf("turnip/%s: %s/%s", p.PlanName(), prj.Dir, p.Workspace(prj))
 		checkURL, err := common.GitHubClient.CreateCheckRun(pr, name)
 		if err != nil {
@@ -48,17 +47,17 @@ func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhoo
 	return nil
 }
 
-func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]*yamlconfig.Project, error) {
+func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]*yaml.Project, error) {
 	yml, err := common.GitHubClient.FetchFile("turnip.yaml", pr.Head.Repository, pr.Head)
-	output := make([]*yamlconfig.Project, 0)
+	output := make([]*yaml.Project, 0)
 	if err != nil {
 		log.Error("error fetching turnip.yaml", "error", err)
 		return output, err
 	}
 	log.Debug("fetched turnip.yaml", "content", string(yml))
 
-	var cfg *yamlconfig.Config
-	if err := yaml.Unmarshal(yml, &cfg); err != nil {
+	cfg, err := yaml.Load(yml)
+	if err != nil {
 		log.Error("error parsing configuration", "error", err)
 		return output, err
 	}
@@ -78,10 +77,10 @@ func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]
 		return output, err
 	}
 
-	projectRules := make(map[*yamlconfig.Project][]string)
+	projectRules := make(map[*yaml.Project][]string)
 	for _, prj := range cfg.Projects {
 		log.Debug("checking project", "project", prj)
-		ap := plugin.Load(prj.Type).AutoPlan(&prj)
+		ap := plugin.Load(prj.LoadedWorkflow.Type).AutoPlan(&prj)
 		if ap == nil || ap.Disabled {
 			continue
 		}
@@ -95,7 +94,7 @@ func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]
 	}
 	log.Debug("project rules", "rules", projectRules)
 
-	projectsTriggered := make(map[*yamlconfig.Project]bool)
+	projectsTriggered := make(map[*yaml.Project]bool)
 	for _, change := range changes {
 		var changedPath string
 		if change.IsDelete {

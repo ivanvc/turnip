@@ -77,9 +77,7 @@ func getJob(namespace, token, serverName, command, cloneURL, headRef, repoFullNa
 							Name:            "turnip-client",
 							Image:           "ivan/turnip:latest",
 							ImagePullPolicy: corev1.PullAlways,
-							Args: []string{"/usr/local/go/bin/go",
-								"run", "cmd/xl-15/main.go",
-							},
+							Args:            []string{"/opt/turnip/bin/xl-15"},
 							Env: []corev1.EnvVar{
 								{
 									Name:  "TURNIP_CLONE_URL",
@@ -112,10 +110,6 @@ func getJob(namespace, token, serverName, command, cloneURL, headRef, repoFullNa
 								{
 									Name:  "TURNIP_COMMENTS_URL",
 									Value: commentsURL,
-								},
-								{
-									Name:  "PATH",
-									Value: "$PATH:/opt/turnip/bin",
 								},
 								// TODO: Move these to a secret
 								{

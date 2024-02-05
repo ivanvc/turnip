@@ -11,13 +11,15 @@ type Plugin interface {
 	//Workspace() string
 	// Version returns the version of the plugin.
 	//Version() string
-	Install(string) (string, error)
+	Install(string, string) (string, error)
 
 	Plan(string, string) (bool, []byte, error)
+
+	RunPreCommands(string, []yaml.Command) ([]byte, error)
 }
 
 func Load(project yaml.Project) Plugin {
-	switch project.Type {
+	switch project.LoadedWorkflow.Type {
 	case yaml.ProjectTypePulumi:
 		return &Pulumi{project: project}
 	default:

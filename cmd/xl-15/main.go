@@ -10,11 +10,10 @@ import (
 	"github.com/charmbracelet/log"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"gopkg.in/yaml.v3"
 
 	"github.com/ivanvc/turnip/internal/job/commands"
 	intgit "github.com/ivanvc/turnip/internal/job/git"
-	yamlconfig "github.com/ivanvc/turnip/internal/yaml"
+	"github.com/ivanvc/turnip/internal/yaml"
 	pb "github.com/ivanvc/turnip/pkg/turnip"
 )
 
@@ -33,11 +32,13 @@ func main() {
 	}
 
 	req := &pb.JobFinishedRequest{
-		CheckUrl:  os.Getenv("TURNIP_CHECK_URL"),
-		CheckName: os.Getenv("TURNIP_CHECK_NAME"),
+		CheckUrl:    os.Getenv("TURNIP_CHECK_URL"),
+		CheckName:   os.Getenv("TURNIP_CHECK_NAME"),
+		CommentsUrl: os.Getenv("TURNIP_COMMENTS_URL"),
 	}
 
 	finishedWithError, output, err := run()
+	log.Info("Job Finished", "finishedWithError", finishedWithError, "err", err)
 	if err != nil || finishedWithError {
 		req.Status = pb.JobStatus_FAILED
 	} else {
@@ -60,9 +61,9 @@ func main() {
 }
 
 func run() (bool, []byte, error) {
-	var project yamlconfig.Project
-	if err := yaml.Unmarshal([]byte(os.Getenv("TURNIP_PROJECT_YAML")), &project); err != nil {
-		log.Error("error unmarshalling project", "error", err)
+	project, err := yaml.LoadProject([]byte(os.Getenv("TURNIP_PROJECT_YAML")))
+	if err != nil {
+		log.Error("error loading project", "error", err)
 		return false, []byte{}, err
 	}
 
@@ -71,7 +72,7 @@ func run() (bool, []byte, error) {
 		log.Error("error creating temp dir", "error", err)
 		return false, []byte{}, err
 	}
-	//	defer os.RemoveAll(tmpDir)
+	// TODO: defer os.RemoveAll(tmpDir)
 
 	repoDir := filepath.Join(tmpDir, "repo")
 	if err := os.Mkdir(repoDir, 0750); err != nil && !os.IsExist(err) {
@@ -94,10 +95,16 @@ func run() (bool, []byte, error) {
 		return false, []byte{}, err
 	}
 
-	binDir, err := commands.Install(tmpDir, project)
+	binDir, err := commands.Install(tmpDir, repoDir, project)
 	if err != nil {
 		log.Error("error installing tool", "error", err)
 		return false, []byte{}, err
+	}
+
+	output, err := commands.PlanPreCommands(repoDir, project)
+	if err != nil {
+		log.Error("error running pre commands", "error", err, "output", string(output))
+		return false, output, err
 	}
 
 	returnCode, output, err := commands.Plan(binDir, repoDir, project)
