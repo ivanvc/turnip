@@ -8,6 +8,6 @@ data:
   TURNIP_NAMESPACE: {{ include "turnip.namespace" . }}
   TURNIP_LISTEN_HTTP: ":{{ .Values.service.httpPort }}"
   TURNIP_LISTEN_RPC: ":{{ .Values.service.rpcPort }}"
-  {{- if .Values.config.log_level }}
-  TURNIP_LOG_LEVEL: {{ .Values.config.log_level }}
+  {{- if .Values.config.logLevel }}
+  TURNIP_LOG_LEVEL: {{ .Values.config.logLevel }}
   {{- end }}

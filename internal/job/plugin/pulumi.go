@@ -175,9 +175,8 @@ func (p Pulumi) Plan(binDir, repoDir string) (bool, []byte, error) {
 	cmd := exec.Command(
 		"pulumi",
 		"--non-interactive",
-		"--color=raw",
 		"preview",
-		//"--json",
+		"--json",
 		"--stack",
 		p.project.Stack,
 	)

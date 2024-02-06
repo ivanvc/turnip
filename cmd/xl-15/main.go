@@ -44,7 +44,7 @@ func main() {
 	} else {
 		req.Status = pb.JobStatus_SUCCEEDED
 	}
-	req.Output = string(output)
+	req.Output = output
 	log.Info("Job Finished request", "req", req)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

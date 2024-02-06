@@ -34,6 +34,9 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           args: ["/opt/turnip/bin/turnip"]
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+          - name: TURNIP_JOB_SECRETS_NAME
+            value: {{ include "turnip.fullname" . }}-job-secrets
           ports:
             - name: http
               containerPort: {{ .Values.service.httpPort }}

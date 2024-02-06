@@ -28,6 +28,7 @@ type Client struct {
 	namespace   string
 	githubToken string
 	serverName  string
+	jobSecrets  string
 }
 
 // LoadClient creates a new Client singleton.
@@ -40,13 +41,20 @@ func LoadClient(config *config.Config) *Client {
 	if err != nil {
 		log.Fatal("Error initializing Kubernetes client", "error", err)
 	}
-	return &Client{cs, cfg, config.Namespace, config.GitHubToken, config.ServerName}
+	return &Client{
+		Clientset:   cs,
+		config:      cfg,
+		namespace:   config.Namespace,
+		githubToken: config.GitHubToken,
+		serverName:  config.ServerName,
+		jobSecrets:  config.JobSecretsName,
+	}
 }
 
 func (c *Client) CreateJob(command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project) error {
 	if _, err := c.BatchV1().Jobs(c.namespace).Create(
 		context.Background(),
-		getJob(c.namespace, c.githubToken, c.serverName, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL, project),
+		getJob(c.namespace, c.githubToken, c.serverName, c.jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL, project),
 		metav1.CreateOptions{},
 	); err != nil {
 		return err
@@ -55,7 +63,7 @@ func (c *Client) CreateJob(command, cloneURL, headRef, repoFullName, checkURL, c
 	return nil
 }
 
-func getJob(namespace, token, serverName, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project) *batchv1.Job {
+func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project) *batchv1.Job {
 	projectYAML := marshalProjectYAML(project)
 	generatedName := getGeneratedName(command, repoFullName, project)
 
@@ -111,18 +119,14 @@ func getJob(namespace, token, serverName, command, cloneURL, headRef, repoFullNa
 									Name:  "TURNIP_COMMENTS_URL",
 									Value: commentsURL,
 								},
-								// TODO: Move these to a secret
+							},
+							EnvFrom: []corev1.EnvFromSource{
 								{
-									Name:  "PULUMI_CONFIG_PASSPHRASE",
-									Value: "test",
-								},
-								{
-									Name:  "TURNIP_GITHUB_TOKEN",
-									Value: token,
-								},
-								{
-									Name:  "GITHUB_TOKEN",
-									Value: token,
+									SecretRef: &corev1.SecretEnvSource{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: jobSecrets,
+										},
+									},
 								},
 							},
 						},

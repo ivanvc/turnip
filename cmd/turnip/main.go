@@ -16,9 +16,9 @@ import (
 )
 
 func main() {
-	log.Default().SetReportCaller(true)
-	log.Default().SetLevel(log.DebugLevel)
 	cfg := config.Load()
+	log.Default().SetReportCaller(true)
+	log.Default().SetLevel(log.ParseLevel(cfg.LogLevel))
 	common := &common.Common{
 		Config:           cfg,
 		KubernetesClient: kubernetes.LoadClient(cfg),

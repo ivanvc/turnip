@@ -27,7 +27,7 @@ message JobFinishedRequest {
   string    check_name   = 2;
   string    comments_url = 3;
   JobStatus status       = 4;
-  string    output       = 5;
+  bytes     output       = 5;
 }
 
 message JobFinishedReply {}

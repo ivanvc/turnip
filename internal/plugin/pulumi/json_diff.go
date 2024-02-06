@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/log"
 )
 
 // TODO: Use https://github.com/pulumi/pulumi/blob/e13780c0bd60fa5f8fda011e8221b1b956b97738/pkg/display/json.go
@@ -45,15 +47,17 @@ type Formatter struct {
 }
 
 func NewFormatter(input []byte) *Formatter {
-	return &Formatter{input: input}
+	return &Formatter{input}
 }
 
 func (f *Formatter) Format() (string, error) {
 	var d diff
 	err := json.Unmarshal(f.input, &d)
 	if err != nil {
+		log.Error("error parsing diff", "err", err, "input", string(f.input))
 		return "", err
 	}
+	log.Debug("parsed diff", "diff", d, "input", string(f.input))
 
 	var sb strings.Builder
 	for _, s := range d.steps {

@@ -34,7 +34,7 @@ func (p Pulumi) AutoPlan(project *yaml.Project) *yaml.AutoPlan {
 }
 
 // FormatDiff conforms to the Plugin interface.
-func (p Pulumi) FormatDiff(diff string) (string, error) {
-	f := pulumi.NewFormatter([]byte(diff))
+func (p Pulumi) FormatDiff(diff []byte) (string, error) {
+	f := pulumi.NewFormatter(diff)
 	return f.Format()
 }

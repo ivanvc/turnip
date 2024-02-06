@@ -42,7 +42,7 @@ func (s *Server) ReportJobStarted(ctx context.Context, in *pb.JobStartedRequest)
 }
 
 func (s *Server) ReportJobFinished(ctx context.Context, in *pb.JobFinishedRequest) (*pb.JobFinishedReply, error) {
-	log.Info("Received", "in", in)
+	log.Info("Received JobFinished")
 	var conclusion string
 	switch in.GetStatus() {
 	case pb.JobStatus_SUCCEEDED:
@@ -55,17 +55,17 @@ func (s *Server) ReportJobFinished(ctx context.Context, in *pb.JobFinishedReques
 		log.Error("Error finishing check run", "error", err)
 	}
 	// TODO: <<project>> should be replaced with the project name
-	comment := fmt.Sprintf("Ran plan for <<project>> <<workspace>>\n\nStatus: %s", in.GetStatus())
+	comment := fmt.Sprintf("Ran plan for [[project]] [[workspace]]\n\nStatus: %s", in.GetStatus())
 	// if project type == pulumi
-	comment += fmt.Sprintf("\n\n<details><summary>Show Output</summary>\n```diff")
+	comment += fmt.Sprintf("\n\n<details><summary>Show Output</summary>\n\n```diff\n")
 	p := plugin.Load(yaml.ProjectTypePulumi)
 	if diff, err := p.FormatDiff(in.GetOutput()); err != nil {
 		comment += fmt.Sprintf("Error formatting diff: %v", err)
 	} else {
 		comment += diff
 	}
-	comment += fmt.Sprintf("```\n</details>")
-	err = s.gitHubClient.CreateComment(in.GetCommentsUrl(), in.GetOutput())
+	comment += fmt.Sprintf("\n```\n</details>")
+	err = s.gitHubClient.CreateComment(in.GetCommentsUrl(), comment)
 	return &pb.JobFinishedReply{}, err
 }
 

@@ -90,7 +90,10 @@ config:
   # Leave ampty to use the release namespace
   namespace: ""
   # Log level
-  log_level: ""
+  logLevel: ""
 
 secrets:
-  github_token: ""
+  githubToken: ""
+
+# Arbitrary secrets applied to the turnip job.
+jobSecrets: {}
