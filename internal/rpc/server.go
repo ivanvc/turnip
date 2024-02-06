@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"fmt"
 	"net"
 
 	"github.com/charmbracelet/log"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/ivanvc/turnip/internal/adapters/github"
 	"github.com/ivanvc/turnip/internal/common"
+	"github.com/ivanvc/turnip/internal/plugin"
+	"github.com/ivanvc/turnip/internal/yaml"
 	pb "github.com/ivanvc/turnip/pkg/turnip"
 )
 
@@ -51,8 +54,18 @@ func (s *Server) ReportJobFinished(ctx context.Context, in *pb.JobFinishedReques
 	if err != nil {
 		log.Error("Error finishing check run", "error", err)
 	}
+	// TODO: <<project>> should be replaced with the project name
+	comment := fmt.Sprintf("Ran plan for <<project>> <<workspace>>\n\nStatus: %s", in.GetStatus())
+	// if project type == pulumi
+	comment += fmt.Sprintf("\n\n<details><summary>Show Output</summary>\n```diff")
+	p := plugin.Load(yaml.ProjectTypePulumi)
+	if diff, err := p.FormatDiff(in.GetOutput()); err != nil {
+		comment += fmt.Sprintf("Error formatting diff: %v", err)
+	} else {
+		comment += diff
+	}
+	comment += fmt.Sprintf("```\n</details>")
 	err = s.gitHubClient.CreateComment(in.GetCommentsUrl(), in.GetOutput())
-	//, in.GetOutput())
 	return &pb.JobFinishedReply{}, err
 }
 

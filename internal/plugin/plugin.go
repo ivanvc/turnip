@@ -14,6 +14,8 @@ type Plugin interface {
 	Workspace(project *yaml.Project) string
 	// AutoPlan returns the auto plan configuration.
 	AutoPlan(project *yaml.Project) *yaml.AutoPlan
+	// FormatDiff returns the formatted diff.
+	FormatDiff(diff string) (string, error)
 }
 
 func Load(projectType yaml.ProjectType) Plugin {

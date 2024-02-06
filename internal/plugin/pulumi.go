@@ -1,6 +1,9 @@
 package plugin
 
-import "github.com/ivanvc/turnip/internal/yaml"
+import (
+	"github.com/ivanvc/turnip/internal/plugin/pulumi"
+	"github.com/ivanvc/turnip/internal/yaml"
+)
 
 // Pulumi is a plugin.
 type Pulumi struct{}
@@ -28,4 +31,10 @@ func (p Pulumi) Workspace(project *yaml.Project) string {
 // AutoPlan conforms to the Plugin interface.
 func (p Pulumi) AutoPlan(project *yaml.Project) *yaml.AutoPlan {
 	return project.AutoPreview
+}
+
+// FormatDiff conforms to the Plugin interface.
+func (p Pulumi) FormatDiff(diff string) (string, error) {
+	f := pulumi.NewFormatter([]byte(diff))
+	return f.Format()
 }
