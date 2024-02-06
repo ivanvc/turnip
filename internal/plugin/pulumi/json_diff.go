@@ -12,34 +12,34 @@ import (
 // TODO: Use https://github.com/pulumi/pulumi/blob/e13780c0bd60fa5f8fda011e8221b1b956b97738/pkg/display/json.go
 
 type diff struct {
-	steps         []step        `json:"steps"`
-	duration      time.Duration `json:"duration"`
-	changeSummary changeSummary `json:"changeSummary"`
+	Steps         []step        `json:"steps"`
+	Duration      time.Duration `json:"duration"`
+	ChangeSummary changeSummary `json:"changeSummary"`
 }
 
 type step struct {
-	op       string   `json:"op"`
-	urn      string   `json:"urn"`
-	newState newState `json:"newState"`
+	Op       `json:"op"`
+	URN      string   `json:"urn"`
+	NewState newState `json:"newState"`
 }
 
-type op string
+type Op string
 
 const (
-	opCreate op = "create"
-	opDelete op = "delete"
-	opModify op = "modify"
+	opCreate Op = "create"
+	opDelete Op = "delete"
+	opModify Op = "modify"
 )
 
 type newState struct {
-	urn       string         `json:"urn"`
-	stateType string         `json:"type"`
-	inputs    map[string]any `json:"inputs"`
+	URN       string         `json:"urn"`
+	StateType string         `json:"type"`
+	Inputs    map[string]any `json:"inputs"`
 }
 
 type changeSummary struct {
-	create int `json:"create"`
-	delete int `json:"delete"`
+	Create int `json:"create"`
+	Delete int `json:"delete"`
 }
 
 type Formatter struct {
@@ -51,7 +51,7 @@ func NewFormatter(input []byte) *Formatter {
 }
 
 func (f *Formatter) Format() (string, error) {
-	var d diff
+	d := new(diff)
 	err := json.Unmarshal(f.input, &d)
 	if err != nil {
 		log.Error("error parsing diff", "err", err, "input", string(f.input))
@@ -60,8 +60,8 @@ func (f *Formatter) Format() (string, error) {
 	log.Debug("parsed diff", "diff", d, "input", string(f.input))
 
 	var sb strings.Builder
-	for _, s := range d.steps {
-		switch s.op {
+	for _, s := range d.Steps {
+		switch s.Op {
 		case "same":
 			continue
 		case "create":
@@ -71,19 +71,47 @@ func (f *Formatter) Format() (string, error) {
 		case "modify":
 			sb.WriteString("~ ")
 		}
-		sb.WriteString(fmt.Sprintf("%s: (%s)\n", s.newState.stateType, s.op))
-		sb.WriteString(fmt.Sprintf("\t[urn=%s]\n", s.newState.urn))
-		for k, v := range s.newState.inputs {
+		sb.WriteString(fmt.Sprintf("%s:\n", s.NewState.StateType))
+		sb.WriteString(fmt.Sprintf("\t[urn=%s]\n", s.NewState.URN))
+		for k, v := range s.NewState.Inputs {
 			if strings.HasPrefix(k, "__") {
 				continue
 			}
-			sb.WriteString(fmt.Sprintf("\t%s: %v\n", k, v))
+			sb.WriteString(fmt.Sprintf("\t%s: %s\n", k, formatInputValue(v, "\t")))
 		}
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(fmt.Sprintf("Changes: %d created, %d deleted\n", d.changeSummary.create, d.changeSummary.delete))
-	sb.WriteString(fmt.Sprintf("Duration: %s\n", d.duration))
+	sb.WriteString(fmt.Sprintf("Changes: %d created, %d deleted\n", d.ChangeSummary.Create, d.ChangeSummary.Delete))
+	sb.WriteString(fmt.Sprintf("Duration: %s\n", d.Duration))
 
 	return sb.String(), nil
+}
+
+func formatInputValue(value any, tabs string) string {
+	switch value.(type) {
+	case string:
+		var sb strings.Builder
+		for i, l := range strings.Split(value.(string), "\n") {
+			if i == 0 {
+				sb.WriteString(l)
+			} else {
+				sb.WriteString(fmt.Sprintf("\n%s%s", tabs, l))
+			}
+		}
+		return sb.String()
+	case []any:
+		var sb strings.Builder
+		sb.WriteString("[\n")
+		for i, v := range value.([]any) {
+			sb.WriteString(fmt.Sprintf("\t%s%s", tabs, formatInputValue(v, tabs+"\t")))
+			if i < len(value.([]any))-1 {
+				sb.WriteString(",\n")
+			}
+		}
+		sb.WriteString(fmt.Sprintf("\n%s]", tabs))
+		return sb.String()
+	default:
+		return fmt.Sprintf("%v", value)
+	}
 }
