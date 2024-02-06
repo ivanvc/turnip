@@ -95,5 +95,9 @@ config:
 secrets:
   githubToken: ""
 
-# Arbitrary secrets applied to the turnip job.
-jobSecrets: {}
+# Runner configuration
+runner:
+  # Arbitrary secrets applied to the runner job.
+  secrets: {}
+  # Arbitraty annotations applied to the runner job.
+  podAnnotations: {}

@@ -52,8 +52,6 @@ func main() {
 
 	resp, err := cli.ReportJobFinished(ctx, req)
 
-	time.Sleep(1 * time.Hour)
-
 	if err != nil {
 		log.Fatalf("could not send job completed message: %v", err)
 	}
@@ -72,7 +70,7 @@ func run() (bool, []byte, error) {
 		log.Error("error creating temp dir", "error", err)
 		return false, []byte{}, err
 	}
-	// TODO: defer os.RemoveAll(tmpDir)
+	defer os.RemoveAll(tmpDir)
 
 	repoDir := filepath.Join(tmpDir, "repo")
 	if err := os.Mkdir(repoDir, 0750); err != nil && !os.IsExist(err) {

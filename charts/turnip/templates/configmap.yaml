@@ -11,3 +11,6 @@ data:
   {{- if .Values.config.logLevel }}
   TURNIP_LOG_LEVEL: {{ .Values.config.logLevel }}
   {{- end }}
+  TURNIP_RUNNER_JOB_SECRETS_NAME: {{ include "turnip.fullname" . }}-runner-secrets
+  TURNIP_RUNNER_JOB_POD_ANNOTATIONS: >
+    {{- toJson .Values.runner.podAnnotations | nindent 4}}

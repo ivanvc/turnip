@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -24,37 +25,43 @@ var (
 // Client holds a wrapped Kubernetes client.
 type Client struct {
 	*k8s.Clientset
-	config      *rest.Config
-	namespace   string
-	githubToken string
-	serverName  string
-	jobSecrets  string
+	config         *rest.Config
+	namespace      string
+	githubToken    string
+	serverName     string
+	jobSecrets     string
+	podAnnotations map[string]string
 }
 
 // LoadClient creates a new Client singleton.
 func LoadClient(config *config.Config) *Client {
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
-		log.Fatal("Error loading kubeconfig", "error", err)
+		log.Fatal("error loading kubeconfig", "error", err)
 	}
 	cs, err := k8s.NewForConfig(cfg)
 	if err != nil {
-		log.Fatal("Error initializing Kubernetes client", "error", err)
+		log.Fatal("error initializing Kubernetes client", "error", err)
+	}
+	var podAnnotations map[string]string
+	if err := json.Unmarshal([]byte(config.JobPodAnnotations), &podAnnotations); err != nil {
+		log.Fatal("error unmarshaling pod annotations", "error", err)
 	}
 	return &Client{
-		Clientset:   cs,
-		config:      cfg,
-		namespace:   config.Namespace,
-		githubToken: config.GitHubToken,
-		serverName:  config.ServerName,
-		jobSecrets:  config.JobSecretsName,
+		Clientset:      cs,
+		config:         cfg,
+		namespace:      config.Namespace,
+		githubToken:    config.GitHubToken,
+		serverName:     config.ServerName,
+		jobSecrets:     config.JobSecretsName,
+		podAnnotations: podAnnotations,
 	}
 }
 
 func (c *Client) CreateJob(command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project) error {
 	if _, err := c.BatchV1().Jobs(c.namespace).Create(
 		context.Background(),
-		getJob(c.namespace, c.githubToken, c.serverName, c.jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL, project),
+		getJob(c.namespace, c.githubToken, c.serverName, c.jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL, project, c.podAnnotations),
 		metav1.CreateOptions{},
 	); err != nil {
 		return err
@@ -63,7 +70,7 @@ func (c *Client) CreateJob(command, cloneURL, headRef, repoFullName, checkURL, c
 	return nil
 }
 
-func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project) *batchv1.Job {
+func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project, podAnnotations map[string]string) *batchv1.Job {
 	projectYAML := marshalProjectYAML(project)
 	generatedName := getGeneratedName(command, repoFullName, project)
 
@@ -76,6 +83,7 @@ func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef
 				"turnip.ivan.vc/repo":    stringNormalizer.Replace(repoFullName),
 				"turnip.ivan.vc/command": command,
 			},
+			Annotations: podAnnotations,
 		},
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{
