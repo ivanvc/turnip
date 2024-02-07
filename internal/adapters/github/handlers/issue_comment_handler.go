@@ -3,6 +3,8 @@ package handlers
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/log"
@@ -20,6 +22,7 @@ func HandleIssueComment(common *common.Common, issueComment *objects.IssueCommen
 	if issueComment.PullRequest == nil {
 		return nil
 	}
+	// TODO: Support running commands without the /turnip prefix, i.e. /plan, /apply.
 	if !strings.HasPrefix(issueComment.Comment.Body, "/turnip") {
 		return nil
 	}
@@ -39,31 +42,22 @@ func HandleIssueComment(common *common.Common, issueComment *objects.IssueCommen
 	cmd.SetArgs(strings.Fields(issueComment.Comment.Body)[1:])
 	if err := cmd.Execute(); err != nil {
 		log.Error("Error executing command", "error", err)
-		common.GitHubClient.ReactToComment(issueComment.Comment.Reactions.URL, ":confused:")
-		common.GitHubClient.CreateComment(issueComment.PullRequest.CommentsURL, "Error executing command: "+err.Error())
+		if err := common.GitHubClient.ReactToComment(issueComment.Comment.Reactions.URL, ":confused:"); err != nil {
+			log.Error("Error reacting to comment", "error", err)
+		}
+		if err := common.GitHubClient.CreateComment(issueComment.PullRequest.CommentsURL, "Error executing command: "+err.Error()); err != nil {
+			log.Error("Error creating comment", "error", err)
+		}
 		return err
 	}
 
-	common.GitHubClient.ReactToComment(issueComment.Comment.Reactions.URL, ":+1:")
-
-	if out.Len() > 0 {
-		common.GitHubClient.CreateComment(issueComment.PullRequest.CommentsURL, out.String())
+	if err := common.GitHubClient.ReactToComment(issueComment.Comment.Reactions.URL, ":+1:"); err != nil {
+		log.Error("Error reacting to comment", "error", err)
 	}
 
-	// TODO: Implement as a cobra command
-	args := strings.Fields(issueComment.Comment.Body)
-	switch args[1] {
-	case "plan", "preview", "diff", "pre":
-		//name := fmt.Sprintf("turnip/%s: %s/%s", p.PlanName(), prj.Dir, p.Workspace(prj))
-		name := "plan"
-		checkURL, err := common.GitHubClient.CreateCheckRun(issueComment.PullRequest, "plan")
-		if err != nil {
-			log.Error("Error creating check run", "error", err)
-			return err
-		}
-		repo := issueComment.Repository
-		if err := common.KubernetesClient.CreateJob("plan", repo.CloneURL, "", repo.FullName, checkURL, name, issueComment.PullRequest.CommentsURL, nil); err != nil {
-			log.Error("Error creating job", "error", err)
+	if out.Len() > 0 {
+		if err := common.GitHubClient.CreateComment(issueComment.PullRequest.CommentsURL, out.String()); err != nil {
+			log.Error("Error creating comment", "error", err)
 		}
 	}
 
@@ -82,7 +76,7 @@ func rootCmd(common *common.Common, ic *objects.IssueComment) *cobra.Command {
 	var directory, workspace, environment, stack string
 	var planCmd = &cobra.Command{
 		Use:     "plan",
-		Aliases: []string{"preview", "diff", "pre"},
+		Aliases: []string{"preview", "pre", "diff"},
 		Short:   "Plan your infrastructure",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if ic.PullRequest == nil {
@@ -103,22 +97,33 @@ func rootCmd(common *common.Common, ic *objects.IssueComment) *cobra.Command {
 			}
 			log.Debug("yaml configuration", "cfg", cfg)
 
-			// projectsToPlan := make(map[yaml.Project]bool)
-
-			// TODO: Call function from PR Handler
-
-			checkURL, err := common.GitHubClient.CreateCheckRun(ic.PullRequest, "plan")
+			projects, err := getListOfProjectsToPlan(common, ic.PullRequest)
 			if err != nil {
-				log.Error("Error creating check run", "error", err)
+				log.Error("Error getting list of projects to plan", "error", err)
 				return err
 			}
-			repo := ic.Repository
-			name := "plan"
-			if err := common.KubernetesClient.CreateJob("plan", repo.CloneURL, "", repo.FullName, checkURL, name, ic.PullRequest.CommentsURL, nil); err != nil {
-				log.Error("Error creating job", "error", err)
+			log.Debug("projects to plan", "projects", projects)
+
+			if len(directory) > 0 {
+				projects = slices.DeleteFunc(projects, func(p *yaml.Project) bool {
+					return p.Dir == directory
+				})
+			}
+			log.Debug("projects to plan after directory filter", "projects", projects)
+
+			if len(workspace) > 0 {
+				projects = slices.DeleteFunc(projects, func(p *yaml.Project) bool {
+					return p.Workspace == workspace
+				})
+			}
+			log.Debug("projects to plan after workspace filter", "projects", projects)
+
+			if len(projects) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No projects to plan")
+				return nil
 			}
 
-			return err
+			return triggerProjects(common, ic.PullRequest, projects)
 		},
 	}
 	planCmd.Flags().StringVarP(&directory, "directory", "d", directory, "the directory containing the IaC")

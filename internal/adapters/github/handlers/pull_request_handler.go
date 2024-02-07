@@ -22,11 +22,15 @@ func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhoo
 
 	pr := &payload.PullRequest
 
-	projects, err := getListOfProjectsToPlan(common, pr, "", "", true)
+	projects, err := getListOfProjectsToPlan(common, pr)
 	if err != nil {
 		return err
 	}
 
+	return triggerProjects(common, pr, projects)
+}
+
+func triggerProjects(common *common.Common, pr *objects.PullRequest, projects []*yaml.Project) error {
 	for _, prj := range projects {
 		p := plugin.Load(prj.LoadedWorkflow.Type)
 		name := fmt.Sprintf("turnip/%s: %s/%s", p.PlanName(), prj.Dir, p.Workspace(prj))
@@ -47,7 +51,7 @@ func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhoo
 	return nil
 }
 
-func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest, dir, workspace string, autoPlan bool) ([]*yaml.Project, error) {
+func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]*yaml.Project, error) {
 	yml, err := common.GitHubClient.FetchFile("turnip.yaml", pr.Head.Repository, pr.Head)
 	output := make([]*yaml.Project, 0)
 	if err != nil {
