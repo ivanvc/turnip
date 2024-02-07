@@ -56,7 +56,7 @@ func HandleIssueComment(common *common.Common, issueComment *objects.IssueCommen
 	}
 
 	if out.Len() > 0 {
-		if err := common.GitHubClient.CreateComment(issueComment.PullRequest.CommentsURL, out.String()); err != nil {
+		if err := common.GitHubClient.CreateComment(issueComment.PullRequest.CommentsURL, fmt.Sprintf("```\n%s\n```", out.String())); err != nil {
 			log.Error("Error creating comment", "error", err)
 		}
 	}
