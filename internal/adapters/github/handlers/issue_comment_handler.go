@@ -39,10 +39,11 @@ func HandleIssueComment(common *common.Common, issueComment *objects.IssueCommen
 	var in bytes.Reader
 	cmd.SetIn(&in)
 	cmd.SetOut(&out)
+	cmd.SetErr(&out)
 	cmd.SetArgs(strings.Fields(issueComment.Comment.Body)[1:])
 	if err := cmd.Execute(); err != nil {
 		log.Error("Error executing command", "error", err)
-		if err := common.GitHubClient.ReactToComment(issueComment.Comment.Reactions.URL, ":confused:"); err != nil {
+		if err := common.GitHubClient.ReactToComment(issueComment.Comment.Reactions.URL, "confused"); err != nil {
 			log.Error("Error reacting to comment", "error", err)
 		}
 		if err := common.GitHubClient.CreateComment(issueComment.PullRequest.CommentsURL, "Error executing command: "+err.Error()); err != nil {
@@ -51,7 +52,7 @@ func HandleIssueComment(common *common.Common, issueComment *objects.IssueCommen
 		return err
 	}
 
-	if err := common.GitHubClient.ReactToComment(issueComment.Comment.Reactions.URL, ":+1:"); err != nil {
+	if err := common.GitHubClient.ReactToComment(issueComment.Comment.Reactions.URL, "+1"); err != nil {
 		log.Error("Error reacting to comment", "error", err)
 	}
 

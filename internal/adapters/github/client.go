@@ -148,12 +148,12 @@ func (c *Client) ReactToComment(reactionsURL, reaction string) error {
 		return err
 	}
 
-	req := struct {
+	payload := struct {
 		Content string `json:"content"`
 	}{reaction}
-
-	jsonValue, _ := json.Marshal(req)
-	_, err = http.Post(u.String(), "application/json", bytes.NewBuffer(jsonValue))
+	jsonValue, _ := json.Marshal(payload)
+	resp, err := http.Post(u.String(), "application/json", bytes.NewBuffer(jsonValue))
+	log.Debug("Reacted to comment", "response", resp)
 
 	if err != nil {
 		log.Error("Error reacting to comment", "error", err)
