@@ -83,10 +83,17 @@ func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef
 				"turnip.ivan.vc/repo":    stringNormalizer.Replace(repoFullName),
 				"turnip.ivan.vc/command": command,
 			},
-			Annotations: podAnnotations,
 		},
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app":                    "turnip",
+						"turnip.ivan.vc/repo":    stringNormalizer.Replace(repoFullName),
+						"turnip.ivan.vc/command": command,
+					},
+					Annotations: podAnnotations,
+				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
