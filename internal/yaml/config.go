@@ -34,9 +34,11 @@ type Project struct {
 	Workspace   string `yaml:"workspace"`
 	Environment string `yaml:"environment"`
 
-	*AutoPlan   `yaml:"autoPlan"`
-	AutoPreview *AutoPlan `yaml:"autoPreview"`
-	AutoDiff    *AutoPlan `yaml:"autoDiff"`
+	AutoPlan    bool `yaml:"autoPlan"`
+	AutoPreview bool `yaml:"autoPreview"`
+	AutoDiff    bool `yaml:"autoDiff"`
+
+	WhenModified []string `yaml:"whenModified"`
 
 	Workflow       string   `yaml:"workflow"`
 	LoadedWorkflow Workflow `yaml:"_loadedWorkflow"`
@@ -51,11 +53,6 @@ type Command struct {
 
 type Step struct {
 	Run string `yaml:"run"`
-}
-
-type AutoPlan struct {
-	Disabled     bool     `yaml:"disabled"`
-	WhenModified []string `yaml:"whenModified"`
 }
 
 func Load(data []byte) (Config, error) {

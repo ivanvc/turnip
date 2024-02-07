@@ -31,11 +31,16 @@ type Reactions struct {
 
 // Repository holds the repository from the IssueComment.
 type Repository struct {
-	CloneURL    string `json:"clone_url"`
-	ContentsURL string `json:"contents_url"`
-	URL         string `json:"url"`
-	FullName    string `json:"full_name"`
-	StatusesURL string `json:"statuses_url"`
+	CloneURL      string `json:"clone_url"`
+	ContentsURL   string `json:"contents_url"`
+	URL           string `json:"url"`
+	FullName      string `json:"full_name"`
+	StatusesURL   string `json:"statuses_url"`
+	DefaultBranch string `json:"default_branch"`
+}
+
+func (r Repository) DefaultBranchRef() BranchRef {
+	return BranchRef{Ref: "refs/heads/" + r.DefaultBranch}
 }
 
 // Converts the IssueComment into a JSON.

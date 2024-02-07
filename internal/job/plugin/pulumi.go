@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/log"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 
 	intyaml "github.com/ivanvc/turnip/internal/yaml"
 )

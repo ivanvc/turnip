@@ -29,7 +29,7 @@ func (p Pulumi) Workspace(project *yaml.Project) string {
 }
 
 // AutoPlan conforms to the Plugin interface.
-func (p Pulumi) AutoPlan(project *yaml.Project) *yaml.AutoPlan {
+func (p Pulumi) AutoPlan(project *yaml.Project) bool {
 	return project.AutoPreview
 }
 

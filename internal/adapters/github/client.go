@@ -141,7 +141,7 @@ func (c *Client) FinishCheckRun(checkURL, checkName, conclusion string) error {
 	return err
 }
 
-func (c *Client) ReactToCommentWithThumbsUp(reactionsURL string) error {
+func (c *Client) ReactToComment(reactionsURL, reaction string) error {
 	u, err := c.parseURL(reactionsURL)
 	if err != nil {
 		log.Error("Error parsing URL", "error", err)
@@ -150,7 +150,7 @@ func (c *Client) ReactToCommentWithThumbsUp(reactionsURL string) error {
 
 	req := struct {
 		Content string `json:"content"`
-	}{"+1"}
+	}{reaction}
 
 	jsonValue, _ := json.Marshal(req)
 	_, err = http.Post(u.String(), "application/json", bytes.NewBuffer(jsonValue))

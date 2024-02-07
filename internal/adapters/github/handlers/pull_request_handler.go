@@ -22,7 +22,7 @@ func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhoo
 
 	pr := &payload.PullRequest
 
-	projects, err := getListOfProjectsToPlan(common, pr)
+	projects, err := getListOfProjectsToPlan(common, pr, "", "", true)
 	if err != nil {
 		return err
 	}
@@ -47,7 +47,7 @@ func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhoo
 	return nil
 }
 
-func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]*yaml.Project, error) {
+func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest, dir, workspace string, autoPlan bool) ([]*yaml.Project, error) {
 	yml, err := common.GitHubClient.FetchFile("turnip.yaml", pr.Head.Repository, pr.Head)
 	output := make([]*yaml.Project, 0)
 	if err != nil {
@@ -80,15 +80,14 @@ func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]
 	projectRules := make(map[*yaml.Project][]string)
 	for _, prj := range cfg.Projects {
 		log.Debug("checking project", "project", prj)
-		ap := plugin.Load(prj.LoadedWorkflow.Type).AutoPlan(&prj)
-		if ap == nil || ap.Disabled {
+		if !plugin.Load(prj.LoadedWorkflow.Type).AutoPlan(&prj) {
 			continue
 		}
 		var dirs []string
-		if len(ap.WhenModified) == 0 {
+		if len(prj.WhenModified) == 0 {
 			dirs = []string{"**/*"}
 		} else {
-			dirs = ap.WhenModified
+			dirs = prj.WhenModified
 		}
 		projectRules[&prj] = dirs
 	}
@@ -127,95 +126,3 @@ func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]
 
 	return output, nil
 }
-
-/*
-func shouldCreatePlanJobUsingGit(common *common.Common, pr *objects.PullRequest) (bool, error) {
-	cloneOpts := &git.CloneOptions{
-		Auth:          auth,
-		SingleBranch:  true,
-		URL:           pr.Base.Repository.CloneURL,
-		ReferenceName: plumbing.NewBranchReferenceName(pr.Base.Ref),
-		Depth:         1,
-		Progress:      os.Stdout,
-	}
-
-	tmpDir, err := os.MkdirTemp("", "turnip-repo-*")
-	if err != nil {
-		log.Error("error creating temp dir", "error", err)
-		return false, err
-	}
-	defer os.RemoveAll(tmpDir)
-
-	repo, err := git.PlainClone(tmpDir, false, cloneOpts)
-	if err != nil {
-		log.Error("error cloning", "error", err)
-		return false, err
-	}
-
-	data, err := os.ReadFile(filepath.Join(tmpDir, "turnip.yaml"))
-	if err != nil {
-		log.Error("error reading configuration", "error", err)
-		return false, err
-	}
-
-	var cfg *yamlconfig.Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		log.Error("error parsing configuration", "error", err)
-		return false, err
-	}
-
-	headBranchRef := plumbing.NewBranchReferenceName(pr.Head.Ref)
-	if err = repo.Fetch(&git.FetchOptions{
-		Auth:     auth,
-		Depth:    1,
-		RefSpecs: []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", pr.Head.Ref, headBranchRef))},
-		Progress: os.Stdout,
-	}); err != nil {
-		log.Error("error fetching", "error", err)
-		return false, err
-	}
-
-	ref, err := repo.Head()
-	if err != nil {
-		log.Error("could not get head", "error", err)
-		return false, err
-	}
-	commit, err := repo.CommitObject(ref.Hash())
-	if err != nil {
-		log.Error("could not get commit", "error", err)
-		return false, err
-	}
-
-	headRef, err := repo.ResolveRevision(plumbing.Revision(pr.Head.SHA))
-	if err != nil {
-		log.Error("could not resolve revision", "error", err)
-		return false, err
-	}
-	headCommit, err := repo.CommitObject(*headRef)
-	if err != nil {
-		log.Error("could not get head commit", "error", err)
-		return false, err
-	}
-
-	patch, err := commit.Patch(headCommit)
-	if err != nil {
-		log.Error("error getting patch", "error", err)
-		return false, err
-	}
-
-	for _, fp := range patch.FilePatches() {
-		from, _ := fp.Files()
-		if from == nil {
-			log.Debug("skipping deleted file", "file", from)
-			continue
-		}
-		dir := filepath.Dir(from.Path())
-		for _, prj := range cfg.Projects {
-			if strings.HasPrefix(dir, prj.Dir) && prj.AutoPlan {
-				return true, nil
-			}
-		}
-	}
-
-	return false, nil
-}*/

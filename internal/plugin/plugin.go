@@ -13,7 +13,7 @@ type Plugin interface {
 	// Workspace returns the workspace/sack/environment to use for the project.
 	Workspace(project *yaml.Project) string
 	// AutoPlan returns the auto plan configuration.
-	AutoPlan(project *yaml.Project) *yaml.AutoPlan
+	AutoPlan(project *yaml.Project) bool
 	// FormatDiff returns the formatted diff.
 	FormatDiff(diff []byte) (string, error)
 }
