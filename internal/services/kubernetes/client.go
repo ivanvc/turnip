@@ -31,6 +31,7 @@ type Client struct {
 	serverName     string
 	jobSecrets     string
 	podAnnotations map[string]string
+	jobTTLSeconds  int
 }
 
 // LoadClient creates a new Client singleton.
@@ -54,6 +55,7 @@ func LoadClient(config *config.Config) *Client {
 		githubToken:    config.GitHubToken,
 		serverName:     config.ServerName,
 		jobSecrets:     config.JobSecretsName,
+		jobTTLSeconds:  config.JobTTLSecondsAfterFinished,
 		podAnnotations: podAnnotations,
 	}
 }
@@ -61,7 +63,7 @@ func LoadClient(config *config.Config) *Client {
 func (c *Client) CreateJob(command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project) error {
 	if _, err := c.BatchV1().Jobs(c.namespace).Create(
 		context.Background(),
-		getJob(c.namespace, c.githubToken, c.serverName, c.jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL, project, c.podAnnotations),
+		getJob(c.namespace, c.githubToken, c.serverName, c.jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL, project, c.podAnnotations, c.jobTTLSeconds),
 		metav1.CreateOptions{},
 	); err != nil {
 		return err
@@ -70,9 +72,10 @@ func (c *Client) CreateJob(command, cloneURL, headRef, repoFullName, checkURL, c
 	return nil
 }
 
-func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project, podAnnotations map[string]string) *batchv1.Job {
+func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project, podAnnotations map[string]string, jobTTLSeconds int) *batchv1.Job {
 	projectYAML := marshalProjectYAML(project)
 	generatedName := getGeneratedName(command, repoFullName, project)
+	ttlSeconds := int32(jobTTLSeconds)
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -85,6 +88,7 @@ func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef
 			},
 		},
 		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttlSeconds,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{

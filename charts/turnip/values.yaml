@@ -91,13 +91,17 @@ config:
   namespace: ""
   # Log level
   logLevel: ""
+  # Job TTL seconds after finished
+  jobTTLSecondsAfterFinished: 300
 
 secrets:
+  # The GitHub token with repos access
   githubToken: ""
+
 
 # Runner configuration
 runner:
-  # Arbitrary secrets applied to the runner job.
+  # Arbitrary secrets applied to the runner job
   secrets: {}
-  # Arbitraty annotations applied to the runner job.
+  # Arbitraty annotations applied to the runner job
   podAnnotations: {}
