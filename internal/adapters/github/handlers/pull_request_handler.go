@@ -11,18 +11,18 @@ import (
 
 	"github.com/ivanvc/turnip/internal/adapters/github/objects"
 	"github.com/ivanvc/turnip/internal/common"
-	"github.com/ivanvc/turnip/internal/plugin"
 	"github.com/ivanvc/turnip/internal/yaml"
 )
 
 func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhook) error {
+	// TODO: if we have built this PR before, plot (plan) the projects that have been planned before
 	if payload.Action != "opened" && payload.Action != "synchronize" {
 		return nil
 	}
 
 	pr := &payload.PullRequest
 
-	projects, err := getListOfProjectsToPlan(common, pr)
+	projects, err := getListOfProjectsToPlot(common, pr, true)
 	if err != nil {
 		return err
 	}
@@ -32,8 +32,7 @@ func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhoo
 
 func triggerProjects(common *common.Common, pr *objects.PullRequest, projects []*yaml.Project) error {
 	for _, prj := range projects {
-		p := plugin.Load(prj.LoadedWorkflow.Type)
-		name := fmt.Sprintf("turnip/%s: %s/%s", p.PlanName(), prj.Dir, p.Workspace(prj))
+		name := fmt.Sprintf("turnip[%s/%s]: %s:%s", prj.GetAdapterName(), prj.GetPlotName(), prj.Dir, prj.GetWorkspace())
 		checkURL, err := common.GitHubClient.CreateCheckRun(pr, name)
 		if err != nil {
 			log.Error("error creating check run", "error", err)
@@ -42,7 +41,7 @@ func triggerProjects(common *common.Common, pr *objects.PullRequest, projects []
 
 		log.Debug("creating job", "checkURL", checkURL)
 		repo := pr.Base.Repository
-		if err := common.KubernetesClient.CreateJob("plan", repo.CloneURL, pr.Head.Ref, repo.FullName, checkURL, name, pr.CommentsURL, prj); err != nil {
+		if err := common.KubernetesClient.CreateJob("plot", repo.CloneURL, pr.Head.Ref, repo.FullName, checkURL, name, pr.CommentsURL, prj); err != nil {
 			log.Error("error creating job", "error", err)
 			return err
 		}
@@ -51,7 +50,7 @@ func triggerProjects(common *common.Common, pr *objects.PullRequest, projects []
 	return nil
 }
 
-func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]*yaml.Project, error) {
+func getListOfProjectsToPlot(common *common.Common, pr *objects.PullRequest, autoPlot bool) ([]*yaml.Project, error) {
 	yml, err := common.GitHubClient.FetchFile("turnip.yaml", pr.Head.Repository, pr.Head)
 	output := make([]*yaml.Project, 0)
 	if err != nil {
@@ -84,12 +83,12 @@ func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]
 	projectRules := make(map[*yaml.Project][]string)
 	for _, prj := range cfg.Projects {
 		log.Debug("checking project", "project", prj)
-		if !plugin.Load(prj.LoadedWorkflow.Type).AutoPlan(&prj) {
+		if autoPlot && prj.GetAutoPlot() == false {
 			continue
 		}
 		var dirs []string
 		if len(prj.WhenModified) == 0 {
-			dirs = []string{"**/*"}
+			dirs = []string{"./**/*"}
 		} else {
 			dirs = prj.WhenModified
 		}
@@ -126,7 +125,7 @@ func getListOfProjectsToPlan(common *common.Common, pr *objects.PullRequest) ([]
 	for prj := range projectsTriggered {
 		output = append(output, prj)
 	}
-	log.Debug("projects to plan", "projects", output)
+	log.Debug("projects to plot", "projects", output)
 
 	return output, nil
 }

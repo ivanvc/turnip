@@ -17,12 +17,3 @@ type Plugin interface {
 	// FormatDiff returns the formatted diff.
 	FormatDiff(diff []byte) (string, error)
 }
-
-func Load(projectType yaml.ProjectType) Plugin {
-	switch projectType {
-	case yaml.ProjectTypePulumi:
-		return Pulumi{}
-	default:
-		return nil
-	}
-}

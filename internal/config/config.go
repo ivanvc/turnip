@@ -16,7 +16,6 @@ type Config struct {
 	Namespace                  string
 	ServerName                 string
 	JobSecretsName             string
-	JobPodAnnotations          string
 	JobTTLSecondsAfterFinished int
 }
 
@@ -29,7 +28,6 @@ func Load() *Config {
 	flag.StringVar(&c.Namespace, "namespace", envOrDefault("TURNIP_NAMESPACE", ""), "Namespace where turnip has access to create jobs.")
 	flag.StringVar(&c.ServerName, "server-name", envOrDefault("TURNIP_SERVER_NAME", "turnip"), "Server name to use to communicate using RPC.")
 	flag.StringVar(&c.JobSecretsName, "job-secrets-name", envOrDefault("TURNIP_RUNNER_JOB_SECRETS_NAME", "turnip-runner-job-secrets"), "Name of the secret to use for job secrets.")
-	flag.StringVar(&c.JobPodAnnotations, "job-pod-annotations", envOrDefault("TURNIP_RUNNER_JOB_POD_ANNOTATIONS", ""), "Annotations to add to the job pod in JSON format.")
 	ttl := envOrDefault("TURNIP_JOB_TTL_SECONDS_AFTER_FINISHED", "300")
 	i, err := strconv.Atoi(ttl)
 	if err != nil {

@@ -55,11 +55,17 @@ func (f *Formatter) Format() (string, error) {
 	err := json.Unmarshal(f.input, &d)
 	if err != nil {
 		log.Error("error parsing diff", "err", err, "input", string(f.input))
-		return "", err
+		return fmt.Sprintf("```\n%s\n```", string(f.input)), nil
 	}
-	log.Debug("parsed diff", "diff", d, "input", string(f.input))
+	log.Debug("parsed diff", "diff", d)
 
 	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Changes: %d created, %d deleted\n", d.ChangeSummary.Create, d.ChangeSummary.Delete))
+	sb.WriteString(fmt.Sprintf("Duration: %s\n\n```diff\n", d.Duration))
+
+	if len(d.Steps) == 0 {
+		sb.WriteString("No changes")
+	}
 	for _, s := range d.Steps {
 		switch s.Op {
 		case "same":
@@ -81,9 +87,7 @@ func (f *Formatter) Format() (string, error) {
 		}
 		sb.WriteString("\n")
 	}
-
-	sb.WriteString(fmt.Sprintf("Changes: %d created, %d deleted\n", d.ChangeSummary.Create, d.ChangeSummary.Delete))
-	sb.WriteString(fmt.Sprintf("Duration: %s\n", d.Duration))
+	sb.WriteString("```")
 
 	return sb.String(), nil
 }

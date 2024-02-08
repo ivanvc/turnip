@@ -99,15 +99,15 @@ func run() (bool, []byte, error) {
 		return false, []byte{}, err
 	}
 
-	output, err := commands.PlanPreCommands(repoDir, project)
+	output, err := commands.RunInitCommands(repoDir, project)
 	if err != nil {
 		log.Error("error running pre commands", "error", err, "output", string(output))
 		return false, output, err
 	}
 
-	returnCode, output, err := commands.Plan(binDir, repoDir, project)
+	returnCode, output, err := commands.Plot(binDir, repoDir, project)
 	if err != nil {
-		log.Error("error running plan", "error", err)
+		log.Error("error running plot", "error", err)
 	}
 
 	return returnCode, output, err

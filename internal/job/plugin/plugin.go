@@ -13,15 +13,19 @@ type Plugin interface {
 	//Version() string
 	Install(string, string) (string, error)
 
-	Plan(string, string) (bool, []byte, error)
+	Plot(string, string) (bool, []byte, error)
 
-	RunPreCommands(string, []yaml.Command) ([]byte, error)
+	RunInitCommands(string) ([]byte, error)
 }
 
 func Load(project yaml.Project) Plugin {
-	switch project.LoadedWorkflow.Type {
-	case yaml.ProjectTypePulumi:
-		return &Pulumi{project: project}
+	a, err := project.LoadedWorkflow.GetAdapter()
+	if err != nil {
+		return nil
+	}
+	switch a.GetName() {
+	case "pulumi":
+		return Pulumi{project: project}
 	default:
 		return nil
 	}

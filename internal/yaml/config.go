@@ -10,49 +10,7 @@ import (
 type Config struct {
 	Projects  []Project           `yaml:"projects"`
 	Workflows map[string]Workflow `yaml:"workflows"`
-}
-
-type ProjectType string
-
-const (
-	ProjectTypeHelmfile  ProjectType = "helmfile"
-	ProjectTypePulumi    ProjectType = "pulumi"
-	ProjectTypeTerraform ProjectType = "terraform"
-)
-
-type Workflow struct {
-	Type        ProjectType       `yaml:"type"`
-	Version     string            `yaml:"version"`
-	Env         map[string]string `yaml:"env"`
-	PreCommands []Command         `yaml:"preCommands"`
-}
-
-type Project struct {
-	Dir string `yaml:"dir"`
-
-	Stack       string `yaml:"stack"`
-	Workspace   string `yaml:"workspace"`
-	Environment string `yaml:"environment"`
-
-	AutoPlan    bool `yaml:"autoPlan"`
-	AutoPreview bool `yaml:"autoPreview"`
-	AutoDiff    bool `yaml:"autoDiff"`
-
-	WhenModified []string `yaml:"whenModified"`
-
-	Workflow       string   `yaml:"workflow"`
-	LoadedWorkflow Workflow `yaml:"_loadedWorkflow"`
-}
-
-type Command struct {
-	Env        map[string]string `yaml:"env"`
-	Run        string            `yaml:"run"`
-	Login      string            `yaml:"login"`
-	OmitOutput bool              `yaml:"omitOutput"`
-}
-
-type Step struct {
-	Run string `yaml:"run"`
+	Version   string              `yaml:"version"`
 }
 
 func Load(data []byte) (Config, error) {
@@ -68,15 +26,28 @@ func Load(data []byte) (Config, error) {
 			return cfg, fmt.Errorf("workflow %s not found", p.Workflow)
 		}
 	}
-	return cfg, nil
+	return cfg, cfg.Validate()
 }
 
-func LoadProject(data []byte) (Project, error) {
-	var p Project
-	err := yaml.Unmarshal(data, &p)
-	return p, err
-}
+func (c Config) Validate() error {
+	if c.Version != "v1alpha1" {
+		return fmt.Errorf("unsupported version %s", c.Version)
+	}
 
-func (p Project) ToYAML() ([]byte, error) {
-	return yaml.Marshal(p)
+	for _, p := range c.Projects {
+		if err := p.Validate(); err != nil {
+			return fmt.Errorf("project %s: %s", p.Dir, err.Error())
+		}
+		if _, ok := c.Workflows[p.Workflow]; !ok {
+			return fmt.Errorf("project %s: workflow %s not found", p.Dir, p.Workflow)
+		}
+	}
+
+	for name, w := range c.Workflows {
+		if err := w.Validate(); err != nil {
+			return fmt.Errorf("workflow %s: %s", name, err.Error())
+		}
+	}
+
+	return nil
 }

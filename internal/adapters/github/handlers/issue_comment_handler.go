@@ -22,7 +22,7 @@ func HandleIssueComment(common *common.Common, issueComment *objects.IssueCommen
 	if issueComment.PullRequest == nil {
 		return nil
 	}
-	// TODO: Support running commands without the /turnip prefix, i.e. /plan, /apply.
+	// TODO: Support running commands without the /turnip prefix, i.e. /plot, /apply.
 	if !strings.HasPrefix(issueComment.Comment.Body, "/turnip") {
 		return nil
 	}
@@ -67,21 +67,22 @@ func HandleIssueComment(common *common.Common, issueComment *objects.IssueCommen
 
 func rootCmd(common *common.Common, ic *objects.IssueComment) *cobra.Command {
 	root := &cobra.Command{
-		Use:   "/turnip",
-		Short: "Turnip is an IaC automation bot",
+		Use:               "/turnip",
+		Short:             "Turnip is an IaC automation bot",
+		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Usage()
 		},
 	}
 
 	var directory, workspace, environment, stack string
-	var planCmd = &cobra.Command{
-		Use:     "plan",
-		Aliases: []string{"preview", "pre", "diff"},
-		Short:   "Plan your infrastructure",
+	var plotCmd = &cobra.Command{
+		Use:     "plot",
+		Aliases: []string{"diff", "plan", "preview", "pre"},
+		Short:   "Plot changes in your infrastructure",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if ic.PullRequest == nil {
-				return errors.New("I can only plan pull requests")
+				return errors.New("I can only plot pull requests")
 			}
 			yml, err := common.GitHubClient.FetchFile("turnip.yaml", ic.Repository, ic.PullRequest.Head)
 
@@ -98,42 +99,42 @@ func rootCmd(common *common.Common, ic *objects.IssueComment) *cobra.Command {
 			}
 			log.Debug("yaml configuration", "cfg", cfg)
 
-			projects, err := getListOfProjectsToPlan(common, ic.PullRequest)
+			projects, err := getListOfProjectsToPlot(common, ic.PullRequest, false)
 			if err != nil {
-				log.Error("Error getting list of projects to plan", "error", err)
+				log.Error("Error getting list of projects to plot", "error", err)
 				return err
 			}
-			log.Debug("projects to plan", "projects", projects)
+			log.Debug("projects to plot", "projects", projects)
 
 			if len(directory) > 0 {
 				projects = slices.DeleteFunc(projects, func(p *yaml.Project) bool {
 					return p.Dir == directory
 				})
 			}
-			log.Debug("projects to plan after directory filter", "projects", projects)
+			log.Debug("projects to plot after directory filter", "projects", projects)
 
 			if len(workspace) > 0 {
 				projects = slices.DeleteFunc(projects, func(p *yaml.Project) bool {
 					return p.Workspace == workspace
 				})
 			}
-			log.Debug("projects to plan after workspace filter", "projects", projects)
+			log.Debug("projects to plot after workspace filter", "projects", projects)
 
 			if len(projects) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No projects to plan")
+				fmt.Fprintln(cmd.OutOrStdout(), "No projects to plot")
 				return nil
 			}
 
 			return triggerProjects(common, ic.PullRequest, projects)
 		},
 	}
-	planCmd.Flags().StringVarP(&directory, "directory", "d", directory, "the directory containing the IaC")
+	plotCmd.Flags().StringVarP(&directory, "directory", "d", directory, "the directory containing the IaC")
 	// TODO: Get these from the plugins
-	planCmd.Flags().StringVarP(&workspace, "workspace", "w", workspace, "the Terraform workspace to use")
-	planCmd.Flags().StringVarP(&environment, "environment", "e", environment, "the Helmfile environment to use")
-	planCmd.Flags().StringVarP(&stack, "stack", "s", stack, "the Pulumi stack to use")
-	planCmd.MarkFlagsMutuallyExclusive("workspace", "environment", "stack")
+	plotCmd.Flags().StringVarP(&workspace, "workspace", "w", workspace, "the Terraform workspace to use")
+	plotCmd.Flags().StringVarP(&environment, "environment", "e", environment, "the Helmfile environment to use")
+	plotCmd.Flags().StringVarP(&stack, "stack", "s", stack, "the Pulumi stack to use")
+	plotCmd.MarkFlagsMutuallyExclusive("workspace", "environment", "stack")
 
-	root.AddCommand(planCmd)
+	root.AddCommand(plotCmd)
 	return root
 }

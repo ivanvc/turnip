@@ -1,7 +1,6 @@
 package plugin
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,20 +21,17 @@ type Pulumi struct {
 	execPath string
 }
 
-type pulumiYAML struct {
-	Runtime struct {
-		Name string `yaml:"name"`
-	} `yaml:"runtime"`
-}
-
 const downloadURL = "https://github.com/pulumi/pulumi/releases/download/v%s/pulumi-v%s-linux-x64.tar.gz"
 
 func (p Pulumi) Install(dest, repoDir string) (string, error) {
-	// TODO: Get version either from requirements.txt, go.mod, or package.json, .tool-versions, etc.
-	version := p.project.LoadedWorkflow.Version
-	if version == "" {
-		return "", errors.New("no version specified, version guessing not implemented yet")
+	// TODO: Get version from "VersionFrom" or skip install if "SkipInstall" is true
+	adapter, err := p.project.LoadedWorkflow.GetAdapter()
+	if err != nil {
+		log.Error("error getting adapter", "err", err)
+		return "", err
 	}
+
+	version := adapter.GetVersion()
 
 	wd, err := os.Getwd()
 	if err != nil {
@@ -103,7 +99,12 @@ func installRuntime(inputYAML string) error {
 		return err
 	}
 
-	var yml pulumiYAML
+	var yml struct {
+		Runtime struct {
+			Name string `yaml:"name"`
+		} `yaml:"runtime"`
+	}
+
 	if err := yaml.Unmarshal(b, &yml); err != nil {
 		log.Error("error unmarshalling Pulumi.yaml", "err", err)
 		return err
@@ -157,7 +158,7 @@ func copyFile(src, dest string) error {
 	return os.Chmod(destination, srcFileStat.Mode())
 }
 
-func (p Pulumi) Plan(binDir, repoDir string) (bool, []byte, error) {
+func (p Pulumi) Plot(binDir, repoDir string) (bool, []byte, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		log.Error("error getting working directory", "err", err)
@@ -199,24 +200,24 @@ func (p Pulumi) Plan(binDir, repoDir string) (bool, []byte, error) {
 	return cmd.ProcessState.ExitCode() != 0, out, nil
 }
 
-func (p Pulumi) RunPreCommands(repoDir string, cmds []intyaml.Command) ([]byte, error) {
+func (p Pulumi) RunInitCommands(repoDir string) ([]byte, error) {
 	output := make([]byte, 0)
+	proj := p.project
 
-	for _, cmd := range cmds {
+	for _, cmd := range proj.LoadedWorkflow.InitCommands {
 		var fields []string
 		if len(cmd.Run) > 0 {
 			fields = strings.Fields(cmd.Run)
-		} else if len(cmd.Login) > 0 {
-			fields = []string{"pulumi", "login", cmd.Login}
+		} else if len(cmd.Pulumi) > 0 {
+			fields = []string{"pulumi", "--non-interactive"}
+			fields = append(fields, strings.Fields(cmd.Pulumi)...)
 		} else {
-			return output, fmt.Errorf("no command or login specified")
+			return output, fmt.Errorf("no command to run")
 		}
 
 		c := exec.Command(fields[0], fields[1:]...)
-		c.Env = append(c.Environ(), "")
-		for k, v := range cmd.Env {
-			c.Env = append(c.Env, fmt.Sprintf("%s=%s", k, v))
-		}
+		c.Env = append(c.Environ(), cmd.GetEnv()...)
+		c.Env = append(c.Environ(), proj.LoadedWorkflow.GetEnv()...)
 		for k, v := range p.project.LoadedWorkflow.Env {
 			c.Env = append(c.Env, fmt.Sprintf("%s=%s", k, v))
 		}
