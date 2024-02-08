@@ -178,8 +178,8 @@ func marshalProjectYAML(project *yaml.Project) []byte {
 
 func getPodAnotations(project *yaml.Project) map[string]string {
 	annotations := make(map[string]string)
+	t := template.New(*project)
 	for k, v := range project.LoadedWorkflow.PodAnnotations {
-		t := template.New(*project)
 		key := k
 		value := v
 		if r, err := t.Execute(k); err != nil {

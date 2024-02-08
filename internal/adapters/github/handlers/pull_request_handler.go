@@ -82,7 +82,7 @@ func getListOfProjectsToPlot(common *common.Common, pr *objects.PullRequest, aut
 
 	projectRules := make(map[*yaml.Project][]string)
 	for _, prj := range cfg.Projects {
-		log.Debug("checking project", "project", prj)
+		log.Debug("checking project", "project", prj, "autoPlot", autoPlot, "prj.AutoPlot", prj.GetAutoPlot())
 		if autoPlot && prj.GetAutoPlot() == false {
 			continue
 		}
@@ -114,7 +114,7 @@ func getListOfProjectsToPlot(common *common.Common, pr *objects.PullRequest, aut
 			log.Debug("checking relative path", "path", relativePath)
 			for _, rule := range rules {
 				log.Debug("checking rule", "rule", rule)
-				if ok, _ := doublestar.Match(rule, relativePath); ok {
+				if ok, _ := doublestar.Match(rule, fmt.Sprintf("./%s", relativePath)); ok {
 					log.Debug("rule matched!")
 					projectsTriggered[prj] = true
 				}

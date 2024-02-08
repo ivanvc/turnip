@@ -38,12 +38,12 @@ func (p Project) GetAutoPlot() bool {
 	if err != nil {
 		return false
 	}
-	switch a.(type) {
-	case HelmfileAdapter:
+	switch a.GetName() {
+	case "helmfile":
 		return p.AutoDiff
-	case PulumiAdapter:
+	case "pulumi":
 		return p.AutoPreview
-	case TerraformAdapter:
+	case "terraform":
 		return p.AutoPlan
 	}
 	return false

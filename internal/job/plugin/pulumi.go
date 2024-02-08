@@ -205,6 +205,7 @@ func (p Pulumi) RunInitCommands(repoDir string) ([]byte, error) {
 	proj := p.project
 
 	for _, cmd := range proj.LoadedWorkflow.InitCommands {
+		log.Info("running init command", "cmd", cmd)
 		var fields []string
 		if len(cmd.Run) > 0 {
 			fields = strings.Fields(cmd.Run)
@@ -212,7 +213,7 @@ func (p Pulumi) RunInitCommands(repoDir string) ([]byte, error) {
 			fields = []string{"pulumi", "--non-interactive"}
 			fields = append(fields, strings.Fields(cmd.Pulumi)...)
 		} else {
-			return output, fmt.Errorf("no command to run")
+			continue
 		}
 
 		c := exec.Command(fields[0], fields[1:]...)

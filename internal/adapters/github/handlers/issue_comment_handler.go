@@ -46,7 +46,7 @@ func HandleIssueComment(common *common.Common, issueComment *objects.IssueCommen
 		if err := common.GitHubClient.ReactToComment(issueComment.Comment.Reactions.URL, "confused"); err != nil {
 			log.Error("Error reacting to comment", "error", err)
 		}
-		if err := common.GitHubClient.CreateComment(issueComment.PullRequest.CommentsURL, "Error executing command: "+err.Error()); err != nil {
+		if err := common.GitHubClient.CreateComment(issueComment.PullRequest.CommentsURL, fmt.Sprintf("Error executing command:\n\n```\n%s\n```", err.Error())); err != nil {
 			log.Error("Error creating comment", "error", err)
 		}
 		return err

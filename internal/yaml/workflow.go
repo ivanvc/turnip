@@ -3,10 +3,9 @@ package yaml
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
-	"strings"
 
-	"github.com/containers/image/v5/docker"
 	"github.com/distribution/reference"
 )
 
@@ -24,7 +23,7 @@ type Workflow struct {
 func (w Workflow) GetAdapter() (Adapter, error) {
 	adapters := []Adapter{w.Pulumi, w.Terraform, w.Helmfile}
 	adapters = slices.DeleteFunc(adapters, func(a Adapter) bool {
-		return a == nil
+		return reflect.ValueOf(a).IsNil()
 	})
 	if len(adapters) == 0 {
 		return nil, fmt.Errorf("no adapters set must be one of Pulumi, Terraform, or Helmfile")
@@ -44,19 +43,17 @@ func (w Workflow) Validate() error {
 		return fmt.Errorf("adapter %s: %s", adapter.GetName(), err.Error())
 	}
 
-	image := w.Image
-	if image == "" {
+	if w.Image == "" {
 		return errors.New("image not set")
 	}
-	if !strings.HasPrefix(image, "//") {
-		image = "//" + image
-	}
-	ref, err := docker.ParseReference(image)
+	ref, err := reference.ParseDockerRef(w.Image)
 	if err != nil {
 		return fmt.Errorf("invalid image %s: %s", w.Image, err.Error())
 	}
-	if reference.Path(ref.DockerReference()) != "alpine" && reference.Path(ref.DockerReference()) != "debian" {
-		return fmt.Errorf("invalid image %s: must be alpine or debian", w.Image)
+	switch p := reference.Path(ref); p {
+	case "library/alpine", "library/debian":
+	default:
+		return fmt.Errorf("invalid image %s (%s): must be alpine or debian", w.Image, p)
 	}
 
 	return nil

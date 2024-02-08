@@ -31,7 +31,7 @@ func Load(data []byte) (Config, error) {
 
 func (c Config) Validate() error {
 	if c.Version != "v1alpha1" {
-		return fmt.Errorf("unsupported version %s", c.Version)
+		return fmt.Errorf("unsupported turnip.yaml version: %s", c.Version)
 	}
 
 	for _, p := range c.Projects {
