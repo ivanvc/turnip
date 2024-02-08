@@ -11,7 +11,9 @@ data:
   {{- if .Values.config.logLevel }}
   TURNIP_LOG_LEVEL: {{ .Values.config.logLevel }}
   {{- end }}
-  TURNIP_JOB_TTL_SECONDS_AFTER_FINISHED: {{ .Values.config.JobTTLSecondsAfterFinished | quote }}
+  {{- with .Values.config.jobTTLSecondsAfterFinished }}
+  TURNIP_JOB_TTL_SECONDS_AFTER_FINISHED: {{ . | quote }}
+  {{- end }}
   TURNIP_RUNNER_JOB_SECRETS_NAME: {{ include "turnip.fullname" . }}-runner-secrets
   TURNIP_RUNNER_JOB_POD_ANNOTATIONS: >
     {{- toJson .Values.runner.podAnnotations | nindent 4}}
