@@ -15,5 +15,3 @@ data:
   TURNIP_JOB_TTL_SECONDS_AFTER_FINISHED: {{ . | quote }}
   {{- end }}
   TURNIP_RUNNER_JOB_SECRETS_NAME: {{ include "turnip.fullname" . }}-runner-secrets
-  TURNIP_RUNNER_JOB_POD_ANNOTATIONS: >
-    {{- toJson .Values.runner.podAnnotations | nindent 4}}
