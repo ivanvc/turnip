@@ -72,6 +72,47 @@ func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef
 	ttlSeconds := int32(jobTTLSeconds)
 
 	podAnnotations := getPodAnotations(project)
+	env := []corev1.EnvVar{
+		{
+			Name:  "TURNIP_CLONE_URL",
+			Value: cloneURL,
+		},
+		{
+			Name:  "TURNIP_HEAD_REF",
+			Value: headRef,
+		},
+		{
+			Name:  "TURNIP_COMMAND",
+			Value: command,
+		},
+		{
+			Name:  "TURNIP_CHECK_URL",
+			Value: checkURL,
+		},
+		{
+			Name:  "TURNIP_CHECK_NAME",
+			Value: checkName,
+		},
+		{
+			Name:  "TURNIP_PROJECT_YAML",
+			Value: string(projectYAML),
+		},
+		{
+			Name:  "TURNIP_SERVER_NAME",
+			Value: serverName,
+		},
+		{
+			Name:  "TURNIP_COMMENTS_URL",
+			Value: commentsURL,
+		},
+	}
+
+	for k, v := range project.LoadedWorkflow.Env {
+		env = append(env, corev1.EnvVar{
+			Name:  k,
+			Value: v,
+		})
+	}
 
 	// TODO: Use workflow.image, add an init container that downloads the turnip binary
 	return &batchv1.Job{
@@ -102,40 +143,7 @@ func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef
 							Image:           "ivan/turnip:latest",
 							ImagePullPolicy: corev1.PullAlways,
 							Args:            []string{"/opt/turnip/bin/xl-15"},
-							Env: []corev1.EnvVar{
-								{
-									Name:  "TURNIP_CLONE_URL",
-									Value: cloneURL,
-								},
-								{
-									Name:  "TURNIP_HEAD_REF",
-									Value: headRef,
-								},
-								{
-									Name:  "TURNIP_COMMAND",
-									Value: command,
-								},
-								{
-									Name:  "TURNIP_CHECK_URL",
-									Value: checkURL,
-								},
-								{
-									Name:  "TURNIP_CHECK_NAME",
-									Value: checkName,
-								},
-								{
-									Name:  "TURNIP_PROJECT_YAML",
-									Value: string(projectYAML),
-								},
-								{
-									Name:  "TURNIP_SERVER_NAME",
-									Value: serverName,
-								},
-								{
-									Name:  "TURNIP_COMMENTS_URL",
-									Value: commentsURL,
-								},
-							},
+							Env:             env,
 							EnvFrom: []corev1.EnvFromSource{
 								{
 									SecretRef: &corev1.SecretEnvSource{
