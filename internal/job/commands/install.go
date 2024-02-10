@@ -8,14 +8,14 @@ import (
 	"github.com/ivanvc/turnip/internal/yaml"
 )
 
-func Install(dir, repoDir string, project yaml.Project) (string, error) {
+func Install(dir, repoDir string, project yaml.Project) ([]byte, error) {
 	p := plugin.Load(project)
-	return p.Install(dir, repoDir)
+	return p.InstallDependencies(dir, repoDir)
 }
 
-func Plot(binDir, repoDir string, project yaml.Project) (bool, []byte, error) {
+func Plot(repoDir string, project yaml.Project) (bool, []byte, error) {
 	p := plugin.Load(project)
-	return p.Plot(binDir, repoDir)
+	return p.Plot(repoDir)
 }
 
 func RunInitCommands(repoDir string, project yaml.Project) ([]byte, error) {

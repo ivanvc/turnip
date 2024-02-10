@@ -93,10 +93,9 @@ func run() (bool, []byte, error) {
 		return false, []byte{}, err
 	}
 
-	binDir, err := commands.Install(tmpDir, repoDir, project)
-	if err != nil {
-		log.Error("error installing tool", "error", err)
-		return false, []byte{}, err
+	if output, err := commands.Install(tmpDir, repoDir, project); err != nil {
+		log.Error("error installing dependencies", "error", err)
+		return false, output, err
 	}
 
 	output, err := commands.RunInitCommands(repoDir, project)
@@ -105,7 +104,7 @@ func run() (bool, []byte, error) {
 		return false, output, err
 	}
 
-	returnCode, output, err := commands.Plot(binDir, repoDir, project)
+	returnCode, output, err := commands.Plot(repoDir, project)
 	if err != nil {
 		log.Error("error running plot", "error", err)
 	}

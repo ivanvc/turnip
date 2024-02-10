@@ -11,9 +11,9 @@ type Plugin interface {
 	//Workspace() string
 	// Version returns the version of the plugin.
 	//Version() string
-	Install(string, string) (string, error)
+	InstallDependencies(string, string) ([]byte, error)
 
-	Plot(string, string) (bool, []byte, error)
+	Plot(string) (bool, []byte, error)
 
 	RunInitCommands(string) ([]byte, error)
 }

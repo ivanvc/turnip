@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,12 +25,12 @@ type Pulumi struct {
 
 const downloadURL = "https://github.com/pulumi/pulumi/releases/download/v%s/pulumi-v%s-linux-x64.tar.gz"
 
-func (p Pulumi) Install(dest, repoDir string) (string, error) {
+func (p Pulumi) InstallDependencies(dest, repoDir string) ([]byte, error) {
 	// TODO: Get version from "VersionFrom" or skip install if "SkipInstall" is true
 	adapter, err := p.project.LoadedWorkflow.GetAdapter()
 	if err != nil {
 		log.Error("error getting adapter", "err", err)
-		return "", err
+		return []byte{}, err
 	}
 
 	version := adapter.GetVersion()
@@ -36,57 +38,60 @@ func (p Pulumi) Install(dest, repoDir string) (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		log.Error("error getting working directory", "err", err)
-		return "", err
+		return []byte{}, err
 	}
 	defer os.Chdir(wd)
 
 	if err := os.Chdir(dest); err != nil {
 		log.Error("error changing directory", "err", err)
-		return "", err
+		return []byte{}, err
 	}
 
 	resp, err := http.Get(fmt.Sprintf(downloadURL, version, version))
 	if err != nil {
 		log.Error("error downloading", "err", err)
-		return "", err
+		return []byte{}, err
 	}
 
 	filePath := path.Join(dest, "pulumi.tgz")
 	out, err := os.Create(filePath)
 	if err != nil {
 		log.Error("error creating file", "err", err)
-		return "", err
+		return []byte{}, err
 	}
 	defer out.Close()
 
 	if _, err = io.Copy(out, resp.Body); err != nil {
 		log.Error("error writing download", "err", err)
-		return "", err
+		return []byte{}, err
 	}
 
+	output := new(bytes.Buffer)
 	cmd := exec.Command("tar", "zxf", "pulumi.tgz")
+	cmd.Stdout = output
+	cmd.Stderr = output
 	if err := cmd.Run(); err != nil {
 		log.Error("error executing", "err", err, "cmd", cmd)
-		return "", err
+		return output.Bytes(), err
 	}
 
 	files, err := filepath.Glob(filepath.Join(dest, "pulumi", "*"))
 	if err != nil {
 		log.Error("error globbing", "err", err)
-		return "", err
+		return output.Bytes(), err
 	}
 	for _, file := range files {
-		log.Info("copying file", "file", file)
 		if err := copyFile(file, "/opt/turnip/bin"); err != nil {
 			log.Error("error copying", "err", err)
-			return "", err
+			return output.Bytes(), err
 		}
 	}
 
-	return "", installRuntime(filepath.Join(repoDir, p.project.Dir, "Pulumi.yaml"))
+	yamlFile := filepath.Join(repoDir, p.project.Dir, "Pulumi.yaml")
+	return output.Bytes(), installRuntime(yamlFile, output)
 }
 
-func installRuntime(inputYAML string) error {
+func installRuntime(inputYAML string, buf *bytes.Buffer) error {
 	f, err := os.Open(inputYAML)
 	if err != nil {
 		log.Error("error opening Pulumi.yaml", "err", err, "file", inputYAML)
@@ -118,6 +123,8 @@ func installRuntime(inputYAML string) error {
 	}
 
 	cmd := exec.Command("apk", args...)
+	cmd.Stdout = buf
+	cmd.Stderr = buf
 	if err := cmd.Run(); err != nil {
 		log.Error("error installing runtime", "err", err, "cmd", cmd)
 		return err
@@ -148,7 +155,7 @@ func copyFile(src, dest string) error {
 		return err
 	}
 	defer destinationFile.Close()
-	log.Info("copying file", "src", src, "dest", destination)
+	log.Debug("copying file", "src", src, "dest", destination)
 
 	_, err = io.Copy(destinationFile, source)
 	if err != nil {
@@ -158,7 +165,7 @@ func copyFile(src, dest string) error {
 	return os.Chmod(destination, srcFileStat.Mode())
 }
 
-func (p Pulumi) Plot(binDir, repoDir string) (bool, []byte, error) {
+func (p Pulumi) Plot(repoDir string) (bool, []byte, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		log.Error("error getting working directory", "err", err)
@@ -173,31 +180,52 @@ func (p Pulumi) Plot(binDir, repoDir string) (bool, []byte, error) {
 	}
 	log.Info("changed directory", "dir", dir)
 
+	output := new(bytes.Buffer)
 	cmd := exec.Command(
 		"pulumi",
 		"--non-interactive",
+		"--color",
+		"never",
 		"preview",
-		"--json",
+		"--diff",
 		"--stack",
 		p.project.Stack,
 	)
 
-	cmd.Env = append(cmd.Environ(), "")
-	for k, v := range p.project.LoadedWorkflow.Env {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+	cmd.Stdout = output
+	cmd.Stderr = output
+
+	log.Debug("running pulumi preview", "cmd", cmd)
+
+	if err := cmd.Run(); err != nil {
+		log.Error("error running pulumi preview", "err", err, "output", output.String())
+		return false, output.Bytes(), err
+	}
+	log.Debug("pulumi preview output", "exitCode", cmd.ProcessState.ExitCode())
+
+	if cmd.ProcessState.ExitCode() != 0 {
+		return true, output.Bytes(), nil
 	}
 
-	log.Info("running pulumi preview", "cmd", cmd, "env", cmd.Env)
+	return false, processOutput(output.Bytes()), nil
+}
 
-	out, err := cmd.Output()
-	//out, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Error("error running pulumi preview", "err", err, "output", string(out))
-		return false, out, err
+func processOutput(in []byte) []byte {
+	out := new(bytes.Buffer)
+	skipLines := true
+	s := bufio.NewScanner(bytes.NewReader(in))
+	for s.Scan() {
+		if strings.HasPrefix(s.Text(), "Finished installing dependencies") {
+			skipLines = false
+			continue
+		}
+		if skipLines || strings.HasPrefix(s.Text(), "@") {
+			continue
+		}
+		out.WriteString(s.Text())
+		out.WriteString("\n")
 	}
-	log.Info("pulumi preview output", "output", string(out), "exitCode", cmd.ProcessState.ExitCode())
-
-	return cmd.ProcessState.ExitCode() != 0, out, nil
+	return out.Bytes()
 }
 
 func (p Pulumi) RunInitCommands(repoDir string) ([]byte, error) {
