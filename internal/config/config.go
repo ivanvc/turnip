@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"flag"
 	"os"
 	"strconv"
@@ -17,6 +18,7 @@ type Config struct {
 	ServerName                 string
 	JobSecretsName             string
 	JobTTLSecondsAfterFinished int
+	RunnerPodAnnotations       map[string]string
 }
 
 func Load() *Config {
@@ -35,7 +37,13 @@ func Load() *Config {
 		i = 300
 	}
 	flag.IntVar(&c.JobTTLSecondsAfterFinished, "job-ttl-seconds-after-finished", i, "TTL for jobs after they finish.")
+	annotations := flag.String("runner-pod-annotations", envOrDefault("TURNIP_RUNNER_POD_ANNOTATIONS", "{}"), "Annotations to add to the runner pod.")
 	flag.Parse()
+
+	if err := json.Unmarshal([]byte(*annotations), &c.RunnerPodAnnotations); err != nil {
+		log.Error("error parsing runner-pod-annotations", "error", err)
+		c.RunnerPodAnnotations = make(map[string]string)
+	}
 
 	return c
 }

@@ -17,6 +17,9 @@ type Project struct {
 	AutoPreview bool `yaml:"autoPreview"`
 	AutoDiff    bool `yaml:"autoDiff"`
 
+	PodAnnotations map[string]string `yaml:"podAnnotations"`
+	Env            map[string]string `yaml:"env"`
+
 	WhenModified []string `yaml:"whenModified"`
 
 	Workflow       string   `yaml:"workflow"`

@@ -14,7 +14,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/ivanvc/turnip/internal/config"
-	"github.com/ivanvc/turnip/internal/template"
 	"github.com/ivanvc/turnip/internal/yaml"
 )
 
@@ -25,12 +24,13 @@ var (
 // Client holds a wrapped Kubernetes client.
 type Client struct {
 	*k8s.Clientset
-	config        *rest.Config
-	namespace     string
-	githubToken   string
-	serverName    string
-	jobSecrets    string
-	jobTTLSeconds int
+	config         *rest.Config
+	namespace      string
+	githubToken    string
+	serverName     string
+	jobSecrets     string
+	jobTTLSeconds  int
+	podAnnotations map[string]string
 }
 
 // LoadClient creates a new Client singleton.
@@ -44,20 +44,21 @@ func LoadClient(config *config.Config) *Client {
 		log.Fatal("error initializing Kubernetes client", "error", err)
 	}
 	return &Client{
-		Clientset:     cs,
-		config:        cfg,
-		namespace:     config.Namespace,
-		githubToken:   config.GitHubToken,
-		serverName:    config.ServerName,
-		jobSecrets:    config.JobSecretsName,
-		jobTTLSeconds: config.JobTTLSecondsAfterFinished,
+		Clientset:      cs,
+		config:         cfg,
+		namespace:      config.Namespace,
+		githubToken:    config.GitHubToken,
+		serverName:     config.ServerName,
+		jobSecrets:     config.JobSecretsName,
+		jobTTLSeconds:  config.JobTTLSecondsAfterFinished,
+		podAnnotations: config.RunnerPodAnnotations,
 	}
 }
 
 func (c *Client) CreateJob(command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project) error {
 	if _, err := c.BatchV1().Jobs(c.namespace).Create(
 		context.Background(),
-		getJob(c.namespace, c.githubToken, c.serverName, c.jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL, project, c.jobTTLSeconds),
+		getJob(c.namespace, c.githubToken, c.serverName, c.jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL, project, c.jobTTLSeconds, c.podAnnotations),
 		metav1.CreateOptions{},
 	); err != nil {
 		return err
@@ -66,12 +67,12 @@ func (c *Client) CreateJob(command, cloneURL, headRef, repoFullName, checkURL, c
 	return nil
 }
 
-func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project, jobTTLSeconds int) *batchv1.Job {
+func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project, jobTTLSeconds int, annotations map[string]string) *batchv1.Job {
 	projectYAML := marshalProjectYAML(project)
 	generatedName := getGeneratedName(command, repoFullName, project)
 	ttlSeconds := int32(jobTTLSeconds)
 
-	podAnnotations := getPodAnotations(project)
+	podAnnotations := getPodAnotations(project, annotations)
 	env := []corev1.EnvVar{
 		{
 			Name:  "TURNIP_CLONE_URL",
@@ -108,6 +109,12 @@ func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef
 	}
 
 	for k, v := range project.LoadedWorkflow.Env {
+		env = append(env, corev1.EnvVar{
+			Name:  k,
+			Value: v,
+		})
+	}
+	for k, v := range project.Env {
 		env = append(env, corev1.EnvVar{
 			Name:  k,
 			Value: v,
@@ -184,23 +191,16 @@ func marshalProjectYAML(project *yaml.Project) []byte {
 	return result
 }
 
-func getPodAnotations(project *yaml.Project) map[string]string {
+func getPodAnotations(project *yaml.Project, configAnnotations map[string]string) map[string]string {
 	annotations := make(map[string]string)
-	t := template.New(*project)
+	for k, v := range configAnnotations {
+		annotations[k] = v
+	}
 	for k, v := range project.LoadedWorkflow.PodAnnotations {
-		key := k
-		value := v
-		if r, err := t.Execute(k); err != nil {
-			log.Error("error executing annotation template", "key", k, "error", err)
-		} else {
-			key = r
-		}
-		if r, err := t.Execute(v); err != nil {
-			log.Error("error executing annotation template", "value", v, "error", err)
-		} else {
-			value = r
-		}
-		annotations[key] = value
+		annotations[k] = v
+	}
+	for k, v := range project.PodAnnotations {
+		annotations[k] = v
 	}
 	return annotations
 }

@@ -1,12 +1,9 @@
 package yaml
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
 	"slices"
-
-	"github.com/distribution/reference"
 )
 
 type Workflow struct {
@@ -14,7 +11,6 @@ type Workflow struct {
 	Helmfile  *HelmfileAdapter  `yaml:"helmfile"`
 	Pulumi    *PulumiAdapter    `yaml:"pulumi"`
 
-	Image          string            `yaml:"image"`
 	PodAnnotations map[string]string `yaml:"podAnnotations"`
 	Env            map[string]string `yaml:"env"`
 	InitCommands   []Command         `yaml:"initCommands"`
@@ -41,19 +37,6 @@ func (w Workflow) Validate() error {
 	}
 	if err := adapter.Validate(); err != nil {
 		return fmt.Errorf("adapter %s: %s", adapter.GetName(), err.Error())
-	}
-
-	if w.Image == "" {
-		return errors.New("image not set")
-	}
-	ref, err := reference.ParseDockerRef(w.Image)
-	if err != nil {
-		return fmt.Errorf("invalid image %s: %s", w.Image, err.Error())
-	}
-	switch p := reference.Path(ref); p {
-	case "library/alpine", "library/debian":
-	default:
-		return fmt.Errorf("invalid image %s (%s): must be alpine or debian", w.Image, p)
 	}
 
 	return nil
