@@ -226,6 +226,11 @@ func processOutput(in []byte) []byte {
 	out := new(bytes.Buffer)
 	skipLines := true
 	s := bufio.NewScanner(bytes.NewReader(in))
+
+	// Keep first line
+	s.Scan()
+	out.WriteString(s.Text() + "\n")
+
 	for s.Scan() {
 		if strings.HasPrefix(s.Text(), "Finished installing dependencies") {
 			skipLines = false
@@ -234,25 +239,36 @@ func processOutput(in []byte) []byte {
 		if skipLines || strings.HasPrefix(s.Text(), "@") {
 			continue
 		}
-		spaces := 0
-		prefix := ""
-		text := strings.TrimLeftFunc(s.Text(), func(r rune) bool {
-			switch r {
-			case ' ':
-				spaces++
-			case '-', '+', '~', '=', '>', '<':
-				prefix += string(r)
-			default:
-				return false
-			}
-			return true
-		})
-		out.WriteString(prefix)
-		out.WriteString(strings.Repeat(" ", spaces))
-		out.WriteString(text)
+		out.WriteString(formatLine(s.Text()))
 		out.WriteString("\n")
 	}
 	return out.Bytes()
+}
+
+func formatLine(input string) string {
+	spaces, index := 0, 0
+	prefix := ""
+
+outterloop:
+	for i, r := range input {
+		switch r {
+		case ' ':
+			if len(prefix) > 0 {
+				return input
+			}
+			spaces++
+		case '-', '+', '~', '=', '>', '<':
+			prefix += string(r)
+			if len(prefix) > 2 {
+				return input
+			}
+		default:
+			index = i
+			break outterloop
+		}
+	}
+
+	return fmt.Sprintf("%s%s%s", prefix, strings.Repeat(" ", spaces), input[index:])
 }
 
 func (p Pulumi) RunInitCommands(repoDir string) ([]byte, error) {
