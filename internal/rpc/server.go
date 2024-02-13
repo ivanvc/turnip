@@ -10,7 +10,6 @@ import (
 
 	"github.com/ivanvc/turnip/internal/adapters/github"
 	"github.com/ivanvc/turnip/internal/common"
-	"github.com/ivanvc/turnip/internal/plugin/pulumi"
 	pb "github.com/ivanvc/turnip/pkg/turnip"
 )
 
@@ -57,11 +56,7 @@ func (s *Server) ReportJobFinished(ctx context.Context, in *pb.JobFinishedReques
 	comment := fmt.Sprintf("Ran plan for [[project]] [[workspace]]\n\nStatus: %s", in.GetStatus())
 	// if project type == pulumi
 	comment += fmt.Sprintf("\n\n<details><summary>Show Output</summary>\n\n")
-	if diff, err := pulumi.NewFormatter(in.GetOutput()).Format(); err != nil {
-		comment += fmt.Sprintf("Error formatting diff: %v", err)
-	} else {
-		comment += diff
-	}
+	comment += fmt.Sprintf("```diff\n%s\n```", in.GetOutput())
 	comment += fmt.Sprintf("\n</details>")
 	err = s.gitHubClient.CreateComment(in.GetCommentsUrl(), comment)
 	return &pb.JobFinishedReply{}, err

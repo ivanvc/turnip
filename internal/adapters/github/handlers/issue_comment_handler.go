@@ -75,14 +75,31 @@ func rootCmd(common *common.Common, ic *objects.IssueComment) *cobra.Command {
 		},
 	}
 
-	var directory, workspace, environment, stack string
-	var plotCmd = &cobra.Command{
-		Use:     "plot",
-		Aliases: []string{"diff", "plan", "preview", "pre"},
-		Short:   "Plot changes in your infrastructure",
+	root.AddCommand(getCobraCmd(common, ic, "plot"))
+	root.AddCommand(getCobraCmd(common, ic, "lift"))
+	return root
+}
+
+func getCobraCmd(common *common.Common, ic *objects.IssueComment, cmdName string) *cobra.Command {
+	var directory, workspace, environment, stack, description string
+	var aliases []string
+
+	switch cmdName {
+	case "plot":
+		aliases = []string{"diff", "plan", "preview", "pre"}
+		description = "Plot changes in your infrastructure"
+	case "lift":
+		aliases = []string{"apply", "deploy", "up"}
+		description = "Lift applies changes in your infrastructure"
+	}
+
+	var cmd = &cobra.Command{
+		Use:     cmdName,
+		Aliases: aliases,
+		Short:   description,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if ic.PullRequest == nil {
-				return errors.New("I can only plot pull requests")
+				return errors.New("I can only work on pull requests")
 			}
 			yml, err := common.GitHubClient.FetchFile("turnip.yaml", ic.Repository, ic.PullRequest.Head)
 
@@ -101,40 +118,39 @@ func rootCmd(common *common.Common, ic *objects.IssueComment) *cobra.Command {
 
 			projects, err := getListOfProjectsToPlot(common, ic.PullRequest, false)
 			if err != nil {
-				log.Error("Error getting list of projects to plot", "error", err)
+				log.Error("Error getting list of projects", "error", err)
 				return err
 			}
-			log.Debug("projects to plot", "projects", projects)
+			log.Debug("projects to run", "projects", projects)
 
 			if len(directory) > 0 {
 				projects = slices.DeleteFunc(projects, func(p *yaml.Project) bool {
 					return p.Dir == directory
 				})
 			}
-			log.Debug("projects to plot after directory filter", "projects", projects)
+			log.Debug("projects to run after directory filter", "projects", projects)
 
 			if len(workspace) > 0 {
 				projects = slices.DeleteFunc(projects, func(p *yaml.Project) bool {
 					return p.Workspace == workspace
 				})
 			}
-			log.Debug("projects to plot after workspace filter", "projects", projects)
+			log.Debug("projects to run after workspace filter", "projects", projects)
 
 			if len(projects) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No projects to plot")
+				fmt.Fprintln(cmd.OutOrStdout(), "No projects to"+cmdName)
 				return nil
 			}
 
-			return triggerProjects(common, ic.PullRequest, projects)
+			return triggerProjects(common, cmdName, ic.PullRequest, projects)
 		},
 	}
-	plotCmd.Flags().StringVarP(&directory, "directory", "d", directory, "the directory containing the IaC")
+	cmd.Flags().StringVarP(&directory, "directory", "d", directory, "the directory containing the IaC")
 	// TODO: Get these from the plugins
-	plotCmd.Flags().StringVarP(&workspace, "workspace", "w", workspace, "the Terraform workspace to use")
-	plotCmd.Flags().StringVarP(&environment, "environment", "e", environment, "the Helmfile environment to use")
-	plotCmd.Flags().StringVarP(&stack, "stack", "s", stack, "the Pulumi stack to use")
-	plotCmd.MarkFlagsMutuallyExclusive("workspace", "environment", "stack")
+	cmd.Flags().StringVarP(&workspace, "workspace", "w", workspace, "the Terraform workspace to use")
+	cmd.Flags().StringVarP(&environment, "environment", "e", environment, "the Helmfile environment to use")
+	cmd.Flags().StringVarP(&stack, "stack", "s", stack, "the Pulumi stack to use")
+	cmd.MarkFlagsMutuallyExclusive("workspace", "environment", "stack")
 
-	root.AddCommand(plotCmd)
-	return root
+	return cmd
 }

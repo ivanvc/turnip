@@ -27,12 +27,20 @@ func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhoo
 		return err
 	}
 
-	return triggerProjects(common, pr, projects)
+	return triggerProjects(common, "plot", pr, projects)
 }
 
-func triggerProjects(common *common.Common, pr *objects.PullRequest, projects []*yaml.Project) error {
+func triggerProjects(common *common.Common, cmdName string, pr *objects.PullRequest, projects []*yaml.Project) error {
 	for _, prj := range projects {
-		name := fmt.Sprintf("turnip[%s/%s]: %s:%s", prj.GetAdapterName(), prj.GetPlotName(), prj.Dir, prj.GetWorkspace())
+		var cmd string
+		switch cmdName {
+		case "plot":
+			cmd = prj.GetPlotName()
+		case "lift":
+			cmd = prj.GetLiftName()
+		}
+
+		name := fmt.Sprintf("turnip/%s/%s/%s/%s", prj.GetAdapterName(), cmd, prj.Dir, prj.GetWorkspace())
 		checkURL, err := common.GitHubClient.CreateCheckRun(pr, name)
 		if err != nil {
 			log.Error("error creating check run", "error", err)
@@ -41,7 +49,7 @@ func triggerProjects(common *common.Common, pr *objects.PullRequest, projects []
 
 		log.Debug("creating job", "checkURL", checkURL)
 		repo := pr.Base.Repository
-		if err := common.KubernetesClient.CreateJob("plot", repo.CloneURL, pr.Head.Ref, repo.FullName, checkURL, name, pr.CommentsURL, prj); err != nil {
+		if err := common.KubernetesClient.CreateJob(cmdName, repo.CloneURL, pr.Head.Ref, repo.FullName, checkURL, name, pr.CommentsURL, prj); err != nil {
 			log.Error("error creating job", "error", err)
 			return err
 		}

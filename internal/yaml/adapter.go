@@ -5,6 +5,7 @@ import "fmt"
 type Adapter interface {
 	GetName() string
 	GetPlotName() string
+	GetLiftName() string
 	GetVersion() string
 	GetWorkspace(Project) string
 	Validate() error
@@ -18,6 +19,7 @@ type HelmfileAdapter struct {
 
 func (HelmfileAdapter) GetName() string                 { return "helmfile" }
 func (HelmfileAdapter) GetPlotName() string             { return "diff" }
+func (HelmfileAdapter) GetLiftName() string             { return "apply" }
 func (a HelmfileAdapter) GetVersion() string            { return a.Version }
 func (a HelmfileAdapter) GetWorkspace(p Project) string { return p.Environment }
 func (a HelmfileAdapter) Validate() error {
@@ -32,6 +34,7 @@ type TerraformAdapter struct {
 
 func (TerraformAdapter) GetName() string                 { return "terraform" }
 func (TerraformAdapter) GetPlotName() string             { return "plan" }
+func (TerraformAdapter) GetLiftName() string             { return "apply" }
 func (a TerraformAdapter) GetVersion() string            { return a.Version }
 func (a TerraformAdapter) GetWorkspace(p Project) string { return p.Workspace }
 func (a TerraformAdapter) Validate() error {
@@ -46,6 +49,7 @@ type PulumiAdapter struct {
 
 func (PulumiAdapter) GetName() string                 { return "pulumi" }
 func (PulumiAdapter) GetPlotName() string             { return "preview" }
+func (PulumiAdapter) GetLiftName() string             { return "up" }
 func (a PulumiAdapter) GetVersion() string            { return a.Version }
 func (a PulumiAdapter) GetWorkspace(p Project) string { return p.Stack }
 func (a PulumiAdapter) Validate() error {

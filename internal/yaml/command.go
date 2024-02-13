@@ -4,7 +4,6 @@ type Command struct {
 	Env        map[string]string `yaml:"env"`
 	Run        string            `yaml:"run"`
 	Pulumi     string            `yaml:"pulumi"`
-	AWS        string            `yaml:"aws"`
 	OmitOutput bool              `yaml:"omitOutput"`
 }
 

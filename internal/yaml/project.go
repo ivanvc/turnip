@@ -76,6 +76,14 @@ func (p Project) GetPlotName() string {
 	return a.GetPlotName()
 }
 
+func (p Project) GetLiftName() string {
+	a, err := p.LoadedWorkflow.GetAdapter()
+	if err != nil {
+		return ""
+	}
+	return a.GetLiftName()
+}
+
 func (p Project) GetAdapterName() string {
 	a, err := p.LoadedWorkflow.GetAdapter()
 	if err != nil {

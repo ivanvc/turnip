@@ -18,8 +18,8 @@ func (p Pulumi) PlanName() string {
 	return "preview"
 }
 
-// ApplyName conforms to the Plugin interface.
-func (p Pulumi) ApplyName() string {
+// LiftName conforms to the Plugin interface.
+func (p Pulumi) LiftName() string {
 	return "up"
 }
 

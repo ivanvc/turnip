@@ -8,8 +8,8 @@ type Plugin interface {
 	Name() string
 	// PlanName returns the name of the plan command.
 	PlanName() string
-	// ApplyName returns the name of the apply command.
-	ApplyName() string
+	// LiftName returns the name of the lift command.
+	LiftName() string
 	// Workspace returns the workspace/sack/environment to use for the project.
 	Workspace(project *yaml.Project) string
 	// AutoPlan returns the auto plan configuration.

@@ -165,7 +165,15 @@ func copyFile(src, dest string) error {
 	return os.Chmod(destination, srcFileStat.Mode())
 }
 
+func (p Pulumi) Lift(repoDir string) (bool, []byte, error) {
+	return p.runCommand("up", repoDir)
+}
+
 func (p Pulumi) Plot(repoDir string) (bool, []byte, error) {
+	return p.runCommand("preview", repoDir)
+}
+
+func (p Pulumi) runCommand(command, repoDir string) (bool, []byte, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		log.Error("error getting working directory", "err", err)
@@ -181,16 +189,20 @@ func (p Pulumi) Plot(repoDir string) (bool, []byte, error) {
 	log.Info("changed directory", "dir", dir)
 
 	output := new(bytes.Buffer)
-	cmd := exec.Command(
-		"pulumi",
+	args := []string{
 		"--non-interactive",
 		"--color",
 		"never",
-		"preview",
+		command,
 		"--diff",
 		"--stack",
 		p.project.Stack,
-	)
+	}
+	if command == "up" {
+		args = append(args, "--yes")
+		args = append(args, "--skip-preview")
+	}
+	cmd := exec.Command("pulumi", args...)
 
 	cmd.Stdout = output
 	cmd.Stderr = output
@@ -222,7 +234,22 @@ func processOutput(in []byte) []byte {
 		if skipLines || strings.HasPrefix(s.Text(), "@") {
 			continue
 		}
-		out.WriteString(s.Text())
+		spaces := 0
+		prefix := ""
+		text := strings.TrimLeftFunc(s.Text(), func(r rune) bool {
+			switch r {
+			case ' ':
+				spaces++
+			case '-', '+', '~', '=', '>', '<':
+				prefix += string(r)
+			default:
+				return false
+			}
+			return true
+		})
+		out.WriteString(prefix)
+		out.WriteString(strings.Repeat(" ", spaces))
+		out.WriteString(text)
 		out.WriteString("\n")
 	}
 	return out.Bytes()

@@ -18,6 +18,11 @@ func Plot(repoDir string, project yaml.Project) (bool, []byte, error) {
 	return p.Plot(repoDir)
 }
 
+func Lift(repoDir string, project yaml.Project) (bool, []byte, error) {
+	p := plugin.Load(project)
+	return p.Lift(repoDir)
+}
+
 func RunInitCommands(repoDir string, project yaml.Project) ([]byte, error) {
 	p := plugin.Load(project)
 	w := project.LoadedWorkflow

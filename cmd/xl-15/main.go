@@ -104,11 +104,19 @@ func run() (bool, []byte, error) {
 		return false, output, err
 	}
 
-	returnCode, output, err := commands.Plot(repoDir, project)
-	if err != nil {
-		log.Error("error running plot", "error", err)
+	var returnCode bool
+	switch os.Getenv("TURNIP_COMMAND") {
+	case "plot":
+		returnCode, output, err = commands.Plot(repoDir, project)
+		if err != nil {
+			log.Error("error running plot", "error", err)
+		}
+	case "lift":
+		returnCode, output, err = commands.Lift(repoDir, project)
+		if err != nil {
+			log.Error("error running lift", "error", err)
+		}
 	}
-
 	return returnCode, output, err
 }
 

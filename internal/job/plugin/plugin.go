@@ -15,6 +15,8 @@ type Plugin interface {
 
 	Plot(string) (bool, []byte, error)
 
+	Lift(string) (bool, []byte, error)
+
 	RunInitCommands(string) ([]byte, error)
 }
 
