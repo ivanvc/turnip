@@ -62,6 +62,30 @@ func (c *Client) GetPullRequestFromIssueComment(ic *objects.IssueComment) (*obje
 	return &pr, nil
 }
 
+func (c *Client) GetCommitFromRef(repo, ref string) (*objects.Commit, error) {
+	u, err := c.parseURL("https://api.github.com/repos/" + repo + "/commits/" + ref)
+	if err != nil {
+		log.Error("Error parsing URL", "error", err)
+		return nil, err
+	}
+
+	resp, err := http.Get(u.String())
+	if err != nil {
+		log.Error("Error fetching Commit", "repo", repo, "ref", ref, "error", err)
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+	decoder := json.NewDecoder(resp.Body)
+	var commit objects.Commit
+	if err := decoder.Decode(&commit); err != nil {
+		log.Error("Error unmarshalling", "error", err)
+		return nil, err
+	}
+
+	return &commit, nil
+}
+
 func (c *Client) CreateCheckRun(statusesURL, sha, name string) (string, error) {
 	u, err := c.parseURL(strings.Replace(statusesURL, "{sha}", sha, 1))
 	if err != nil {

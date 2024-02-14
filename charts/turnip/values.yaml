@@ -97,6 +97,8 @@ config:
 secrets:
   # The GitHub token with repos access
   githubToken: ""
+  # The token to use to authenticate API calls
+  apiToken: ""
 
 additionalSecrets: {}
 

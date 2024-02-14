@@ -22,8 +22,18 @@ func (h *apiHandler) registerHandler(s *Server) {
 // Handles the HTTP request.
 func (h *apiHandler) handleLift(s *Server) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
+		if s.Config.APIToken == "" {
+			w.WriteHeader(http.StatusNotImplemented)
+			return
+		}
+
 		if req.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		if req.Header.Get("Authentication") != "Bearer "+s.Config.APIToken {
+			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 

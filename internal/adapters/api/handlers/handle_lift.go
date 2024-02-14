@@ -76,10 +76,13 @@ func triggerProject(common *common.Common, cmdName string, project *yaml.Project
 
 	log.Debug("creating job", "checkURL", checkURL)
 	cloneURL := fmt.Sprintf("https://github.com/%s.git", payload.Repo)
-	// TODO: get commit from ref
-	panic("not implemented: get commit from ref")
-	commentsURL := fmt.Sprintf("https://api.github.com/repos/%s/issues/{issue_number}/comments", payload.Repo)
-	if err := common.KubernetesClient.CreateJob(cmdName, cloneURL, payload.Ref, payload.Repo, checkURL, name, commentsURL, project); err != nil {
+	commit, err := common.GitHubClient.GetCommitFromRef(payload.Repo, payload.Ref)
+	if err != nil {
+		log.Error("error getting commit", "error", err)
+		return nil, err
+	}
+
+	if err := common.KubernetesClient.CreateJob(cmdName, cloneURL, payload.Ref, payload.Repo, checkURL, name, commit.CommentsURL, project); err != nil {
 		log.Error("error creating job", "error", err)
 		return nil, err
 	}

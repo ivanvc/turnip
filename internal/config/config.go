@@ -19,6 +19,7 @@ type Config struct {
 	JobSecretsName             string
 	JobTTLSecondsAfterFinished int
 	RunnerPodAnnotations       map[string]string
+	APIToken                   string
 }
 
 func Load() *Config {
@@ -37,6 +38,7 @@ func Load() *Config {
 		i = 300
 	}
 	flag.IntVar(&c.JobTTLSecondsAfterFinished, "job-ttl-seconds-after-finished", i, "TTL for jobs after they finish.")
+	flag.StringVar(&c.APIToken, "api-token", envOrDefault("TURNIP_API_TOKEN", ""), "API token to use for API calls.")
 	annotations := flag.String("runner-pod-annotations", envOrDefault("TURNIP_RUNNER_POD_ANNOTATIONS", "{}"), "Annotations to add to the runner pod.")
 	flag.Parse()
 
