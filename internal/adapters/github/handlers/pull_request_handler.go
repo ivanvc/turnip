@@ -41,7 +41,11 @@ func triggerProjects(common *common.Common, cmdName string, pr *objects.PullRequ
 		}
 
 		name := fmt.Sprintf("turnip/%s/%s/%s/%s", prj.GetAdapterName(), cmd, prj.Dir, prj.GetWorkspace())
-		checkURL, err := common.GitHubClient.CreateCheckRun(pr, name)
+		checkURL, err := common.GitHubClient.CreateCheckRun(
+			pr.Base.Repository.StatusesURL,
+			pr.Head.SHA,
+			name,
+		)
 		if err != nil {
 			log.Error("error creating check run", "error", err)
 			return err

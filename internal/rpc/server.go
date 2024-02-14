@@ -52,7 +52,7 @@ func (s *Server) ReportJobFinished(ctx context.Context, in *pb.JobFinishedReques
 		in.GetCommand(),
 		in.GetProjectDir(),
 		in.GetProjectWorkspace(),
-		cases.Title.String(language.English, in.GetStatus().String()),
+		cases.Title(language.English).String(in.GetStatus().String()),
 	)
 	// if project type == pulumi
 	comment += fmt.Sprintf("\n\n<details><summary>Show Output</summary>\n\n")

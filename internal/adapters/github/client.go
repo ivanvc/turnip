@@ -62,8 +62,8 @@ func (c *Client) GetPullRequestFromIssueComment(ic *objects.IssueComment) (*obje
 	return &pr, nil
 }
 
-func (c *Client) CreateCheckRun(pr *objects.PullRequest, name string) (string, error) {
-	u, err := c.parseURL(strings.Replace(pr.Base.Repository.StatusesURL, "{sha}", pr.Head.SHA, 1))
+func (c *Client) CreateCheckRun(statusesURL, sha, name string) (string, error) {
+	u, err := c.parseURL(strings.Replace(statusesURL, "{sha}", sha, 1))
 	if err != nil {
 		log.Error("Error parsing URL", "error", err)
 		return "", err

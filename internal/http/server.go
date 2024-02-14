@@ -37,6 +37,7 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) registerHandlers() {
-	(&webhookHandler{}).registerHandler(s)
-	(&statusHandler{}).registerHandler()
+	new(statusHandler).registerHandler()
+	new(webhookHandler).registerHandler(s)
+	new(apiHandler).registerHandler(s)
 }
