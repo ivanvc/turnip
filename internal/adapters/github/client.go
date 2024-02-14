@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/log"
 
@@ -72,7 +71,7 @@ func (c *Client) CreateCheckRun(pr *objects.PullRequest, name string) (string, e
 
 	req := statusRequest{
 		State:       "pending",
-		Description: "Turnip is planning",
+		Description: "Queued",
 		Context:     name,
 	}
 
@@ -100,16 +99,17 @@ func (c *Client) CreateCheckRun(pr *objects.PullRequest, name string) (string, e
 	return result.URL, nil
 }
 
-func (c *Client) StartCheckRun(checkURL string) error {
+func (c *Client) StartCheckRun(checkURL, checkName string) error {
 	u, err := c.parseURL(checkURL)
 	if err != nil {
 		log.Error("Error parsing URL", "error", err)
 		return err
 	}
 
-	req := checkRunRequest{
-		Status:    "in_progress",
-		StartedAt: time.Now().Format(time.RFC3339),
+	req := statusRequest{
+		State:       "pending",
+		Description: "Turnip is running",
+		Context:     checkName,
 	}
 
 	jsonValue, _ := json.Marshal(req)
@@ -130,7 +130,7 @@ func (c *Client) FinishCheckRun(checkURL, checkName, conclusion string) error {
 	req := statusRequest{
 		State:       conclusion,
 		Context:     checkName,
-		Description: "Turnip has finished planning",
+		Description: "Turnip has finished running",
 	}
 
 	jsonValue, _ := json.Marshal(req)

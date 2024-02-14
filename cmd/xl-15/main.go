@@ -17,27 +17,53 @@ import (
 	pb "github.com/ivanvc/turnip/pkg/turnip"
 )
 
+const connRetries = 5
+
 func main() {
 	conn, err := grpc.Dial(fmt.Sprintf("%s:50001", os.Getenv("TURNIP_SERVER_NAME")), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatalf("did not connect: %v", err)
+		log.Fatalf("could not connect to RPC: %v", err)
 	}
 	defer conn.Close()
 
 	cli := pb.NewTurnipClient(conn)
-	log.Info("Connected to server", "client", cli)
+	log.Info("connected to server", "client", cli)
+
+	go func() {
+		for i := 0; i < connRetries; i++ {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			req := &pb.JobStartedRequest{
+				CheckUrl:  os.Getenv("TURNIP_CHECK_URL"),
+				CheckName: os.Getenv("TURNIP_CHECK_NAME"),
+			}
+			if _, err := cli.ReportJobStarted(ctx, req); err != nil {
+				log.Error("error reporting job started", "error", err)
+			} else {
+				break
+			}
+		}
+	}()
 
 	if os.Getenv("TURNIP_PROJECT_YAML") == "" {
 		return
 	}
 
-	req := &pb.JobFinishedRequest{
-		CheckUrl:    os.Getenv("TURNIP_CHECK_URL"),
-		CheckName:   os.Getenv("TURNIP_CHECK_NAME"),
-		CommentsUrl: os.Getenv("TURNIP_COMMENTS_URL"),
+	project, err := yaml.LoadProject([]byte(os.Getenv("TURNIP_PROJECT_YAML")))
+	if err != nil {
+		log.Fatal("error loading project", "error", err)
 	}
 
-	finishedWithError, output, err := run()
+	req := &pb.JobFinishedRequest{
+		CheckUrl:         os.Getenv("TURNIP_CHECK_URL"),
+		CheckName:        os.Getenv("TURNIP_CHECK_NAME"),
+		CommentsUrl:      os.Getenv("TURNIP_COMMENTS_URL"),
+		Command:          os.Getenv("TURNIP_COMMAND"),
+		ProjectDir:       project.Dir,
+		ProjectWorkspace: project.GetWorkspace(),
+	}
+
+	finishedWithError, output, err := run(project)
 	log.Info("Job Finished", "finishedWithError", finishedWithError, "err", err)
 	if err != nil || finishedWithError {
 		req.Status = pb.JobStatus_FAILED
@@ -47,24 +73,18 @@ func main() {
 	req.Output = output
 	log.Info("Job Finished request", "req", req)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	resp, err := cli.ReportJobFinished(ctx, req)
-
-	if err != nil {
-		log.Fatalf("could not send job completed message: %v", err)
+	for i := 0; i < connRetries; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if _, err := cli.ReportJobFinished(ctx, req); err != nil {
+			log.Error("error reporting job started", "error", err)
+		} else {
+			break
+		}
 	}
-	log.Debug("Job Completed response", "resp", resp)
 }
 
-func run() (bool, []byte, error) {
-	project, err := yaml.LoadProject([]byte(os.Getenv("TURNIP_PROJECT_YAML")))
-	if err != nil {
-		log.Error("error loading project", "error", err)
-		return false, []byte{}, err
-	}
-
+func run(project yaml.Project) (bool, []byte, error) {
 	tmpDir, err := os.MkdirTemp("", "turnip-repo-*")
 	if err != nil {
 		log.Error("error creating temp dir", "error", err)

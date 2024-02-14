@@ -6,6 +6,8 @@ import (
 	"net"
 
 	"github.com/charmbracelet/log"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"google.golang.org/grpc"
 
 	"github.com/ivanvc/turnip/internal/adapters/github"
@@ -17,30 +19,23 @@ type Server struct {
 	pb.UnimplementedTurnipServer
 	listen       string
 	gitHubClient *github.Client
-	lol          string
 }
 
 func NewServer(common *common.Common) *Server {
 	return &Server{
 		listen:       common.Config.ListenRPC,
-		lol:          "true",
 		gitHubClient: common.GitHubClient,
 	}
 }
 
-func (s *Server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
-	log.Info("Received", "name", in.GetName())
-	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
-}
-
 func (s *Server) ReportJobStarted(ctx context.Context, in *pb.JobStartedRequest) (*pb.JobStartedReply, error) {
-	log.Info("Received", "in", in)
-	err := s.gitHubClient.StartCheckRun(in.GetCheckUrl())
+	log.Debug("Received Job Started", "in", in)
+	err := s.gitHubClient.StartCheckRun(in.GetCheckUrl(), in.GetCheckName())
 	return &pb.JobStartedReply{}, err
 }
 
 func (s *Server) ReportJobFinished(ctx context.Context, in *pb.JobFinishedRequest) (*pb.JobFinishedReply, error) {
-	log.Info("Received JobFinished")
+	log.Debug("Received JobFinished")
 	var conclusion string
 	switch in.GetStatus() {
 	case pb.JobStatus_SUCCEEDED:
@@ -52,8 +47,13 @@ func (s *Server) ReportJobFinished(ctx context.Context, in *pb.JobFinishedReques
 	if err != nil {
 		log.Error("Error finishing check run", "error", err)
 	}
-	// TODO: <<project>> should be replaced with the project name
-	comment := fmt.Sprintf("Ran plan for [[project]] [[workspace]]\n\nStatus: %s", in.GetStatus())
+	comment := fmt.Sprintf(
+		"Ran %s for %s %s\n\nStatus: %s",
+		in.GetCommand(),
+		in.GetProjectDir(),
+		in.GetProjectWorkspace(),
+		cases.Title.String(language.English, in.GetStatus().String()),
+	)
 	// if project type == pulumi
 	comment += fmt.Sprintf("\n\n<details><summary>Show Output</summary>\n\n")
 	comment += fmt.Sprintf("```diff\n%s\n```", in.GetOutput())

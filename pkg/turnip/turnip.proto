@@ -13,31 +13,24 @@ package turnip;
 service Turnip {
   rpc ReportJobStarted(JobStartedRequest) returns (JobStartedReply) {}
   rpc ReportJobFinished (JobFinishedRequest) returns (JobFinishedReply) {}
-  rpc SayHello (HelloRequest) returns (HelloReply) {}
 }
 
 message JobStartedRequest {
-  string check_url = 1;
+  string check_url  = 1;
+  string check_name = 2;
 }
 
 message JobStartedReply {}
 
 message JobFinishedRequest {
-  string    check_url    = 1;
-  string    check_name   = 2;
-  string    comments_url = 3;
-  JobStatus status       = 4;
-  bytes     output       = 5;
+  string    check_url         = 1;
+  string    check_name        = 2;
+  string    comments_url      = 3;
+  string    command           = 4;
+  string    project_dir       = 5;
+  string    project_workspace = 6;
+  JobStatus status            = 7;
+  bytes     output            = 8;
 }
 
 message JobFinishedReply {}
-
-
-
-message HelloRequest {
-  string name = 1;
-}
-
-message HelloReply {
-  string message = 1;
-}

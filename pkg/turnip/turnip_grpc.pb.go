@@ -24,7 +24,6 @@ const _ = grpc.SupportPackageIsVersion7
 type TurnipClient interface {
 	ReportJobStarted(ctx context.Context, in *JobStartedRequest, opts ...grpc.CallOption) (*JobStartedReply, error)
 	ReportJobFinished(ctx context.Context, in *JobFinishedRequest, opts ...grpc.CallOption) (*JobFinishedReply, error)
-	SayHello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloReply, error)
 }
 
 type turnipClient struct {
@@ -53,22 +52,12 @@ func (c *turnipClient) ReportJobFinished(ctx context.Context, in *JobFinishedReq
 	return out, nil
 }
 
-func (c *turnipClient) SayHello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloReply, error) {
-	out := new(HelloReply)
-	err := c.cc.Invoke(ctx, "/turnip.Turnip/SayHello", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // TurnipServer is the server API for Turnip service.
 // All implementations must embed UnimplementedTurnipServer
 // for forward compatibility
 type TurnipServer interface {
 	ReportJobStarted(context.Context, *JobStartedRequest) (*JobStartedReply, error)
 	ReportJobFinished(context.Context, *JobFinishedRequest) (*JobFinishedReply, error)
-	SayHello(context.Context, *HelloRequest) (*HelloReply, error)
 	mustEmbedUnimplementedTurnipServer()
 }
 
@@ -81,9 +70,6 @@ func (UnimplementedTurnipServer) ReportJobStarted(context.Context, *JobStartedRe
 }
 func (UnimplementedTurnipServer) ReportJobFinished(context.Context, *JobFinishedRequest) (*JobFinishedReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReportJobFinished not implemented")
-}
-func (UnimplementedTurnipServer) SayHello(context.Context, *HelloRequest) (*HelloReply, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SayHello not implemented")
 }
 func (UnimplementedTurnipServer) mustEmbedUnimplementedTurnipServer() {}
 
@@ -134,24 +120,6 @@ func _Turnip_ReportJobFinished_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Turnip_SayHello_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(HelloRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(TurnipServer).SayHello(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/turnip.Turnip/SayHello",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TurnipServer).SayHello(ctx, req.(*HelloRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // Turnip_ServiceDesc is the grpc.ServiceDesc for Turnip service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -166,10 +134,6 @@ var Turnip_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportJobFinished",
 			Handler:    _Turnip_ReportJobFinished_Handler,
-		},
-		{
-			MethodName: "SayHello",
-			Handler:    _Turnip_SayHello_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
