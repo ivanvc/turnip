@@ -254,7 +254,8 @@ outterloop:
 		switch r {
 		case ' ':
 			if len(prefix) > 0 {
-				return input
+				index = i
+				break outterloop
 			}
 			spaces++
 		case '-', '+', '~', '=', '>', '<':
@@ -263,8 +264,7 @@ outterloop:
 				return input
 			}
 		default:
-			index = i
-			break outterloop
+			return input
 		}
 	}
 

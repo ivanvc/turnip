@@ -8,10 +8,10 @@ func TestFormatLine(t *testing.T) {
 		expected string
 	}{
 		{"", ""},
-		{" -- output --", " -- output --"},
-		{"  --output", "--  output"},
-		{" +-+output", " +-+output"},
-		{"  ~output", "~  output"},
+		{" --output:--", " --output:--"},
+		{"  -- output", "--   output"},
+		{" +-+ output", " +-+ output"},
+		{"  ~ output", "~   output"},
 		{" output ", " output "},
 		{"output", "output"},
 	}
@@ -32,12 +32,12 @@ npm WARN deprecated har-validator@5.1.5: this library is no longer supported
 npm WARN deprecated request@2.88.2: request has been deprecated, see
 Finished installing dependencies
 @loading
-  -- output --
-  -something
+  --output:--
+  - something
 @loading`
 	expected := `Previewing update (dev)
-  -- output --
--  something
+  --output:--
+-   something
 `
 	out := processOutput([]byte(input))
 	if string(out) != expected {

@@ -63,10 +63,16 @@ func triggerProject(common *common.Common, cmdName string, project *yaml.Project
 		cmd = project.GetLiftName()
 	}
 
+	commit, err := common.GitHubClient.GetCommitFromRef(payload.Repo, payload.Ref)
+	if err != nil {
+		log.Error("error getting commit", "error", err)
+		return nil, err
+	}
+
 	name := fmt.Sprintf("turnip/%s/%s/%s/%s", project.GetAdapterName(), cmd, project.Dir, project.GetWorkspace())
 	checkURL, err := common.GitHubClient.CreateCheckRun(
 		fmt.Sprintf("https://api.github.com/repos/%s/statuses/{sha}", payload.Repo),
-		payload.Ref,
+		commit.SHA,
 		name,
 	)
 	if err != nil {
@@ -76,16 +82,11 @@ func triggerProject(common *common.Common, cmdName string, project *yaml.Project
 
 	log.Debug("creating job", "checkURL", checkURL)
 	cloneURL := fmt.Sprintf("https://github.com/%s.git", payload.Repo)
-	commit, err := common.GitHubClient.GetCommitFromRef(payload.Repo, payload.Ref)
-	if err != nil {
-		log.Error("error getting commit", "error", err)
-		return nil, err
-	}
 
 	if err := common.KubernetesClient.CreateJob(cmdName, cloneURL, payload.Ref, payload.Repo, checkURL, name, commit.CommentsURL, project); err != nil {
 		log.Error("error creating job", "error", err)
 		return nil, err
 	}
 
-	return &objects.LiftResponse{checkURL}, nil
+	return &objects.LiftResponse{CheckURL: checkURL, Context: name}, nil
 }

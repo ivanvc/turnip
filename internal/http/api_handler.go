@@ -32,7 +32,7 @@ func (h *apiHandler) handleLift(s *Server) func(http.ResponseWriter, *http.Reque
 			return
 		}
 
-		if req.Header.Get("Authentication") != "Bearer "+s.Config.APIToken {
+		if req.Header.Get("Authorization") != "Bearer "+s.Config.APIToken {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

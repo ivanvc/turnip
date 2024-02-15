@@ -13,4 +13,5 @@ type LiftRequest struct {
 // LiftResponse is the response for the lift API call.
 type LiftResponse struct {
 	CheckURL string `json:"check_url"`
+	Context  string `json:"context"`
 }
