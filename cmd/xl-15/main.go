@@ -71,7 +71,9 @@ func main() {
 		req.Status = pb.JobStatus_SUCCEEDED
 	}
 	req.Output = output
-	req.Error = err.Error()
+	if err != nil {
+		req.Error = err.Error()
+	}
 	log.Info("Job Finished request", "req", req)
 
 	for i := 0; i < connRetries; i++ {

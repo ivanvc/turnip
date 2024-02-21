@@ -56,9 +56,13 @@ func (s *Server) ReportJobFinished(ctx context.Context, in *pb.JobFinishedReques
 	)
 	// if project type == pulumi
 	comment += fmt.Sprintf("\n\n<details><summary>Show Output</summary>\n\n")
-	comment += fmt.Sprintf("```diff\n%s\n```", in.GetOutput())
-	comment += fmt.Sprintf("```\n%s\n```", in.GetError())
-	comment += fmt.Sprintf("\n</details>")
+	if len(in.GetOutput()) > 0 {
+		comment += fmt.Sprintf("```diff\n%s\n```\n", in.GetOutput())
+	}
+	if in.GetError() != "" {
+		comment += fmt.Sprintf("Error:\n```\n%s\n```\n", in.GetError())
+	}
+	comment += fmt.Sprintf("</details>")
 	err = s.gitHubClient.CreateComment(in.GetCommentsUrl(), comment)
 	return &pb.JobFinishedReply{}, err
 }
