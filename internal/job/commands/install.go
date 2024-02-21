@@ -13,14 +13,14 @@ func Install(dir, repoDir string, project yaml.Project) ([]byte, error) {
 	return p.InstallDependencies(dir, repoDir)
 }
 
-func Plot(repoDir string, project yaml.Project) (bool, []byte, error) {
+func Plot(repoDir string, project yaml.Project, extraArgs string) (bool, []byte, error) {
 	p := plugin.Load(project)
-	return p.Plot(repoDir)
+	return p.Plot(repoDir, extraArgs)
 }
 
-func Lift(repoDir string, project yaml.Project) (bool, []byte, error) {
+func Lift(repoDir string, project yaml.Project, extraArgs string) (bool, []byte, error) {
 	p := plugin.Load(project)
-	return p.Lift(repoDir)
+	return p.Lift(repoDir, extraArgs)
 }
 
 func RunInitCommands(repoDir string, project yaml.Project) ([]byte, error) {

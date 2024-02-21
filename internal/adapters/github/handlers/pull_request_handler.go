@@ -27,10 +27,10 @@ func HandlePullRequest(common *common.Common, payload *objects.PullRequestWebhoo
 		return err
 	}
 
-	return triggerProjects(common, "plot", pr, projects)
+	return triggerProjects(common, "plot", "", pr, projects)
 }
 
-func triggerProjects(common *common.Common, cmdName string, pr *objects.PullRequest, projects []*yaml.Project) error {
+func triggerProjects(common *common.Common, cmdName, extraArgs string, pr *objects.PullRequest, projects []*yaml.Project) error {
 	for _, prj := range projects {
 		var cmd string
 		switch cmdName {
@@ -53,7 +53,7 @@ func triggerProjects(common *common.Common, cmdName string, pr *objects.PullRequ
 
 		log.Debug("creating job", "checkURL", checkURL)
 		repo := pr.Base.Repository
-		if err := common.KubernetesClient.CreateJob(cmdName, repo.CloneURL, pr.Head.Ref, repo.FullName, checkURL, name, pr.CommentsURL, prj); err != nil {
+		if err := common.KubernetesClient.CreateJob(cmdName, repo.CloneURL, pr.Head.Ref, repo.FullName, checkURL, name, pr.CommentsURL, extraArgs, prj); err != nil {
 			log.Error("error creating job", "error", err)
 			return err
 		}

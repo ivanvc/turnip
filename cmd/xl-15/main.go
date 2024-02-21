@@ -63,7 +63,7 @@ func main() {
 		ProjectWorkspace: project.GetWorkspace(),
 	}
 
-	finishedWithError, output, err := run(project)
+	finishedWithError, output, err := run(project, os.Getenv("TURNIP_EXTRA_ARGS"))
 	log.Info("Job Finished", "finishedWithError", finishedWithError, "err", err)
 	if err != nil || finishedWithError {
 		req.Status = pb.JobStatus_FAILED
@@ -71,6 +71,7 @@ func main() {
 		req.Status = pb.JobStatus_SUCCEEDED
 	}
 	req.Output = output
+	req.Error = err.Error()
 	log.Info("Job Finished request", "req", req)
 
 	for i := 0; i < connRetries; i++ {
@@ -84,7 +85,7 @@ func main() {
 	}
 }
 
-func run(project yaml.Project) (bool, []byte, error) {
+func run(project yaml.Project, extraArgs string) (bool, []byte, error) {
 	tmpDir, err := os.MkdirTemp("", "turnip-repo-*")
 	if err != nil {
 		log.Error("error creating temp dir", "error", err)
@@ -127,12 +128,12 @@ func run(project yaml.Project) (bool, []byte, error) {
 	var returnCode bool
 	switch os.Getenv("TURNIP_COMMAND") {
 	case "plot":
-		returnCode, output, err = commands.Plot(repoDir, project)
+		returnCode, output, err = commands.Plot(repoDir, project, extraArgs)
 		if err != nil {
 			log.Error("error running plot", "error", err)
 		}
 	case "lift":
-		returnCode, output, err = commands.Lift(repoDir, project)
+		returnCode, output, err = commands.Lift(repoDir, project, extraArgs)
 		if err != nil {
 			log.Error("error running lift", "error", err)
 		}

@@ -55,10 +55,10 @@ func LoadClient(config *config.Config) *Client {
 	}
 }
 
-func (c *Client) CreateJob(command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project) error {
+func (c *Client) CreateJob(command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL, extraArgs string, project *yaml.Project) error {
 	if _, err := c.BatchV1().Jobs(c.namespace).Create(
 		context.Background(),
-		getJob(c.namespace, c.githubToken, c.serverName, c.jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL, project, c.jobTTLSeconds, c.podAnnotations),
+		getJob(c.namespace, c.githubToken, c.serverName, c.jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL, extraArgs, project, c.jobTTLSeconds, c.podAnnotations),
 		metav1.CreateOptions{},
 	); err != nil {
 		return err
@@ -67,7 +67,7 @@ func (c *Client) CreateJob(command, cloneURL, headRef, repoFullName, checkURL, c
 	return nil
 }
 
-func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL string, project *yaml.Project, jobTTLSeconds int, annotations map[string]string) *batchv1.Job {
+func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef, repoFullName, checkURL, checkName, commentsURL, extraArgs string, project *yaml.Project, jobTTLSeconds int, annotations map[string]string) *batchv1.Job {
 	projectYAML := marshalProjectYAML(project)
 	generatedName := getGeneratedName(command, repoFullName, project)
 	ttlSeconds := int32(jobTTLSeconds)
@@ -105,6 +105,10 @@ func getJob(namespace, token, serverName, jobSecrets, command, cloneURL, headRef
 		{
 			Name:  "TURNIP_COMMENTS_URL",
 			Value: commentsURL,
+		},
+		{
+			Name:  "TURNIP_EXTRA_ARGS",
+			Value: extraArgs,
 		},
 	}
 

@@ -13,9 +13,9 @@ type Plugin interface {
 	//Version() string
 	InstallDependencies(string, string) ([]byte, error)
 
-	Plot(string) (bool, []byte, error)
+	Plot(string, string) (bool, []byte, error)
 
-	Lift(string) (bool, []byte, error)
+	Lift(string, string) (bool, []byte, error)
 
 	RunInitCommands(string) ([]byte, error)
 }

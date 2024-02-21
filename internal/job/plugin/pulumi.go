@@ -165,15 +165,15 @@ func copyFile(src, dest string) error {
 	return os.Chmod(destination, srcFileStat.Mode())
 }
 
-func (p Pulumi) Lift(repoDir string) (bool, []byte, error) {
-	return p.runCommand("up", repoDir)
+func (p Pulumi) Lift(repoDir, extraArgs string) (bool, []byte, error) {
+	return p.runCommand("up", repoDir, extraArgs)
 }
 
-func (p Pulumi) Plot(repoDir string) (bool, []byte, error) {
-	return p.runCommand("preview", repoDir)
+func (p Pulumi) Plot(repoDir, extraArgs string) (bool, []byte, error) {
+	return p.runCommand("preview", repoDir, extraArgs)
 }
 
-func (p Pulumi) runCommand(command, repoDir string) (bool, []byte, error) {
+func (p Pulumi) runCommand(command, repoDir, extraArgs string) (bool, []byte, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		log.Error("error getting working directory", "err", err)
@@ -198,12 +198,15 @@ func (p Pulumi) runCommand(command, repoDir string) (bool, []byte, error) {
 		"--stack",
 		p.project.Stack,
 	}
+
 	if command == "up" {
 		args = append(args, "--yes")
 		args = append(args, "--skip-preview")
 	}
-	cmd := exec.Command("pulumi", args...)
 
+	args = append(args, strings.Fields(extraArgs)...)
+
+	cmd := exec.Command("pulumi", args...)
 	cmd.Stdout = output
 	cmd.Stderr = output
 

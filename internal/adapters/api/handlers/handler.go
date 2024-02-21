@@ -4,27 +4,26 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/log"
-
 	"github.com/ivanvc/turnip/internal/adapters/api/objects"
-	githubObjects "github.com/ivanvc/turnip/internal/adapters/github/objects"
+	githubobjects "github.com/ivanvc/turnip/internal/adapters/github/objects"
 	"github.com/ivanvc/turnip/internal/common"
 	"github.com/ivanvc/turnip/internal/yaml"
 )
 
-func HandleLift(common *common.Common, payload *objects.LiftRequest) (*objects.LiftResponse, error) {
+func Handle(common *common.Common, verb string, payload *objects.APIRequest) (*objects.APIResponse, error) {
 	prj, err := getProject(common, payload)
 	if err != nil {
 		return nil, err
 	}
 
-	return triggerProject(common, "lift", prj, payload)
+	return triggerProject(common, verb, prj, payload)
 }
 
-func getProject(common *common.Common, payload *objects.LiftRequest) (*yaml.Project, error) {
-	repo := githubObjects.Repository{
+func getProject(common *common.Common, payload *objects.APIRequest) (*yaml.Project, error) {
+	repo := githubobjects.Repository{
 		ContentsURL: fmt.Sprintf("https://api.github.com/repos/%s/contents/{+path}", payload.Repo),
 	}
-	ref := githubObjects.BranchRef{
+	ref := githubobjects.BranchRef{
 		Ref: payload.Ref,
 	}
 
@@ -54,7 +53,7 @@ func getProject(common *common.Common, payload *objects.LiftRequest) (*yaml.Proj
 	return nil, fmt.Errorf("project not found")
 }
 
-func triggerProject(common *common.Common, cmdName string, project *yaml.Project, payload *objects.LiftRequest) (*objects.LiftResponse, error) {
+func triggerProject(common *common.Common, cmdName string, project *yaml.Project, payload *objects.APIRequest) (*objects.APIResponse, error) {
 	var cmd string
 	switch cmdName {
 	case "plot":
@@ -83,10 +82,10 @@ func triggerProject(common *common.Common, cmdName string, project *yaml.Project
 	log.Debug("creating job", "checkURL", checkURL)
 	cloneURL := fmt.Sprintf("https://github.com/%s.git", payload.Repo)
 
-	if err := common.KubernetesClient.CreateJob(cmdName, cloneURL, payload.Ref, payload.Repo, checkURL, name, commit.CommentsURL, project); err != nil {
+	if err := common.KubernetesClient.CreateJob(cmdName, cloneURL, payload.Ref, payload.Repo, checkURL, name, commit.CommentsURL, payload.ExtraArgs, project); err != nil {
 		log.Error("error creating job", "error", err)
 		return nil, err
 	}
 
-	return &objects.LiftResponse{CheckURL: checkURL, Context: name}, nil
+	return &objects.APIResponse{CheckURL: checkURL, Context: name}, nil
 }

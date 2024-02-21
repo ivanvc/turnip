@@ -142,7 +142,8 @@ func getCobraCmd(common *common.Common, ic *objects.IssueComment, cmdName string
 				return nil
 			}
 
-			return triggerProjects(common, cmdName, ic.PullRequest, projects)
+			extraArgs := strings.Join(args[cmd.ArgsLenAtDash():], " ")
+			return triggerProjects(common, cmdName, extraArgs, ic.PullRequest, projects)
 		},
 	}
 	cmd.Flags().StringVarP(&directory, "directory", "d", directory, "the directory containing the IaC")
