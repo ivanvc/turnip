@@ -142,7 +142,10 @@ func getCobraCmd(common *common.Common, ic *objects.IssueComment, cmdName string
 				return nil
 			}
 
-			extraArgs := strings.Join(args[cmd.ArgsLenAtDash():], " ")
+			var extraArgs string
+			if l := cmd.ArgsLenAtDash(); l > 0 {
+				extraArgs = strings.Join(args[l:], " ")
+			}
 			return triggerProjects(common, cmdName, extraArgs, ic.PullRequest, projects)
 		},
 	}
