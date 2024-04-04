@@ -123,10 +123,13 @@ func getListOfProjectsToPlot(common *common.Common, pr *objects.PullRequest, aut
 				log.Error("error getting relative path", "error", err)
 				continue
 			}
+			if relativePath[0] != '.' {
+				relativePath = fmt.Sprintf("./%s", relativePath)
+			}
 			log.Debug("checking relative path", "path", relativePath)
 			for _, rule := range rules {
 				log.Debug("checking rule", "rule", rule)
-				if ok, _ := doublestar.Match(rule, fmt.Sprintf("./%s", relativePath)); ok {
+				if ok, _ := doublestar.Match(rule, relativePath); ok {
 					log.Debug("rule matched!")
 					projectsTriggered[prj] = true
 				}
