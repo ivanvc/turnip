@@ -2,6 +2,8 @@ module github.com/ivanvc/turnip
 
 go 1.22
 
+toolchain go1.22.2
+
 require (
 	github.com/bluekeyes/go-gitdiff v0.7.1
 	github.com/bmatcuk/doublestar v1.3.4
