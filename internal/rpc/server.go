@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/charmbracelet/log"
 	"golang.org/x/text/cases"
@@ -19,12 +20,15 @@ type Server struct {
 	pb.UnimplementedTurnipServer
 	listen       string
 	gitHubClient *github.Client
+
+	jobFinishedQueue chan any
 }
 
 func NewServer(common *common.Common) *Server {
 	return &Server{
-		listen:       common.Config.ListenRPC,
-		gitHubClient: common.GitHubClient,
+		listen:           common.Config.ListenRPC,
+		gitHubClient:     common.GitHubClient,
+		jobFinishedQueue: make(chan any),
 	}
 }
 
@@ -35,6 +39,17 @@ func (s *Server) ReportJobStarted(ctx context.Context, in *pb.JobStartedRequest)
 }
 
 func (s *Server) ReportJobFinished(ctx context.Context, in *pb.JobFinishedRequest) (*pb.JobFinishedReply, error) {
+	// TODO: Remove once we have a database
+	log.Debug("Received Job Finished", "in", in)
+	go debounce(5*time.Second, s.jobFinishedQueue, func(msg any) {
+		s.reportJobFinished(msg.(*pb.JobFinishedRequest))
+	})
+	s.jobFinishedQueue <- in
+
+	return &pb.JobFinishedReply{}, nil
+}
+
+func (s *Server) reportJobFinished(in *pb.JobFinishedRequest) error {
 	log.Debug("Received JobFinished")
 	var conclusion string
 	switch in.GetStatus() {
@@ -64,7 +79,7 @@ func (s *Server) ReportJobFinished(ctx context.Context, in *pb.JobFinishedReques
 	}
 	comment += fmt.Sprintf("</details>")
 	err = s.gitHubClient.CreateComment(in.GetCommentsUrl(), comment)
-	return &pb.JobFinishedReply{}, err
+	return err
 }
 
 func (s *Server) Start() {
@@ -78,5 +93,16 @@ func (s *Server) Start() {
 	log.Infof("Server listening at %v", lis.Addr())
 	if err := gs.Serve(lis); err != nil {
 		log.Fatal("Failed to serve", "error", err)
+	}
+}
+
+func debounce(interval time.Duration, input chan any, f func(any)) {
+	var msg any
+	for {
+		select {
+		case msg = <-input:
+		case <-time.After(interval):
+			f(msg)
+		}
 	}
 }
