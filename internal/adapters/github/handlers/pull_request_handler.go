@@ -102,7 +102,11 @@ func getListOfProjectsToPlot(common *common.Common, pr *objects.PullRequest, aut
 		if len(prj.WhenModified) == 0 {
 			dirs = []string{"./**/*"}
 		} else {
-			dirs = prj.WhenModified
+			for _, rule := range prj.WhenModified {
+				if rule[0:2] != ".." && rule[0:2] != "./" {
+					dirs = append(dirs, fmt.Sprintf("./%s", rule))
+				}
+			}
 		}
 		projectRules[&prj] = dirs
 	}
@@ -118,21 +122,11 @@ func getListOfProjectsToPlot(common *common.Common, pr *objects.PullRequest, aut
 		}
 		log.Debug("checking changed path", "path", changedPath)
 		for prj, rules := range projectRules {
-			relativePath, err := filepath.Rel(prj.Dir, changedPath)
-			if err != nil {
-				log.Error("error getting relative path", "error", err)
+			if ok, err := doesPathMatchProjectRules(prj.Dir, changedPath, rules); err != nil {
+				log.Error("error checking path", "error", err)
 				continue
-			}
-			if relativePath[0] != '.' {
-				relativePath = fmt.Sprintf("./%s", relativePath)
-			}
-			log.Debug("checking relative path", "path", relativePath)
-			for _, rule := range rules {
-				log.Debug("checking rule", "rule", rule)
-				if ok, _ := doublestar.Match(rule, relativePath); ok {
-					log.Debug("rule matched!")
-					projectsTriggered[prj] = true
-				}
+			} else if ok {
+				projectsTriggered[prj] = true
 			}
 		}
 	}
@@ -143,4 +137,22 @@ func getListOfProjectsToPlot(common *common.Common, pr *objects.PullRequest, aut
 	log.Debug("projects to plot", "projects", output)
 
 	return output, nil
+}
+
+func doesPathMatchProjectRules(dir, path string, rules []string) (bool, error) {
+	relPath, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false, err
+	}
+	if len(relPath) > 2 && relPath[0:2] != ".." {
+		relPath = fmt.Sprintf("./%s", relPath)
+	}
+	for _, rule := range rules {
+		log.Debug("checking rule", "value", rule)
+		if ok, _ := doublestar.Match(rule, relPath); ok {
+			log.Debug("rule matched", "rule", rule, "path", path)
+			return true, nil
+		}
+	}
+	return false, nil
 }
