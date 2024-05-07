@@ -104,8 +104,9 @@ func getListOfProjectsToPlot(common *common.Common, pr *objects.PullRequest, aut
 		} else {
 			for _, rule := range prj.WhenModified {
 				if rule[0:2] != ".." && rule[0:2] != "./" {
-					dirs = append(dirs, fmt.Sprintf("./%s", rule))
+					rule = fmt.Sprintf("./%s", rule)
 				}
+				dirs = append(dirs, rule)
 			}
 		}
 		projectRules[&prj] = dirs
