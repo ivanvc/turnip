@@ -6,7 +6,7 @@ This plan implements the structural foundation for the turnip platform. Each tas
 
 ## Tasks
 
-- [ ] 1. Initialize Go module and create package placeholders
+- [x] 1. Initialize Go module and create package placeholders
   - [x] 1.1 Configure go.mod with module path and dependencies
     - Set module path to `github.com/ivanvc/turnip` with Go 1.26+ directive
     - Add direct dependencies: google.golang.org/grpc, google.golang.org/protobuf, k8s.io/client-go, k8s.io/api, k8s.io/apimachinery
@@ -14,7 +14,7 @@ This plan implements the structural foundation for the turnip platform. Each tas
     - Verify `go mod tidy` produces no further changes (exit 0, no diff)
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
-  - [-] 1.2 Create internal package placeholder files
+  - [x] 1.2 Create internal package placeholder files
     - Create `internal/plugin/doc.go` with `package plugin` and doc comment about Plugin interface (Slice 2)
     - Create `internal/lock/doc.go` with `package lock` and doc comment about Redis lock management (Slice 3)
     - Create `internal/github/doc.go` with `package github` and doc comment about GitHub client/webhook handling (Slice 4)
