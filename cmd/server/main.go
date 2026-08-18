@@ -1,0 +1,14 @@
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+const version = "dev"
+
+func main() {
+	if _, err := fmt.Fprintf(os.Stdout, "turnip-server version=%s\n", version); err != nil {
+		os.Exit(1)
+	}
+}

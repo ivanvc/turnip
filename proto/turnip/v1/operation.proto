@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package turnip.v1;
+
+option go_package = "github.com/ivanvc/turnip/internal/grpc/turnip/v1";
+
+service OperationService {
+  rpc ExecuteOperation(ExecuteOperationRequest) returns (stream ExecuteOperationResponse);
+}
+
+message ExecuteOperationRequest {}
+
+message ExecuteOperationResponse {}

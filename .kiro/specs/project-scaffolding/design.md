@@ -87,7 +87,9 @@ import (
 const version = "dev"
 
 func main() {
-    fmt.Fprintf(os.Stdout, "turnip-server version=%s\n", version)
+    if _, err := fmt.Fprintf(os.Stdout, "turnip-server version=%s\n", version); err != nil {
+        os.Exit(1)
+    }
 }
 ```
 
@@ -104,7 +106,9 @@ import (
 const version = "dev"
 
 func main() {
-    fmt.Fprintf(os.Stdout, "runner version=%s\n", version)
+    if _, err := fmt.Fprintf(os.Stdout, "runner version=%s\n", version); err != nil {
+        os.Exit(1)
+    }
 }
 ```
 
@@ -177,13 +181,15 @@ package turnip.v1;
 option go_package = "github.com/ivanvc/turnip/internal/grpc/turnip/v1";
 
 service OperationService {
-  rpc ExecuteOperation(OperationRequest) returns (stream OperationResponse);
+  rpc ExecuteOperation(ExecuteOperationRequest) returns (stream ExecuteOperationResponse);
 }
 
-message OperationRequest {}
+message ExecuteOperationRequest {}
 
-message OperationResponse {}
+message ExecuteOperationResponse {}
 ```
+
+Message names follow buf's STANDARD lint convention (RPC-scoped naming) rather than the generic `OperationRequest`/`OperationResponse` — `buf lint` rejects the unscoped names.
 
 The messages are intentionally empty — Slice 5 will populate them with the full field set from the global design. This slice only needs the proto to compile and generate valid Go stubs.
 
@@ -278,6 +284,8 @@ Design decisions:
 **.golangci.yml**:
 
 ```yaml
+version: "2"
+
 run:
   timeout: 5m
 
@@ -286,23 +294,30 @@ linters:
     - errcheck
     - govet
     - staticcheck
-    - gofmt
     - ineffassign
     - unused
     - misspell
-    - gosimple
+  exclusions:
+    paths:
+      - ".*\\.pb\\.go$"
+      - ".*_grpc\\.pb\\.go$"
 
-issues:
-  exclude-files:
-    - ".*\\.pb\\.go$"
-    - ".*_grpc\\.pb\\.go$"
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    paths:
+      - ".*\\.pb\\.go$"
+      - ".*_grpc\\.pb\\.go$"
 ```
 
 Design decisions:
 - 5-minute timeout accommodates CI environments with cold caches
 - Linter set is practical: catches real bugs (errcheck, govet, staticcheck) without being noisy
-- `gofmt` enforces formatting consistency
-- Generated protobuf files excluded via regex patterns
+- `gofmt` enforces formatting consistency; in golangci-lint v2 formatters (gofmt) are configured separately from linters
+- `gosimple`/`stylecheck` checks are covered by `staticcheck` under golangci-lint v2's merged linter
+- Generated protobuf files excluded via regex patterns, configured under both `linters.exclusions` and `formatters.exclusions` since v2 splits the two concerns
+- Config targets golangci-lint v2 (the version available in this environment); the v1 `issues.exclude-files` schema fails to parse under v2
 - No `golint` (deprecated) — `staticcheck` covers its useful checks
 
 ### CI Pipeline
@@ -330,7 +345,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Install buf
-        uses: bufbuild/buf-setup-action@a47c93e0b1648459dbbba6647e3805c88e28e855 # v1.50.0
+        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
 
       - name: Build
         run: go build ./...
@@ -339,7 +354,7 @@ jobs:
         run: go test -race ./...
 
       - name: Lint
-        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v6.5.0
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8.0.0
         with:
           version: latest
 
@@ -350,7 +365,7 @@ jobs:
 ```
 
 Design decisions:
-- **Pinned commit SHAs** for all GitHub Actions dependencies with version comments (e.g., `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2`) — prevents supply-chain attacks from tag mutation. Dependabot's `github-actions` ecosystem will automatically propose SHA bumps when new versions are released.
+- **Pinned commit SHAs** for all GitHub Actions dependencies with version comments (e.g., `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2`), each verified against the GitHub API to resolve to the exact tag named in its comment — prevents supply-chain attacks from tag mutation and avoids mislabeled pins. Dependabot's `github-actions` ecosystem will automatically propose SHA bumps when new versions are released.
 - `go-version-file: go.mod` ensures CI uses the same Go version as the project (satisfying Requirement 9.8)
 - `buf-setup-action` installs buf without manual version pinning
 - `golangci-lint-action` handles caching and version management
