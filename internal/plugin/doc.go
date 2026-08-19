@@ -1,4 +1,6 @@
-// Package plugin defines the Plugin interface and implementations for
-// infrastructure-as-code providers (Terraform, Pulumi, Helmfile).
-// This package will be implemented in Slice 2.
+// Package plugin defines the unified Plugin interface for infrastructure-
+// as-code tools, and implements it for Helmfile. Each Plugin runs its
+// tool's CLI as a subprocess and translates the result into a standardized
+// ExecuteResult; the package has no dependency on gRPC, Kubernetes, or
+// GitHub.
 package plugin

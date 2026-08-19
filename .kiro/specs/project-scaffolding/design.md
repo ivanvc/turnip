@@ -235,8 +235,8 @@ ENTRYPOINT ["/runner"]
 
 Design decisions:
 - Alpine instead of distroless because the Runner needs `git` for repository cloning
-- Later slices will add IaC tool binaries (terraform, pulumi, helmfile) to this image
 - `ca-certificates` for HTTPS git clones and API calls
+- This image intentionally stays tool-agnostic permanently — Terraform/Pulumi/Helmfile binaries are never baked in here. They're provisioned per-operation via per-tool Kubernetes initContainers using each vendor's own official image, decided in Slice 5; see `multi-iac-automation-platform/design.md`'s "Tool Binary Provisioning" section for the mechanism
 
 ### Makefile
 

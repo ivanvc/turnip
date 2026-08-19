@@ -10,7 +10,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 |---|-------|---------------|--------|------------|
 | 0 | Project Scaffolding | `project-scaffolding` | Complete | — |
 | 1 | Config Parsing & Project Matching | `config-parsing` | Complete | Slice 0 |
-| 2 | Plugin System & Helmfile Plugin | `plugin-helmfile` | Not Started | Slice 0 |
+| 2 | Plugin System & Helmfile Plugin | `plugin-helmfile` | Complete | Slice 0 |
 | 3 | Redis Lock Manager | `redis-lock-manager` | Not Started | Slice 0 |
 | 4 | GitHub Client & Webhook Handler | `github-integration` | Not Started | Slice 0 |
 | 5 | gRPC & Runner | `grpc-runner` | Not Started | Slices 0, 2 |
@@ -111,6 +111,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 - Runner startup: env parsing, repo cloning, plugin execution
 - Log streaming from Runner to Server
 - Kubernetes Job creation and cleanup
+- Per-tool initContainer provisioning (vendor-official images, version selected from `config.version`)
 - Property tests for runner behavior
 
 **Global requirements covered**: 8, 14
