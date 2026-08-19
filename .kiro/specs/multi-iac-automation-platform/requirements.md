@@ -214,6 +214,7 @@ This document specifies requirements for rewriting the multi-IaC automation plat
 
 1. WHEN an Operation is triggered, THE Server SHALL create a Kubernetes Job resource for the Runner
 2. THE Runner Job SHALL include the repository URL, commit SHA, Project directory, and Operation type as environment variables
+2a. THE Runner Job SHALL provision the Project's IaC_Tool binary via a dedicated initContainer using that tool's vendor-published image, tagged with the resolved tool version (Requirement 18.6-18.8), copying the binary to a volume shared with the Runner's main container
 3. THE Runner SHALL clone the repository at the specified commit SHA on startup
 4. WHEN the Operation completes, THE Kubernetes Job SHALL terminate and THE Server SHALL delete the Job resource
 5. IF the Runner Job fails to start within 5 minutes, THEN THE Server SHALL report the failure via GitHub comment and check run
@@ -263,6 +264,9 @@ This document specifies requirements for rewriting the multi-IaC automation plat
 3. WHERE the IaC_Tool is Pulumi, THE config field SHALL support "stack" to specify the Pulumi stack name
 4. WHERE the IaC_Tool is Helmfile, THE config field SHALL support "environment" to specify the Helmfile environment
 5. THE Server SHALL pass the tool-specific config to the Plugin when executing Operations
+6. THE config field SHALL support a tool-agnostic "version" key specifying the IaC_Tool version the Runner Job SHALL provision (Requirement 14.2a)
+7. IF "version" is absent, THEN THE Server SHALL use a documented default version for that IaC_Tool
+8. IF "version" is present but is not a version the Server recognizes for that IaC_Tool, THEN THE Server SHALL reject the configuration with an error comment on the PR, without creating a Runner Job
 
 ### Requirement 19: High Availability Server Deployment
 
@@ -288,7 +292,5 @@ This document specifies requirements for rewriting the multi-IaC automation plat
 2. WHEN a PR is closed without merging, THE Server SHALL release all locks held by that PR
 3. THE Server SHALL process PR closed/merged webhook events to trigger lock release
 4. WHEN a lock is released, THE Server SHALL post a comment to the PR indicating which projects were unlocked
-5. IF a PR is reopened after being closed, THE Server SHALL require new plan operations to re-acquire lockslumi stack name
-4. WHERE the IaC_Tool is Helmfile, THE config field SHALL support "environment" to specify the Helmfile environment
-5. THE Server SHALL pass the tool-specific config to the Plugin when executing Operations
+5. IF a PR is reopened after being closed, THE Server SHALL require new plan operations to re-acquire locks
 

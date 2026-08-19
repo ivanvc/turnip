@@ -30,6 +30,8 @@ The multi-IaC automation platform (turnip) is a GitHub-integrated system that au
 
 **High Availability Design**: The Server is completely stateless, storing no operation state locally. All state (locks, plan data) lives in Redis/Valkey, enabling multiple Server instances to run concurrently without coordination. Any Server instance can process any webhook, and instance failures don't affect ongoing operations since Runners communicate directly with Redis for state.
 
+**Tool Binaries via Per-Tool initContainers**: The Runner's own container image never bundles Terraform/Pulumi/Helmfile binaries. Instead, each Runner Job gets one initContainer per tool, using that tool vendor's own official, per-version-tagged image (e.g. `hashicorp/terraform:1.9.5`) to copy the CLI binary into a volume shared with the main container. Two alternatives were rejected: baking a single fixed version into the Runner image (no per-project version pinning), and bundling a version manager with several pre-installed versions the way Atlantis does (this makes turnip's own release/rebuild cadence the bottleneck for adopting a tool version the moment it ships upstream — the exact complaint users have about Atlantis lagging behind new Terraform/Pulumi releases). Delegating to vendor-published images means a new tool release is usable by turnip with zero turnip-side rebuild. See "Tool Binary Provisioning" below.
+
 ## Architecture
 
 ### System Components
@@ -80,7 +82,7 @@ graph TB
 - Connect to Server via gRPC on startup
 - Clone repository at specified commit SHA
 - Load appropriate Plugin based on project tool type
-- Execute IaC operations (Plan/Apply/Destroy)
+- Execute IaC operations (Plan/Apply/Destroy) using the tool binary pre-staged onto its `PATH` by an initContainer (see "Tool Binary Provisioning" below) — the Runner's own image never bundles tool binaries
 - Stream operation logs back to Server
 - Return structured operation results
 
@@ -103,6 +105,48 @@ graph TB
 - Post and update PR comments
 - Fetch repository files and modified file lists
 - Verify comment author permissions
+
+### Tool Binary Provisioning
+
+Each Runner Job gets one initContainer per IaC_Tool, using that tool
+vendor's own official, per-version-tagged image — never a turnip-maintained
+image — to copy the CLI binary onto a volume (`emptyDir`, mounted at
+`/tools`) shared with the Runner's main container, which prepends `/tools`
+to its `PATH`. This is what Requirement 14.2a describes.
+
+Vendor images and binary paths (verified by pulling and inspecting each
+real image; all three are shell-based, so a plain
+`initContainer.command: ["sh", "-c", "cp <src> /tools/<tool>"]` works with
+no extra extraction tooling):
+
+| Tool | Vendor image | Base | Binary path |
+|---|---|---|---|
+| Terraform | `hashicorp/terraform:<version>` | Alpine | `/bin/terraform` |
+| Pulumi | `pulumi/pulumi-base:<version>` (CLI-only variant, not the full `pulumi/pulumi` image with all language SDKs) | Debian | `/pulumi/bin/pulumi` |
+| Helmfile | `ghcr.io/helmfile/helmfile:v<version>` | Alpine | `/usr/local/bin/helmfile` |
+
+Re-verify these paths against whatever version is actually pinned at
+implementation time — a vendor could restructure their image layout between
+when this was checked and then.
+
+**Version resolution** (Requirement 18.6-18.8): the Server reads
+`config.version` from the matched Project. If present, it's validated
+against a known-good list for that tool before the Job is created; if
+invalid, the Server posts an error comment and creates no Job. If absent,
+the Server uses a documented default version per tool (a value the Server
+can be updated with independently of a full turnip release — not the
+vendor's floating `:latest` tag, to keep operations reproducible).
+
+**Images are pinned by tag, not digest**, for now. Vendor tags are
+effectively immutable in practice for these three vendors; digest-pinning
+can be added later purely as an internal resolution detail (version string
+→ digest lookup) without changing the `turnip.yaml` schema.
+
+**No custom caching infrastructure is needed**: kubelet's normal node-local
+image-layer cache means a repeat pull of an already-used tool+version on a
+given node is free after the first pull — this is the same caching benefit
+Atlantis's version-manager approach would provide, without turnip having to
+build or maintain any of it.
 
 ### Data Flow
 
@@ -298,6 +342,7 @@ projects:
       - "infrastructure/vpc/**/*.tfvars"
     config:
       workspace: production
+      version: "1.9.5"
       
   - name: pulumi-k8s
     directory: infrastructure/kubernetes
@@ -706,6 +751,12 @@ type LockData struct {
 *For any* created runner job, the job specification should include environment variables for repository URL, commit SHA, project directory, and operation type.
 
 **Validates: Requirements 14.2**
+
+### Property 23a: Runner Job Tool Provisioning
+
+*For any* created runner job requesting tool version V for IaC_Tool T, the job specification should include an initContainer using T's vendor-published image tagged V, and the main container should mount the volume that initContainer populates.
+
+**Validates: Requirements 14.2a, 18.6, 18.7**
 
 ### Property 24: Runner Clones Correct Commit
 
