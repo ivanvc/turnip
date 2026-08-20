@@ -1,8 +1,10 @@
 package config
 
 import (
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMatchProjects_SinglePatternMatch(t *testing.T) {
@@ -12,9 +14,8 @@ func TestMatchProjects_SinglePatternMatch(t *testing.T) {
 	modified := []string{"infra/vpc/main.tf"}
 
 	got := MatchProjects(projects, modified)
-	if len(got) != 1 || got[0].Name != "vpc" {
-		t.Errorf("MatchProjects = %v, want [vpc]", got)
-	}
+	require.Len(t, got, 1)
+	assert.Equal(t, "vpc", got[0].Name)
 }
 
 func TestMatchProjects_RecursiveGlob(t *testing.T) {
@@ -24,9 +25,8 @@ func TestMatchProjects_RecursiveGlob(t *testing.T) {
 	modified := []string{"infrastructure/vpc/nested/deep/main.tf"}
 
 	got := MatchProjects(projects, modified)
-	if len(got) != 1 || got[0].Name != "vpc" {
-		t.Errorf("MatchProjects = %v, want [vpc]", got)
-	}
+	require.Len(t, got, 1)
+	assert.Equal(t, "vpc", got[0].Name)
 }
 
 func TestMatchProjects_NoMatch(t *testing.T) {
@@ -36,9 +36,7 @@ func TestMatchProjects_NoMatch(t *testing.T) {
 	modified := []string{"infra/rds/main.tf"}
 
 	got := MatchProjects(projects, modified)
-	if got != nil {
-		t.Errorf("MatchProjects = %v, want nil", got)
-	}
+	assert.Nil(t, got)
 }
 
 func TestMatchProjects_MultiplePatternsOnlyOneMatches(t *testing.T) {
@@ -48,9 +46,8 @@ func TestMatchProjects_MultiplePatternsOnlyOneMatches(t *testing.T) {
 	modified := []string{"infra/vpc/main.tf"}
 
 	got := MatchProjects(projects, modified)
-	if len(got) != 1 || got[0].Name != "vpc" {
-		t.Errorf("MatchProjects = %v, want [vpc]", got)
-	}
+	require.Len(t, got, 1)
+	assert.Equal(t, "vpc", got[0].Name)
 }
 
 func TestMatchProjects_ProjectsAreIndependent(t *testing.T) {
@@ -61,9 +58,8 @@ func TestMatchProjects_ProjectsAreIndependent(t *testing.T) {
 	modified := []string{"infra/vpc/main.tf"}
 
 	got := MatchProjects(projects, modified)
-	if len(got) != 1 || got[0].Name != "vpc" {
-		t.Errorf("MatchProjects = %v, want [vpc] only", got)
-	}
+	require.Len(t, got, 1)
+	assert.Equal(t, "vpc", got[0].Name)
 }
 
 func TestMatchProjects_DeterministicOrdering(t *testing.T) {
@@ -74,14 +70,11 @@ func TestMatchProjects_DeterministicOrdering(t *testing.T) {
 	modified := []string{"infra/b/main.tf", "infra/a/main.tf"}
 
 	got := MatchProjects(projects, modified)
-	want := []string{"b", "a"}
 	var gotNames []string
 	for _, p := range got {
 		gotNames = append(gotNames, p.Name)
 	}
-	if !reflect.DeepEqual(gotNames, want) {
-		t.Errorf("order = %v, want %v", gotNames, want)
-	}
+	assert.Equal(t, []string{"b", "a"}, gotNames)
 }
 
 func TestMatchProjects_PathNormalization(t *testing.T) {
@@ -95,9 +88,7 @@ func TestMatchProjects_PathNormalization(t *testing.T) {
 	}
 	for _, f := range tests {
 		got := MatchProjects(projects, []string{f})
-		if len(got) != 1 {
-			t.Errorf("MatchProjects(%q) = %v, want match", f, got)
-		}
+		assert.Lenf(t, got, 1, "MatchProjects(%q)", f)
 	}
 }
 
@@ -107,7 +98,5 @@ func TestMatchProjects_EmptyModifiedFiles(t *testing.T) {
 	}
 
 	got := MatchProjects(projects, nil)
-	if got != nil {
-		t.Errorf("MatchProjects = %v, want nil", got)
-	}
+	assert.Nil(t, got)
 }

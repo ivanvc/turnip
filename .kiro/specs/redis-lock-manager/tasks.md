@@ -101,7 +101,7 @@ all three, then the package doc update, then tests (unit against
 
 - [x] 13. Final checkpoint - Full verification
   - Ensure `go build ./...` compiles, `go test -race ./internal/lock/...` passes including property tests (the `-race` flag matters here given Property 36's concurrent goroutines), `go mod tidy` produces no changes, and `golangci-lint run ./internal/lock/...` passes (or `go vet`/`gofmt -l` if golangci-lint is unavailable locally — see CLAUDE.md). Ask the user if questions arise.
-  - Verified: `go build ./...` OK; `go vet ./internal/lock/...` clean; `gofmt -l internal/lock/` empty; `go mod tidy` stable (go.mod unchanged on a second run); `go test -race ./internal/lock/...` passes all 17 tests (13 unit, 4 property, ≥100 iterations each). `golangci-lint` unavailable locally per CLAUDE.md's noted environment gap — `go vet`/`gofmt` used as the local approximation; CI will run the real `golangci-lint-action`.
+  - Verified: `go build ./...` OK; `go vet ./internal/lock/...` clean; `gofmt -l internal/lock/` empty; `go mod tidy` stable (go.mod unchanged on a second run); `go test -race ./internal/lock/...` passes all 17 tests (13 unit, 4 property, ≥100 iterations each). The asdf-pinned `golangci-lint` (v1.64.8) can't parse this repo's v2 config, but the real v2 binary runs fine locally via `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...` (network access permitting) — this later caught two real `errcheck` findings here (`client.Close()`'s error return unchecked in two test files, fixed in the 2026-08 amendment task below) that `go vet`/`gofmt` alone had missed; re-verified 0 issues repo-wide after the fix.
 
 - [x] 14. Migrate property tests from `gopter` to `pgregory.net/rapid` (2026-08 amendment)
   - [x] 14.1 Rewrite `internal/lock/property_test.go` against `rapid`
@@ -119,6 +119,37 @@ all three, then the package doc update, then tests (unit against
 
   - [x] 14.3 Checkpoint - Full re-verification
     - Ensure `go build ./...`, `go vet ./internal/lock/...`, `gofmt -l internal/lock/`, and `go test -race ./internal/lock/...` (17 tests: 13 unit, 4 property) all pass, and `go mod tidy` is stable
+
+- [x] 15. Fix real golangci-lint v2 findings (2026-08 amendment)
+  - [x] 15.1 Run the actual v2 linter and fix what it found
+    - The asdf-pinned `golangci-lint` (v1.64.8) can't parse this repo's `.golangci.yml` (`version: "2"`); running the real v2 binary via `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...` (network access permitting) is what CI actually runs, and had never been exercised locally against this slice before this amendment — `go vet`/`gofmt` alone are an approximation, not a substitute
+    - Found two `errcheck` findings: `client.Close()`'s error return unchecked in `t.Cleanup(func() { client.Close() })`, in both `redis_test.go` and `property_test.go` (the latter introduced by task 14's `rapid` migration, which replaced the cleanup helper but kept the same unchecked call)
+    - Fixed both by discarding the error explicitly: `t.Cleanup(func() { _ = client.Close() })`
+    - Verify `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...` reports 0 issues repo-wide (not just `internal/lock` — this run also covers whatever other slices exist at amendment time)
+    - _Requirements: (maintenance amendment, no behavioral change)_
+
+- [x] 16. Adopt `testify` for unit test assertions (2026-08 amendment)
+  - [x] 16.1 Rewrite `internal/lock`'s unit test files against `github.com/stretchr/testify`
+    - Adopted repo-wide (see `CLAUDE.md`) to replace hand-rolled `if ... { t.Fatalf(...) }` checks with `require`/`assert`
+    - `redis_test.go`: `require` where the original check was fatal, `assert` where it was non-fatal
+    - `property_test.go`: `*rapid.T` satisfies testify's `TestingT` interface directly, so `rapid.Check` bodies use `require` the same way; the concurrent-goroutines property (36) keeps its single post-`wg.Wait()` assertion, now `require.EqualValues`
+    - Verify `go test -race ./internal/lock/...` passes with unchanged behavior (17 tests: 13 unit, 4 property) and coverage
+    - _Requirements: (maintenance amendment, no behavioral change)_
+
+  - [x] 16.2 Update dependencies
+    - Add `github.com/stretchr/testify` as a direct dependency
+    - _Requirements: (dependency infrastructure, no direct requirement)_
+
+  - [x] 16.3 Checkpoint - Full re-verification
+    - Ensure `go build ./...`, `go vet ./internal/lock/...`, `gofmt -l internal/lock/`, `go test -race ./internal/lock/...`, and the real `golangci-lint` v2 (`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...`) all pass
+
+- [x] 17. Enable `testifylint` in `.golangci.yml` (2026-08 amendment)
+  - [x] 17.1 Fix findings in `internal/lock`
+    - `.golangci.yml` gained `testifylint` in `linters.enable` (repo-wide, not slice-specific — see `CLAUDE.md`)
+    - `require-error`: every bare `assert.Error`/`assert.ErrorIs` in `redis_test.go` (where nothing meaningful follows that specific check) changed to `require` — this ended up being every remaining one in `TestConnectionFailurePropagates` and two in earlier tests, since the linter's rule fires per-statement, not just on the last one in a function
+    - `go-require`: none found in this package (no `httptest` handlers here)
+    - Verify `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...` reports 0 issues repo-wide
+    - _Requirements: (maintenance amendment, no behavioral change)_
 
 ## Notes
 

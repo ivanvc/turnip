@@ -134,6 +134,21 @@ property).
   - [x] 14.3 Checkpoint - Full re-verification
     - Ensure `go build ./...`, `go vet ./internal/plugin/...`, `gofmt -l internal/plugin/`, and `go test -race ./internal/plugin/...` all pass, coverage remains at 90%+, and `go mod tidy` is stable
 
+- [x] 15. Adopt `testify` for unit test assertions (2026-08 amendment)
+  - [x] 15.1 Rewrite `internal/plugin`'s unit test files against `github.com/stretchr/testify`
+    - Adopted repo-wide (see `CLAUDE.md`) to replace hand-rolled `if ... { t.Fatalf(...) }`/`t.Errorf(...)` checks with `require`/`assert`
+    - `command_test.go`, `helmfile_parse_test.go`, `helmfile_test.go`, `plugin_test.go`: `require` where the original check was fatal, `assert` where it was non-fatal
+    - `property_test.go`: `*rapid.T` satisfies testify's `TestingT` interface directly, so `rapid.Check` bodies use `require` the same way
+    - Verify `go test ./internal/plugin/...` passes with unchanged behavior and 100% coverage
+    - _Requirements: (maintenance amendment, no behavioral change)_
+
+  - [x] 15.2 Update dependencies
+    - Add `github.com/stretchr/testify` as a direct dependency
+    - _Requirements: (dependency infrastructure, no direct requirement)_
+
+  - [x] 15.3 Checkpoint - Full re-verification
+    - Ensure `go build ./...`, `go vet ./internal/plugin/...`, `gofmt -l internal/plugin/`, `go test -race ./internal/plugin/...` (coverage 90%+), and the real `golangci-lint` v2 (`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...`) all pass
+
 ## Notes
 
 - No new external dependencies — `gopter` is already a direct dependency from Slice 1; the command seam uses only `os/exec` and `context` from the standard library.

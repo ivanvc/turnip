@@ -160,6 +160,21 @@ update, then tests (unit, then property).
   - [x] 15.3 Checkpoint - Full re-verification
     - Ensure `go build ./...`, `go vet ./internal/config/...`, `gofmt -l internal/config/`, and `go test -race ./internal/config/...` all pass, coverage remains at 100%, and `go mod tidy` is stable
 
+- [x] 16. Adopt `testify` for unit test assertions (2026-08 amendment)
+  - [x] 16.1 Rewrite `internal/config`'s unit test files against `github.com/stretchr/testify`
+    - Adopted repo-wide (see `CLAUDE.md`) to replace hand-rolled `if ... { t.Fatalf(...) }`/`t.Errorf(...)` checks with `require`/`assert`
+    - `config_test.go`, `errors_test.go`, `match_test.go`, `parse_test.go`, `validate_test.go`: `require` where the original check was fatal (`t.Fatalf`/`t.Fatal`), `assert` where it was non-fatal (`t.Errorf`, including inside table-driven loops)
+    - `property_test.go`: `*rapid.T` satisfies testify's `TestingT` interface directly, so `rapid.Check` bodies use `require` the same way (no wrapper needed)
+    - Verify `go test ./internal/config/...` passes with unchanged behavior and 100% coverage
+    - _Requirements: (maintenance amendment, no behavioral change)_
+
+  - [x] 16.2 Update dependencies
+    - Add `github.com/stretchr/testify` as a direct dependency
+    - _Requirements: (dependency infrastructure, no direct requirement)_
+
+  - [x] 16.3 Checkpoint - Full re-verification
+    - Ensure `go build ./...`, `go vet ./internal/config/...`, `gofmt -l internal/config/`, `go test -race ./internal/config/...` (100% coverage), and the real `golangci-lint` v2 (`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...`) all pass
+
 ## Notes
 
 - No GitHub, Redis, gRPC, or plugin-system dependencies are introduced — this

@@ -1,6 +1,10 @@
 package plugin
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestParseChangedReleases(t *testing.T) {
 	tests := []struct {
@@ -48,9 +52,7 @@ func TestParseChangedReleases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := parseChangedReleases(tt.output); got != tt.want {
-				t.Errorf("parseChangedReleases() = %d, want %d", got, tt.want)
-			}
+			assert.Equal(t, tt.want, parseChangedReleases(tt.output))
 		})
 	}
 }

@@ -1,11 +1,11 @@
 package config
 
 import (
-	"reflect"
 	"testing"
 
 	yaml "go.yaml.in/yaml/v3"
 
+	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
 
@@ -47,18 +47,12 @@ func TestProperty_ConfigurationRoundTrip(t *testing.T) {
 		original := &Config{Version: version, Projects: genProjects(t)}
 
 		data, err := yaml.Marshal(original)
-		if err != nil {
-			t.Fatalf("yaml.Marshal() error = %v", err)
-		}
+		require.NoError(t, err)
 
 		got, err := Parse(data)
-		if err != nil {
-			t.Fatalf("Parse() error = %v", err)
-		}
+		require.NoError(t, err)
 
-		if !reflect.DeepEqual(original, got) {
-			t.Fatalf("Parse(yaml.Marshal(original)) = %+v, want %+v", got, original)
-		}
+		require.Equal(t, original, got)
 	})
 }
 
@@ -71,11 +65,10 @@ func TestProperty_ToolValidationRejectsInvalidTools(t *testing.T) {
 		_, err := Parse(data)
 
 		valid := tool == ToolTerraform || tool == ToolPulumi || tool == ToolHelmfile
-		if valid && err != nil {
-			t.Fatalf("Parse() with valid tool %q returned error: %v", tool, err)
-		}
-		if !valid && err == nil {
-			t.Fatalf("Parse() with invalid tool %q returned no error", tool)
+		if valid {
+			require.NoErrorf(t, err, "Parse() with valid tool %q", tool)
+		} else {
+			require.Errorf(t, err, "Parse() with invalid tool %q", tool)
 		}
 	})
 }
@@ -91,8 +84,7 @@ func TestProperty_WhenModifiedPatternMatching(t *testing.T) {
 
 		got := MatchProjects([]Project{project}, modifiedFiles)
 
-		if len(got) != 1 || got[0].Name != "p" {
-			t.Fatalf("MatchProjects() = %+v, want project %q matched", got, "p")
-		}
+		require.Len(t, got, 1)
+		require.Equal(t, "p", got[0].Name)
 	})
 }

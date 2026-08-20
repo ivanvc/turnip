@@ -1,8 +1,9 @@
 package plugin
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestUnsupportedOperationError_Error(t *testing.T) {
@@ -15,8 +16,6 @@ func TestUnsupportedOperationError_Error(t *testing.T) {
 	msg := err.Error()
 
 	for _, want := range []string{"helmfile", "plan", "diff", "apply", "sync", "destroy"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("Error() = %q, missing %q", msg, want)
-		}
+		assert.Contains(t, msg, want)
 	}
 }

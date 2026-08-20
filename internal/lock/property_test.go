@@ -2,13 +2,13 @@ package lock
 
 import (
 	"context"
-	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 
 	"pgregory.net/rapid"
 
@@ -26,7 +26,7 @@ func newPropertyManager(t *rapid.T) *RedisLockManager {
 func newPropertyClient(t *rapid.T) *redis.Client {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { client.Close() })
+	t.Cleanup(func() { _ = client.Close() })
 	return client
 }
 
@@ -49,17 +49,12 @@ func TestProperty_LockAcquisitionPreventsConcurrentOperations(t *testing.T) {
 		m := newPropertyManager(t)
 
 		okA, err := m.AcquireLock(ctx, projectKey, prA, "https://example.com/pr/a", "alice")
-		if err != nil || !okA {
-			t.Fatalf("AcquireLock(PR A) = (%v, %v), want (true, nil)", okA, err)
-		}
+		require.NoError(t, err)
+		require.True(t, okA)
 
 		okB, err := m.AcquireLock(ctx, projectKey, prB, "https://example.com/pr/b", "bob")
-		if err != nil {
-			t.Fatalf("AcquireLock(PR B) error = %v", err)
-		}
-		if okB {
-			t.Fatalf("AcquireLock(PR B) = true, want false: PR A already holds the lock")
-		}
+		require.NoError(t, err)
+		require.False(t, okB, "PR A already holds the lock")
 	})
 }
 
@@ -73,23 +68,15 @@ func TestProperty_LockReleaseAfterOperationCompletion(t *testing.T) {
 		ctx := context.Background()
 		m := newPropertyManager(t)
 
-		if ok, err := m.AcquireLock(ctx, projectKey, pr, "https://example.com/pr", "alice"); err != nil || !ok {
-			t.Fatalf("AcquireLock() = (%v, %v), want (true, nil)", ok, err)
-		}
-		if err := m.StorePlanData(ctx, projectKey, pr, planData, plugin.ChangeSummary{Add: 1}); err != nil {
-			t.Fatalf("StorePlanData() error = %v", err)
-		}
-		if err := m.ReleaseLock(ctx, projectKey, pr); err != nil {
-			t.Fatalf("ReleaseLock() error = %v", err)
-		}
+		ok, err := m.AcquireLock(ctx, projectKey, pr, "https://example.com/pr", "alice")
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.NoError(t, m.StorePlanData(ctx, projectKey, pr, planData, plugin.ChangeSummary{Add: 1}))
+		require.NoError(t, m.ReleaseLock(ctx, projectKey, pr))
 
 		status, err := m.GetLockStatus(ctx, projectKey)
-		if err != nil {
-			t.Fatalf("GetLockStatus() error = %v", err)
-		}
-		if status.Locked {
-			t.Fatalf("GetLockStatus() after release = %+v, want Locked: false", status)
-		}
+		require.NoError(t, err)
+		require.False(t, status.Locked)
 	})
 }
 
@@ -104,23 +91,15 @@ func TestProperty_PlanApplyLockConsistency(t *testing.T) {
 		ctx := context.Background()
 		m := newPropertyManager(t)
 
-		if ok, err := m.AcquireLock(ctx, projectKey, pr, "https://example.com/pr", "alice"); err != nil || !ok {
-			t.Fatalf("AcquireLock() = (%v, %v), want (true, nil)", ok, err)
-		}
-		if err := m.StorePlanData(ctx, projectKey, pr, planData, summary); err != nil {
-			t.Fatalf("StorePlanData() error = %v", err)
-		}
+		ok, err := m.AcquireLock(ctx, projectKey, pr, "https://example.com/pr", "alice")
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.NoError(t, m.StorePlanData(ctx, projectKey, pr, planData, summary))
 
 		gotData, gotSummary, err := m.GetPlanData(ctx, projectKey, pr)
-		if err != nil {
-			t.Fatalf("GetPlanData() error = %v", err)
-		}
-		if !reflect.DeepEqual(planData, gotData) {
-			t.Fatalf("GetPlanData() data = %v, want %v", gotData, planData)
-		}
-		if gotSummary != summary {
-			t.Fatalf("GetPlanData() summary = %+v, want %+v", gotSummary, summary)
-		}
+		require.NoError(t, err)
+		require.Equal(t, planData, gotData)
+		require.Equal(t, summary, gotSummary)
 	})
 }
 
@@ -153,8 +132,6 @@ func TestProperty_LockAcquisitionAcrossInstances(t *testing.T) {
 		}
 		wg.Wait()
 
-		if got := successes.Load(); got != 1 {
-			t.Fatalf("successes = %d, want exactly 1", got)
-		}
+		require.EqualValues(t, 1, successes.Load())
 	})
 }

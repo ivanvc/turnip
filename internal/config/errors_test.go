@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestParseError_Error(t *testing.T) {
 	tests := []struct {
@@ -22,19 +26,14 @@ func TestParseError_Error(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.err.Error(); got != tt.want {
-				t.Errorf("Error() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, tt.err.Error())
 		})
 	}
 }
 
 func TestValidationError_Error(t *testing.T) {
 	err := &ValidationError{ProjectRef: "vpc", Field: "tool", Message: "unsupported tool"}
-	want := "config: vpc: tool: unsupported tool"
-	if got := err.Error(); got != want {
-		t.Errorf("Error() = %q, want %q", got, want)
-	}
+	assert.Equal(t, "config: vpc: tool: unsupported tool", err.Error())
 }
 
 func TestValidationErrors_Error(t *testing.T) {
@@ -43,7 +42,5 @@ func TestValidationErrors_Error(t *testing.T) {
 		&ValidationError{ProjectRef: "rds", Field: "tool", Message: "tool is required"},
 	}
 	want := "config: vpc: name: name is required\nconfig: rds: tool: tool is required"
-	if got := errs.Error(); got != want {
-		t.Errorf("Error() = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, errs.Error())
 }

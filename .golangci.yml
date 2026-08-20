@@ -11,6 +11,7 @@ linters:
     - ineffassign
     - unused
     - misspell
+    - testifylint
   exclusions:
     paths:
       - ".*\\.pb\\.go$"

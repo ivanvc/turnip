@@ -2,11 +2,12 @@ package lock
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ivanvc/turnip/internal/plugin"
 )
@@ -15,7 +16,7 @@ func newTestManager(t *testing.T) (*RedisLockManager, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
-	t.Cleanup(func() { client.Close() })
+	t.Cleanup(func() { _ = client.Close() })
 	return NewRedisLockManager(client), mr
 }
 
@@ -25,42 +26,29 @@ func TestFullLifecycleSequence(t *testing.T) {
 	const projectKey = "owner/repo/project"
 
 	ok, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
-	if err != nil || !ok {
-		t.Fatalf("AcquireLock() = (%v, %v), want (true, nil)", ok, err)
-	}
+	require.NoError(t, err)
+	require.True(t, ok)
 
 	summary := plugin.ChangeSummary{Add: 1, Change: 2, Destroy: 3}
-	if err := m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), summary); err != nil {
-		t.Fatalf("StorePlanData() error = %v", err)
-	}
+	require.NoError(t, m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), summary))
 
 	data, gotSummary, err := m.GetPlanData(ctx, projectKey, 1)
-	if err != nil {
-		t.Fatalf("GetPlanData() error = %v", err)
-	}
-	if string(data) != "plan-bytes" || gotSummary != summary {
-		t.Fatalf("GetPlanData() = (%q, %+v), want (%q, %+v)", data, gotSummary, "plan-bytes", summary)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "plan-bytes", string(data))
+	assert.Equal(t, summary, gotSummary)
 
 	status, err := m.GetLockStatus(ctx, projectKey)
-	if err != nil {
-		t.Fatalf("GetLockStatus() error = %v", err)
-	}
-	if !status.Locked || status.PRNumber != 1 || !status.HasPlan || status.PlanSummary != summary {
-		t.Fatalf("GetLockStatus() = %+v, want locked by PR 1 with plan", status)
-	}
+	require.NoError(t, err)
+	assert.True(t, status.Locked)
+	assert.Equal(t, 1, status.PRNumber)
+	assert.True(t, status.HasPlan)
+	assert.Equal(t, summary, status.PlanSummary)
 
-	if err := m.ReleaseLock(ctx, projectKey, 1); err != nil {
-		t.Fatalf("ReleaseLock() error = %v", err)
-	}
+	require.NoError(t, m.ReleaseLock(ctx, projectKey, 1))
 
 	status, err = m.GetLockStatus(ctx, projectKey)
-	if err != nil {
-		t.Fatalf("GetLockStatus() after release error = %v", err)
-	}
-	if status.Locked {
-		t.Fatalf("GetLockStatus() after release = %+v, want Locked: false", status)
-	}
+	require.NoError(t, err)
+	assert.False(t, status.Locked)
 }
 
 func TestAcquireLock_IdempotentSamePR(t *testing.T) {
@@ -68,25 +56,19 @@ func TestAcquireLock_IdempotentSamePR(t *testing.T) {
 	m, _ := newTestManager(t)
 	const projectKey = "owner/repo/project"
 
-	if ok, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice"); err != nil || !ok {
-		t.Fatalf("first AcquireLock() = (%v, %v), want (true, nil)", ok, err)
-	}
-	if err := m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{Add: 1}); err != nil {
-		t.Fatalf("StorePlanData() error = %v", err)
-	}
+	ok, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{Add: 1}))
 
 	// Re-acquire (e.g. a retried webhook) must not disturb the stored plan.
-	if ok, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice"); err != nil || !ok {
-		t.Fatalf("second AcquireLock() = (%v, %v), want (true, nil)", ok, err)
-	}
+	ok, err = m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
+	require.True(t, ok)
 
 	data, _, err := m.GetPlanData(ctx, projectKey, 1)
-	if err != nil {
-		t.Fatalf("GetPlanData() error = %v", err)
-	}
-	if string(data) != "plan-bytes" {
-		t.Fatalf("GetPlanData() = %q, want %q (plan data must survive idempotent re-acquire)", data, "plan-bytes")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "plan-bytes", string(data), "plan data must survive idempotent re-acquire")
 }
 
 func TestAcquireLock_DifferentPRFails(t *testing.T) {
@@ -94,29 +76,19 @@ func TestAcquireLock_DifferentPRFails(t *testing.T) {
 	m, _ := newTestManager(t)
 	const projectKey = "owner/repo/project"
 
-	if ok, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice"); err != nil || !ok {
-		t.Fatalf("AcquireLock(PR 1) = (%v, %v), want (true, nil)", ok, err)
-	}
-	if err := m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{Add: 1}); err != nil {
-		t.Fatalf("StorePlanData() error = %v", err)
-	}
+	ok, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{Add: 1}))
 
-	ok, err := m.AcquireLock(ctx, projectKey, 2, "https://example.com/pr/2", "bob")
-	if err != nil {
-		t.Fatalf("AcquireLock(PR 2) error = %v", err)
-	}
-	if ok {
-		t.Fatalf("AcquireLock(PR 2) = true, want false: PR 1 already holds the lock")
-	}
+	ok, err = m.AcquireLock(ctx, projectKey, 2, "https://example.com/pr/2", "bob")
+	require.NoError(t, err)
+	assert.False(t, ok, "PR 1 already holds the lock")
 
 	// PR 1's lock and plan data must be untouched.
 	data, _, err := m.GetPlanData(ctx, projectKey, 1)
-	if err != nil {
-		t.Fatalf("GetPlanData(PR 1) error = %v", err)
-	}
-	if string(data) != "plan-bytes" {
-		t.Fatalf("GetPlanData(PR 1) = %q, want %q (unaffected by failed PR 2 acquire)", data, "plan-bytes")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "plan-bytes", string(data), "unaffected by failed PR 2 acquire")
 }
 
 func TestStorePlanData_WrongPRFails(t *testing.T) {
@@ -124,18 +96,14 @@ func TestStorePlanData_WrongPRFails(t *testing.T) {
 	m, _ := newTestManager(t)
 	const projectKey = "owner/repo/project"
 
-	if _, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice"); err != nil {
-		t.Fatalf("AcquireLock() error = %v", err)
-	}
+	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
 
-	err := m.StorePlanData(ctx, projectKey, 2, []byte("plan-bytes"), plugin.ChangeSummary{})
-	if !errors.Is(err, ErrLockedByOtherPR) {
-		t.Fatalf("StorePlanData(wrong PR) error = %v, want wrapping ErrLockedByOtherPR", err)
-	}
+	err = m.StorePlanData(ctx, projectKey, 2, []byte("plan-bytes"), plugin.ChangeSummary{})
+	require.ErrorIs(t, err, ErrLockedByOtherPR)
 
-	if _, _, err := m.GetPlanData(ctx, projectKey, 1); !errors.Is(err, ErrNoPlanData) {
-		t.Fatalf("GetPlanData(PR 1) error = %v, want ErrNoPlanData (lock must be untouched)", err)
-	}
+	_, _, err = m.GetPlanData(ctx, projectKey, 1)
+	assert.ErrorIs(t, err, ErrNoPlanData, "lock must be untouched")
 }
 
 func TestStorePlanData_NoLockFails(t *testing.T) {
@@ -143,9 +111,7 @@ func TestStorePlanData_NoLockFails(t *testing.T) {
 	m, _ := newTestManager(t)
 
 	err := m.StorePlanData(ctx, "owner/repo/project", 1, []byte("plan-bytes"), plugin.ChangeSummary{})
-	if !errors.Is(err, ErrNoLock) {
-		t.Fatalf("StorePlanData() error = %v, want wrapping ErrNoLock", err)
-	}
+	assert.ErrorIs(t, err, ErrNoLock)
 }
 
 func TestStorePlanData_AfterReleaseFails(t *testing.T) {
@@ -153,17 +119,12 @@ func TestStorePlanData_AfterReleaseFails(t *testing.T) {
 	m, _ := newTestManager(t)
 	const projectKey = "owner/repo/project"
 
-	if _, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice"); err != nil {
-		t.Fatalf("AcquireLock() error = %v", err)
-	}
-	if err := m.ReleaseLock(ctx, projectKey, 1); err != nil {
-		t.Fatalf("ReleaseLock() error = %v", err)
-	}
+	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
+	require.NoError(t, m.ReleaseLock(ctx, projectKey, 1))
 
-	err := m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{})
-	if !errors.Is(err, ErrNoLock) {
-		t.Fatalf("StorePlanData() after release error = %v, want wrapping ErrNoLock", err)
-	}
+	err = m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{})
+	assert.ErrorIs(t, err, ErrNoLock)
 }
 
 func TestGetPlanData_WrongPRFails(t *testing.T) {
@@ -171,16 +132,12 @@ func TestGetPlanData_WrongPRFails(t *testing.T) {
 	m, _ := newTestManager(t)
 	const projectKey = "owner/repo/project"
 
-	if _, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice"); err != nil {
-		t.Fatalf("AcquireLock() error = %v", err)
-	}
-	if err := m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{}); err != nil {
-		t.Fatalf("StorePlanData() error = %v", err)
-	}
+	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
+	require.NoError(t, m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{}))
 
-	if _, _, err := m.GetPlanData(ctx, projectKey, 2); !errors.Is(err, ErrLockedByOtherPR) {
-		t.Fatalf("GetPlanData(wrong PR) error = %v, want wrapping ErrLockedByOtherPR", err)
-	}
+	_, _, err = m.GetPlanData(ctx, projectKey, 2)
+	assert.ErrorIs(t, err, ErrLockedByOtherPR)
 }
 
 func TestGetPlanData_NoPlanYetFails(t *testing.T) {
@@ -188,22 +145,18 @@ func TestGetPlanData_NoPlanYetFails(t *testing.T) {
 	m, _ := newTestManager(t)
 	const projectKey = "owner/repo/project"
 
-	if _, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice"); err != nil {
-		t.Fatalf("AcquireLock() error = %v", err)
-	}
+	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
 
-	if _, _, err := m.GetPlanData(ctx, projectKey, 1); !errors.Is(err, ErrNoPlanData) {
-		t.Fatalf("GetPlanData() error = %v, want wrapping ErrNoPlanData (distinguishable from wrong-PR)", err)
-	}
+	_, _, err = m.GetPlanData(ctx, projectKey, 1)
+	assert.ErrorIs(t, err, ErrNoPlanData, "distinguishable from wrong-PR")
 }
 
 func TestReleaseLock_NoLockIsNoop(t *testing.T) {
 	ctx := context.Background()
 	m, _ := newTestManager(t)
 
-	if err := m.ReleaseLock(ctx, "owner/repo/project", 1); err != nil {
-		t.Fatalf("ReleaseLock() on unlocked project error = %v, want nil (idempotent)", err)
-	}
+	assert.NoError(t, m.ReleaseLock(ctx, "owner/repo/project", 1))
 }
 
 func TestReleaseLock_WrongPRFails(t *testing.T) {
@@ -211,22 +164,15 @@ func TestReleaseLock_WrongPRFails(t *testing.T) {
 	m, _ := newTestManager(t)
 	const projectKey = "owner/repo/project"
 
-	if _, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice"); err != nil {
-		t.Fatalf("AcquireLock() error = %v", err)
-	}
+	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
 
-	err := m.ReleaseLock(ctx, projectKey, 2)
-	if !errors.Is(err, ErrLockedByOtherPR) {
-		t.Fatalf("ReleaseLock(wrong PR) error = %v, want wrapping ErrLockedByOtherPR", err)
-	}
+	err = m.ReleaseLock(ctx, projectKey, 2)
+	require.ErrorIs(t, err, ErrLockedByOtherPR)
 
 	locked, err := m.IsLockedByPR(ctx, projectKey, 1)
-	if err != nil {
-		t.Fatalf("IsLockedByPR() error = %v", err)
-	}
-	if !locked {
-		t.Fatalf("IsLockedByPR(PR 1) = false, want true: failed release by PR 2 must not release the lock")
-	}
+	require.NoError(t, err)
+	assert.True(t, locked, "failed release by PR 2 must not release the lock")
 }
 
 func TestGetLockStatus_Unlocked(t *testing.T) {
@@ -234,12 +180,8 @@ func TestGetLockStatus_Unlocked(t *testing.T) {
 	m, _ := newTestManager(t)
 
 	status, err := m.GetLockStatus(ctx, "owner/repo/project")
-	if err != nil {
-		t.Fatalf("GetLockStatus() error = %v", err)
-	}
-	if status.Locked {
-		t.Fatalf("GetLockStatus() = %+v, want Locked: false", status)
-	}
+	require.NoError(t, err)
+	assert.False(t, status.Locked)
 }
 
 func TestGetLockStatus_LockedWithPlan(t *testing.T) {
@@ -247,22 +189,19 @@ func TestGetLockStatus_LockedWithPlan(t *testing.T) {
 	m, _ := newTestManager(t)
 	const projectKey = "owner/repo/project"
 
-	if _, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice"); err != nil {
-		t.Fatalf("AcquireLock() error = %v", err)
-	}
+	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
 	summary := plugin.ChangeSummary{Add: 4, Change: 5, Destroy: 6}
-	if err := m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), summary); err != nil {
-		t.Fatalf("StorePlanData() error = %v", err)
-	}
+	require.NoError(t, m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), summary))
 
 	status, err := m.GetLockStatus(ctx, projectKey)
-	if err != nil {
-		t.Fatalf("GetLockStatus() error = %v", err)
-	}
-	if !status.Locked || status.PRNumber != 1 || status.PullRequestURL != "https://example.com/pr/1" ||
-		status.LockedBy != "alice" || !status.HasPlan || status.PlanSummary != summary {
-		t.Fatalf("GetLockStatus() = %+v, unexpected", status)
-	}
+	require.NoError(t, err)
+	assert.True(t, status.Locked)
+	assert.Equal(t, 1, status.PRNumber)
+	assert.Equal(t, "https://example.com/pr/1", status.PullRequestURL)
+	assert.Equal(t, "alice", status.LockedBy)
+	assert.True(t, status.HasPlan)
+	assert.Equal(t, summary, status.PlanSummary)
 }
 
 func TestIsLockedByPR(t *testing.T) {
@@ -270,20 +209,20 @@ func TestIsLockedByPR(t *testing.T) {
 	m, _ := newTestManager(t)
 	const projectKey = "owner/repo/project"
 
-	if locked, err := m.IsLockedByPR(ctx, projectKey, 1); err != nil || locked {
-		t.Fatalf("IsLockedByPR() on unlocked project = (%v, %v), want (false, nil)", locked, err)
-	}
+	locked, err := m.IsLockedByPR(ctx, projectKey, 1)
+	require.NoError(t, err)
+	assert.False(t, locked)
 
-	if _, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice"); err != nil {
-		t.Fatalf("AcquireLock() error = %v", err)
-	}
+	_, err = m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
 
-	if locked, err := m.IsLockedByPR(ctx, projectKey, 1); err != nil || !locked {
-		t.Fatalf("IsLockedByPR(holding PR) = (%v, %v), want (true, nil)", locked, err)
-	}
-	if locked, err := m.IsLockedByPR(ctx, projectKey, 2); err != nil || locked {
-		t.Fatalf("IsLockedByPR(other PR) = (%v, %v), want (false, nil)", locked, err)
-	}
+	locked, err = m.IsLockedByPR(ctx, projectKey, 1)
+	require.NoError(t, err)
+	assert.True(t, locked)
+
+	locked, err = m.IsLockedByPR(ctx, projectKey, 2)
+	require.NoError(t, err)
+	assert.False(t, locked)
 }
 
 func TestGetLockData_DecodeErrorPropagates(t *testing.T) {
@@ -291,13 +230,10 @@ func TestGetLockData_DecodeErrorPropagates(t *testing.T) {
 	m, mr := newTestManager(t)
 	const projectKey = "owner/repo/project"
 
-	if err := mr.Set(lockKey(projectKey), "not-json"); err != nil {
-		t.Fatalf("miniredis Set() error = %v", err)
-	}
+	require.NoError(t, mr.Set(lockKey(projectKey), "not-json"))
 
-	if _, err := m.GetLockStatus(ctx, projectKey); err == nil {
-		t.Fatalf("GetLockStatus() error = nil, want a decode error for a corrupted lock value")
-	}
+	_, err := m.GetLockStatus(ctx, projectKey)
+	assert.Error(t, err, "want a decode error for a corrupted lock value")
 }
 
 func TestConnectionFailurePropagates(t *testing.T) {
@@ -305,31 +241,27 @@ func TestConnectionFailurePropagates(t *testing.T) {
 	m, mr := newTestManager(t)
 	const projectKey = "owner/repo/project"
 
-	if _, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice"); err != nil {
-		t.Fatalf("AcquireLock() error = %v", err)
-	}
-	if err := m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{}); err != nil {
-		t.Fatalf("StorePlanData() error = %v", err)
-	}
+	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
+	require.NoError(t, m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{}))
 
 	mr.Close()
 
-	if _, err := m.AcquireLock(ctx, projectKey, 2, "https://example.com/pr/2", "bob"); err == nil {
-		t.Fatalf("AcquireLock() error = nil, want a connection error once the server is closed")
-	}
-	if err := m.StorePlanData(ctx, projectKey, 1, []byte("more-bytes"), plugin.ChangeSummary{}); err == nil {
-		t.Fatalf("StorePlanData() error = nil, want a connection error once the server is closed")
-	}
-	if _, _, err := m.GetPlanData(ctx, projectKey, 1); err == nil {
-		t.Fatalf("GetPlanData() error = nil, want a connection error once the server is closed")
-	}
-	if err := m.ReleaseLock(ctx, projectKey, 1); err == nil {
-		t.Fatalf("ReleaseLock() error = nil, want a connection error once the server is closed")
-	}
-	if _, err := m.GetLockStatus(ctx, projectKey); err == nil {
-		t.Fatalf("GetLockStatus() error = nil, want a connection error once the server is closed")
-	}
-	if _, err := m.IsLockedByPR(ctx, projectKey, 1); err == nil {
-		t.Fatalf("IsLockedByPR() error = nil, want a connection error once the server is closed")
-	}
+	_, err = m.AcquireLock(ctx, projectKey, 2, "https://example.com/pr/2", "bob")
+	require.Error(t, err)
+
+	err = m.StorePlanData(ctx, projectKey, 1, []byte("more-bytes"), plugin.ChangeSummary{})
+	require.Error(t, err)
+
+	_, _, err = m.GetPlanData(ctx, projectKey, 1)
+	require.Error(t, err)
+
+	err = m.ReleaseLock(ctx, projectKey, 1)
+	require.Error(t, err)
+
+	_, err = m.GetLockStatus(ctx, projectKey)
+	require.Error(t, err)
+
+	_, err = m.IsLockedByPR(ctx, projectKey, 1)
+	require.Error(t, err)
 }

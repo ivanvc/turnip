@@ -1,6 +1,11 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
 
 func TestParse_ConfigMapRoundTrips(t *testing.T) {
 	data := []byte(`
@@ -15,18 +20,13 @@ projects:
 `)
 
 	c, err := Parse(data)
-	if err != nil {
-		t.Fatalf("Parse returned unexpected error: %v", err)
-	}
+	require.NoError(t, err)
+
 	got := c.Projects[0].Config
 	want := map[string]string{"workspace": "prod", "region": "us-east-1"}
-	if len(got) != len(want) {
-		t.Fatalf("Config = %v, want %v", got, want)
-	}
+	require.Len(t, got, len(want))
 	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("Config[%q] = %q, want %q", k, got[k], v)
-		}
+		assert.Equal(t, v, got[k], "Config[%q]", k)
 	}
 }
 
@@ -40,10 +40,6 @@ projects:
 `)
 
 	c, err := Parse(data)
-	if err != nil {
-		t.Fatalf("Parse returned unexpected error: %v", err)
-	}
-	if c.Projects[0].Config != nil {
-		t.Errorf("Config = %v, want nil", c.Projects[0].Config)
-	}
+	require.NoError(t, err)
+	assert.Nil(t, c.Projects[0].Config)
 }

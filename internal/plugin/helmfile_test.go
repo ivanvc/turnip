@@ -3,8 +3,10 @@ package plugin
 import (
 	"context"
 	"errors"
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type recordedCall struct {
@@ -38,21 +40,11 @@ func TestHelmfilePlugin_ExecuteInvokesCorrectCommand(t *testing.T) {
 			p := &HelmfilePlugin{run: fakeRunner(t, &calls, []byte("out"), nil, 0, nil)}
 
 			_, err := p.Execute(context.Background(), tt.operation, ExecuteOptions{WorkingDir: "/work"})
-			if err != nil {
-				t.Fatalf("Execute returned unexpected error: %v", err)
-			}
-			if len(calls) != 1 {
-				t.Fatalf("got %d calls, want 1", len(calls))
-			}
-			if calls[0].name != "helmfile" {
-				t.Errorf("name = %q, want %q", calls[0].name, "helmfile")
-			}
-			if calls[0].dir != "/work" {
-				t.Errorf("dir = %q, want %q", calls[0].dir, "/work")
-			}
-			if !reflect.DeepEqual(calls[0].args, tt.wantArgs) {
-				t.Errorf("args = %v, want %v", calls[0].args, tt.wantArgs)
-			}
+			require.NoError(t, err)
+			require.Len(t, calls, 1)
+			assert.Equal(t, "helmfile", calls[0].name)
+			assert.Equal(t, "/work", calls[0].dir)
+			assert.Equal(t, tt.wantArgs, calls[0].args)
 		})
 	}
 }
@@ -62,16 +54,10 @@ func TestHelmfilePlugin_UnsupportedOperation(t *testing.T) {
 	p := &HelmfilePlugin{run: fakeRunner(t, &calls, nil, nil, 0, nil)}
 
 	result, err := p.Execute(context.Background(), "plan", ExecuteOptions{})
-	if result != nil {
-		t.Errorf("result = %+v, want nil", result)
-	}
+	assert.Nil(t, result)
 	var unsupported *UnsupportedOperationError
-	if !errors.As(err, &unsupported) {
-		t.Fatalf("err = %v (%T), want *UnsupportedOperationError", err, err)
-	}
-	if len(calls) != 0 {
-		t.Errorf("got %d calls, want 0 (runner should not be invoked)", len(calls))
-	}
+	require.ErrorAs(t, err, &unsupported)
+	assert.Empty(t, calls, "runner should not be invoked")
 }
 
 func TestHelmfilePlugin_EnvironmentFlag(t *testing.T) {
@@ -81,13 +67,8 @@ func TestHelmfilePlugin_EnvironmentFlag(t *testing.T) {
 	_, err := p.Execute(context.Background(), "diff", ExecuteOptions{
 		Config: map[string]string{"environment": "staging"},
 	})
-	if err != nil {
-		t.Fatalf("Execute returned unexpected error: %v", err)
-	}
-	want := []string{"--environment", "staging", "diff"}
-	if !reflect.DeepEqual(calls[0].args, want) {
-		t.Errorf("args = %v, want %v", calls[0].args, want)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--environment", "staging", "diff"}, calls[0].args)
 }
 
 func TestHelmfilePlugin_NoEnvironmentFlagWhenAbsent(t *testing.T) {
@@ -95,13 +76,8 @@ func TestHelmfilePlugin_NoEnvironmentFlagWhenAbsent(t *testing.T) {
 	p := &HelmfilePlugin{run: fakeRunner(t, &calls, nil, nil, 0, nil)}
 
 	_, err := p.Execute(context.Background(), "diff", ExecuteOptions{})
-	if err != nil {
-		t.Fatalf("Execute returned unexpected error: %v", err)
-	}
-	want := []string{"diff"}
-	if !reflect.DeepEqual(calls[0].args, want) {
-		t.Errorf("args = %v, want %v", calls[0].args, want)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, []string{"diff"}, calls[0].args)
 }
 
 func TestHelmfilePlugin_ExtraArgsAppended(t *testing.T) {
@@ -112,13 +88,8 @@ func TestHelmfilePlugin_ExtraArgsAppended(t *testing.T) {
 		Config:    map[string]string{"environment": "staging"},
 		ExtraArgs: []string{"--quiet"},
 	})
-	if err != nil {
-		t.Fatalf("Execute returned unexpected error: %v", err)
-	}
-	want := []string{"--environment", "staging", "diff", "--quiet"}
-	if !reflect.DeepEqual(calls[0].args, want) {
-		t.Errorf("args = %v, want %v", calls[0].args, want)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--environment", "staging", "diff", "--quiet"}, calls[0].args)
 }
 
 func TestHelmfilePlugin_ChangeSummaryOnlyForDiff(t *testing.T) {
@@ -130,12 +101,8 @@ func TestHelmfilePlugin_ChangeSummaryOnlyForDiff(t *testing.T) {
 			p := &HelmfilePlugin{run: fakeRunner(t, &calls, diffOutput, nil, 0, nil)}
 
 			result, err := p.Execute(context.Background(), operation, ExecuteOptions{})
-			if err != nil {
-				t.Fatalf("Execute returned unexpected error: %v", err)
-			}
-			if result.ChangeSummary != (ChangeSummary{}) {
-				t.Errorf("ChangeSummary = %+v, want zero value for operation %q", result.ChangeSummary, operation)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, ChangeSummary{}, result.ChangeSummary)
 		})
 	}
 
@@ -144,12 +111,8 @@ func TestHelmfilePlugin_ChangeSummaryOnlyForDiff(t *testing.T) {
 		p := &HelmfilePlugin{run: fakeRunner(t, &calls, diffOutput, nil, 0, nil)}
 
 		result, err := p.Execute(context.Background(), "diff", ExecuteOptions{})
-		if err != nil {
-			t.Fatalf("Execute returned unexpected error: %v", err)
-		}
-		if result.ChangeSummary.Change != 1 {
-			t.Errorf("ChangeSummary.Change = %d, want 1", result.ChangeSummary.Change)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 1, result.ChangeSummary.Change)
 	})
 }
 
@@ -158,12 +121,8 @@ func TestHelmfilePlugin_PlanDataAlwaysNil(t *testing.T) {
 	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []byte("out"), nil, 0, nil)}
 
 	result, err := p.Execute(context.Background(), "apply", ExecuteOptions{PlanData: []byte("ignored")})
-	if err != nil {
-		t.Fatalf("Execute returned unexpected error: %v", err)
-	}
-	if result.PlanData != nil {
-		t.Errorf("PlanData = %v, want nil", result.PlanData)
-	}
+	require.NoError(t, err)
+	assert.Nil(t, result.PlanData)
 }
 
 func TestHelmfilePlugin_RunnerErrorPropagates(t *testing.T) {
@@ -172,12 +131,8 @@ func TestHelmfilePlugin_RunnerErrorPropagates(t *testing.T) {
 	p := &HelmfilePlugin{run: fakeRunner(t, &calls, nil, nil, -1, wantErr)}
 
 	result, err := p.Execute(context.Background(), "diff", ExecuteOptions{})
-	if result != nil {
-		t.Errorf("result = %+v, want nil", result)
-	}
-	if !errors.Is(err, wantErr) {
-		t.Errorf("err = %v, want %v", err, wantErr)
-	}
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, wantErr)
 }
 
 func TestHelmfilePlugin_StderrAppendedToOutput(t *testing.T) {
@@ -185,33 +140,16 @@ func TestHelmfilePlugin_StderrAppendedToOutput(t *testing.T) {
 	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []byte("out"), []byte("err"), 1, nil)}
 
 	result, err := p.Execute(context.Background(), "apply", ExecuteOptions{})
-	if err != nil {
-		t.Fatalf("Execute returned unexpected error: %v", err)
-	}
-	if result.ExitCode != 1 {
-		t.Errorf("ExitCode = %d, want 1", result.ExitCode)
-	}
-	if result.Output != "out\nerr" {
-		t.Errorf("Output = %q, want %q", result.Output, "out\nerr")
-	}
-	if result.Error != nil {
-		t.Errorf("Error = %v, want nil", result.Error)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.ExitCode)
+	assert.Equal(t, "out\nerr", result.Output)
+	assert.NoError(t, result.Error)
 }
 
 func TestHelmfilePlugin_NameAndOperations(t *testing.T) {
 	p := NewHelmfilePlugin()
-	if p.Name() != "helmfile" {
-		t.Errorf("Name() = %q, want %q", p.Name(), "helmfile")
-	}
-	wantOps := []string{"diff", "apply", "sync", "destroy"}
-	if !reflect.DeepEqual(p.GetOperations(), wantOps) {
-		t.Errorf("GetOperations() = %v, want %v", p.GetOperations(), wantOps)
-	}
-	if p.GetPlanOperation() != "diff" {
-		t.Errorf("GetPlanOperation() = %q, want %q", p.GetPlanOperation(), "diff")
-	}
-	if p.GetApplyOperation() != "apply" {
-		t.Errorf("GetApplyOperation() = %q, want %q", p.GetApplyOperation(), "apply")
-	}
+	assert.Equal(t, "helmfile", p.Name())
+	assert.Equal(t, []string{"diff", "apply", "sync", "destroy"}, p.GetOperations())
+	assert.Equal(t, "diff", p.GetPlanOperation())
+	assert.Equal(t, "apply", p.GetApplyOperation())
 }

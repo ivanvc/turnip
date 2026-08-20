@@ -1,17 +1,17 @@
 package config
 
 import (
-	"errors"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func asValidationErrors(t *testing.T, err error) ValidationErrors {
 	t.Helper()
 	var verrs ValidationErrors
-	if !errors.As(err, &verrs) {
-		t.Fatalf("err = %v (%T), want ValidationErrors", err, err)
-	}
+	require.ErrorAs(t, err, &verrs)
 	return verrs
 }
 
@@ -36,19 +36,16 @@ func TestParse_MissingRequiredFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Parse([]byte(tt.yaml))
-			if err == nil {
-				t.Fatal("Parse returned nil error, want a validation error")
-			}
+			require.Error(t, err)
 			verrs := asValidationErrors(t, err)
+
 			found := false
 			for _, v := range verrs {
 				if v.Field == tt.field {
 					found = true
 				}
 			}
-			if !found {
-				t.Errorf("no ValidationError for field %q in %v", tt.field, verrs)
-			}
+			assert.True(t, found, "no ValidationError for field %q in %v", tt.field, verrs)
 		})
 	}
 }
@@ -57,37 +54,29 @@ func TestParse_MissingNameAndDirectoryRefersToProjectByIndex(t *testing.T) {
 	data := []byte("version: 1\nprojects:\n  - tool: terraform\n")
 
 	_, err := Parse(data)
-	if err == nil {
-		t.Fatal("Parse returned nil error, want a validation error")
-	}
+	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
+
 	found := false
 	for _, v := range verrs {
 		if v.ProjectRef == "projects[0]" && v.Field == "directory" {
 			found = true
 		}
 	}
-	if !found {
-		t.Errorf("no directory ValidationError referencing projects[0] found in %v", verrs)
-	}
+	assert.True(t, found, "no directory ValidationError referencing projects[0] found in %v", verrs)
 }
 
 func TestParse_UnsupportedTool(t *testing.T) {
 	data := []byte("version: 1\nprojects:\n  - name: vpc\n    directory: infra/vpc\n    tool: cloudformation\n")
 
 	_, err := Parse(data)
-	if err == nil {
-		t.Fatal("Parse returned nil error, want a validation error")
-	}
+	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
-	if len(verrs) != 1 {
-		t.Fatalf("len(verrs) = %d, want 1: %v", len(verrs), verrs)
-	}
+	require.Len(t, verrs, 1)
+
 	msg := verrs[0].Message
 	for _, tool := range []string{ToolTerraform, ToolPulumi, ToolHelmfile} {
-		if !strings.Contains(msg, tool) {
-			t.Errorf("message %q does not mention valid tool %q", msg, tool)
-		}
+		assert.Contains(t, msg, tool)
 	}
 }
 
@@ -104,19 +93,16 @@ projects:
 `)
 
 	_, err := Parse(data)
-	if err == nil {
-		t.Fatal("Parse returned nil error, want a validation error")
-	}
+	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
+
 	found := false
 	for _, v := range verrs {
 		if strings.Contains(v.Message, "duplicate") {
 			found = true
 		}
 	}
-	if !found {
-		t.Errorf("no duplicate-name ValidationError found in %v", verrs)
-	}
+	assert.True(t, found, "no duplicate-name ValidationError found in %v", verrs)
 }
 
 func TestParse_MultipleSimultaneousViolations(t *testing.T) {
@@ -133,13 +119,9 @@ projects:
 `)
 
 	_, err := Parse(data)
-	if err == nil {
-		t.Fatal("Parse returned nil error, want validation errors")
-	}
+	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
-	if len(verrs) < 3 {
-		t.Fatalf("len(verrs) = %d, want at least 3 (missing tool, missing name, duplicate name, bad tool): %v", len(verrs), verrs)
-	}
+	assert.GreaterOrEqual(t, len(verrs), 3, "want at least 3 violations (missing tool, missing name, duplicate name, bad tool): %v", verrs)
 }
 
 func TestParse_InvalidGlobPattern(t *testing.T) {
@@ -154,17 +136,14 @@ projects:
 `)
 
 	_, err := Parse(data)
-	if err == nil {
-		t.Fatal("Parse returned nil error, want a validation error")
-	}
+	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
+
 	found := false
 	for _, v := range verrs {
 		if strings.HasPrefix(v.Field, "whenModified") {
 			found = true
 		}
 	}
-	if !found {
-		t.Errorf("no whenModified ValidationError found in %v", verrs)
-	}
+	assert.True(t, found, "no whenModified ValidationError found in %v", verrs)
 }

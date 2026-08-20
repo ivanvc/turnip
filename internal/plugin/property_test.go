@@ -2,9 +2,9 @@ package plugin
 
 import (
 	"context"
-	"reflect"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
 
@@ -25,15 +25,9 @@ func TestProperty_PluginResultStructureCompleteness(t *testing.T) {
 		}
 
 		result, err := p.Execute(context.Background(), operation, ExecuteOptions{})
-		if err != nil {
-			t.Fatalf("Execute() error = %v", err)
-		}
-		if result == nil {
-			t.Fatalf("Execute() result = nil, want a populated *ExecuteResult")
-		}
-		if result.ExitCode != exitCode {
-			t.Fatalf("Execute().ExitCode = %d, want %d", result.ExitCode, exitCode)
-		}
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, exitCode, result.ExitCode)
 	})
 }
 
@@ -61,15 +55,9 @@ func TestProperty_HelmfilePluginCommandExecution(t *testing.T) {
 		}
 		wantArgs = append(wantArgs, operation)
 
-		if _, err := p.Execute(context.Background(), operation, opts); err != nil {
-			t.Fatalf("Execute() error = %v", err)
-		}
-
-		if gotName != "helmfile" {
-			t.Fatalf("run() name = %q, want %q", gotName, "helmfile")
-		}
-		if !reflect.DeepEqual(gotArgs, wantArgs) {
-			t.Fatalf("run() args = %v, want %v", gotArgs, wantArgs)
-		}
+		_, err := p.Execute(context.Background(), operation, opts)
+		require.NoError(t, err)
+		require.Equal(t, "helmfile", gotName)
+		require.Equal(t, wantArgs, gotArgs)
 	})
 }
