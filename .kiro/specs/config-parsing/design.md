@@ -215,7 +215,8 @@ Per the global spec's dual testing approach (`design.md` "Testing Strategy"):
   matcher" line item): one file per source file above, covering each
   validation rule individually, YAML syntax errors, and glob edge cases
   (`**`, character classes, no-match, multi-pattern-single-file).
-- **Property tests** using `gopter`, ≥100 iterations, tagged per the global
+- **Property tests** using `pgregory.net/rapid` (originally `gopter`;
+  migrated 2026-08, see `tasks.md`), ≥100 iterations, tagged per the global
   convention:
   - `// Feature: multi-iac-automation-platform, Property 1: Configuration Round-Trip` — generate a random valid `Config`, marshal with `go.yaml.in/yaml/v3`, `Parse` it back, assert equality.
   - `// Feature: multi-iac-automation-platform, Property 2: Tool Validation Rejects Invalid Tools` — generate configs with a random non-empty string as `tool`; assert rejection unless it's one of the three valid values.

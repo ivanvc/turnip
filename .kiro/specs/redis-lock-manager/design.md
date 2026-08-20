@@ -252,7 +252,8 @@ target (95%, "Lock manager" per the global design doc's Testing Strategy,
   table above plus: acquiring, storing, retrieving, releasing, and status
   checks in sequence; two-different-PR conflict; idempotent same-PR
   re-acquire preserving existing plan data.
-- **Property tests** using `gopter`, ≥100 iterations, tagged per the global
+- **Property tests** using `pgregory.net/rapid` (originally `gopter`;
+  migrated 2026-08, see `tasks.md`), ≥100 iterations, tagged per the global
   convention:
   - `// Feature: multi-iac-automation-platform, Property 9: Lock Acquisition Prevents Concurrent Operations` — for a random project key and two distinct random PR numbers, if PR A acquires first, PR B's concurrent `AcquireLock` always fails.
   - `// Feature: multi-iac-automation-platform, Property 10: Lock Release After Operation Completion` — implemented as "lock release following a successful apply," per Requirement 7.6 (see "Property 10 mismatch" above, not the global doc's literal wording): for a random project key, PR that acquires, stores a plan, then calls `ReleaseLock` (modeling "apply succeeded"), `GetLockStatus` afterward reports `Locked: false`.

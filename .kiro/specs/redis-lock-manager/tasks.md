@@ -103,6 +103,23 @@ all three, then the package doc update, then tests (unit against
   - Ensure `go build ./...` compiles, `go test -race ./internal/lock/...` passes including property tests (the `-race` flag matters here given Property 36's concurrent goroutines), `go mod tidy` produces no changes, and `golangci-lint run ./internal/lock/...` passes (or `go vet`/`gofmt -l` if golangci-lint is unavailable locally — see CLAUDE.md). Ask the user if questions arise.
   - Verified: `go build ./...` OK; `go vet ./internal/lock/...` clean; `gofmt -l internal/lock/` empty; `go mod tidy` stable (go.mod unchanged on a second run); `go test -race ./internal/lock/...` passes all 17 tests (13 unit, 4 property, ≥100 iterations each). `golangci-lint` unavailable locally per CLAUDE.md's noted environment gap — `go vet`/`gofmt` used as the local approximation; CI will run the real `golangci-lint-action`.
 
+- [x] 14. Migrate property tests from `gopter` to `pgregory.net/rapid` (2026-08 amendment)
+  - [x] 14.1 Rewrite `internal/lock/property_test.go` against `rapid`
+    - `gopter`'s last release (`v0.2.11`) is from April 2024 with no newer tag; `pgregory.net/rapid` is actively maintained (release history checked against the module proxy at amendment time) and became this repo's property-testing convention for all slices, not just this one — see the global design doc's Testing Strategy and `CLAUDE.md`
+    - Replace the `testParameters()`/`gopter.NewProperties`/`prop.ForAll` pattern with `rapid.Check(t, func(t *rapid.T) {...})` per property function; `rapid.Check`'s default `checks` count (100) already satisfies the ≥100-iterations convention, so no parameters helper is needed
+    - Replace `gen.Identifier()` with `rapid.StringMatching(identifierPattern)` (a package-level `const identifierPattern = "[a-zA-Z][a-zA-Z0-9]{0,15}"`), `gen.IntRange` with `rapid.IntRange`, `gen.SliceOf(gen.UInt8())`/`gen.SliceOfN(16, gen.UInt8())` with `rapid.SliceOf(rapid.Byte())`/`rapid.SliceOfN(rapid.Byte(), 16, 16)` (no `[]uint8`-to-`[]byte` `.Map()` conversion needed — `rapid.Byte()` already yields `[]byte` through `SliceOf`), and the `gen.Struct`-based `changeSummaryGen` with a plain `genChangeSummary(t *rapid.T) plugin.ChangeSummary` helper function
+    - Property assertions moved from returning `bool` to calling `t.Fatalf` with a descriptive message on failure — more debuggable than gopter's boolean-only convention, and consistent with this codebase's existing unit-test assertion style
+    - `newPropertyClient`'s signature changed from an ad hoc duck-typed interface (needed because gopter's property functions only close over the outer `*testing.T`) to `*rapid.T` directly, since `*rapid.T` is passed into each property closure and already satisfies `miniredis.Tester`'s `Fatalf`/`Cleanup`/`Logf` shape — this also means `miniredis`/`redis.Client` cleanup now runs after each of the 100 iterations rather than accumulating until the whole test function returns, per `rapid`'s per-check `Cleanup` semantics (verified against its `engine.go` source)
+    - Verify `go test -race ./internal/lock/... -run TestProperty` passes all 4 properties
+    - _Requirements: (maintenance amendment, no behavioral change — see the "Testing Strategy" section of design.md, which now names `rapid`)_
+
+  - [x] 14.2 Update dependencies
+    - Add `pgregory.net/rapid` as a direct dependency; `go mod tidy` removes `github.com/leanovate/gopter` once no package in the module imports it anymore (verified repo-wide, not just `internal/lock`, since `internal/config` and `internal/plugin` were migrated in the same amendment)
+    - _Requirements: (dependency infrastructure, no direct requirement)_
+
+  - [x] 14.3 Checkpoint - Full re-verification
+    - Ensure `go build ./...`, `go vet ./internal/lock/...`, `gofmt -l internal/lock/`, and `go test -race ./internal/lock/...` (17 tests: 13 unit, 4 property) all pass, and `go mod tidy` is stable
+
 ## Notes
 
 - No GitHub, gRPC, or Kubernetes dependencies are introduced — this slice

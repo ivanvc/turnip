@@ -278,7 +278,8 @@ Strategy section):
   - `helmfile_parse_test.go`: `parseChangedReleases` against hand-written
     fixture strings covering zero changed releases, one, multiple, and a
     release header with no body (unchanged).
-- **Property tests** using `gopter`, ≥100 iterations, tagged per the global
+- **Property tests** using `pgregory.net/rapid` (originally `gopter`;
+  migrated 2026-08, see `tasks.md`), ≥100 iterations, tagged per the global
   convention:
   - `// Feature: multi-iac-automation-platform, Property 4: Plugin Result Structure Completeness` — for a random operation among `GetOperations()` and random `ExecuteOptions`, using a fake `commandRunner` that returns randomized stdout/stderr/exitCode, assert the returned `*ExecuteResult` is non-nil and its `Output`/`ExitCode` fields are always populated (never silently dropped).
   - `// Feature: multi-iac-automation-platform, Property 22: Helmfile Plugin Command Execution` — for each of `"diff"`, `"sync"`, `"apply"`, `"destroy"`, assert `Execute` invokes `helmfile <operation>` (with `--environment` correctly placed when configured), using a fake `commandRunner` to capture the call instead of running a real subprocess.

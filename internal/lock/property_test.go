@@ -10,184 +10,151 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/leanovate/gopter"
-	"github.com/leanovate/gopter/gen"
-	"github.com/leanovate/gopter/prop"
+	"pgregory.net/rapid"
 
 	"github.com/ivanvc/turnip/internal/plugin"
 )
 
-func testParameters() *gopter.TestParameters {
-	params := gopter.DefaultTestParameters()
-	params.MinSuccessfulTests = 100
-	return params
+// identifierPattern approximates a Go-style identifier: a letter followed
+// by up to 15 letters or digits.
+const identifierPattern = "[a-zA-Z][a-zA-Z0-9]{0,15}"
+
+func newPropertyManager(t *rapid.T) *RedisLockManager {
+	return NewRedisLockManager(newPropertyClient(t))
 }
 
-func newPropertyClient(t interface {
-	Fatalf(string, ...any)
-	Cleanup(func())
-	Logf(string, ...any)
-}) *redis.Client {
+func newPropertyClient(t *rapid.T) *redis.Client {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { client.Close() })
 	return client
 }
 
-var changeSummaryGen = gen.Struct(reflect.TypeOf(plugin.ChangeSummary{}), map[string]gopter.Gen{
-	"Add":     gen.IntRange(0, 100),
-	"Change":  gen.IntRange(0, 100),
-	"Destroy": gen.IntRange(0, 100),
-})
+func genChangeSummary(t *rapid.T) plugin.ChangeSummary {
+	return plugin.ChangeSummary{
+		Add:     rapid.IntRange(0, 100).Draw(t, "add"),
+		Change:  rapid.IntRange(0, 100).Draw(t, "change"),
+		Destroy: rapid.IntRange(0, 100).Draw(t, "destroy"),
+	}
+}
 
 // Feature: multi-iac-automation-platform, Property 9: Lock Acquisition Prevents Concurrent Operations
 func TestProperty_LockAcquisitionPreventsConcurrentOperations(t *testing.T) {
-	properties := gopter.NewProperties(testParameters())
+	rapid.Check(t, func(t *rapid.T) {
+		projectKey := rapid.StringMatching(identifierPattern).Draw(t, "projectKey")
+		prA := rapid.IntRange(1, 100000).Draw(t, "prA")
+		prB := rapid.IntRange(100001, 200000).Draw(t, "prB")
 
-	properties.Property("PR B cannot acquire a lock PR A already holds", prop.ForAll(
-		func(projectKey string, prA, prB int) bool {
-			ctx := context.Background()
-			m := NewRedisLockManager(newPropertyClient(t))
+		ctx := context.Background()
+		m := newPropertyManager(t)
 
-			okA, err := m.AcquireLock(ctx, projectKey, prA, "https://example.com/pr/a", "alice")
-			if err != nil || !okA {
-				return false
-			}
+		okA, err := m.AcquireLock(ctx, projectKey, prA, "https://example.com/pr/a", "alice")
+		if err != nil || !okA {
+			t.Fatalf("AcquireLock(PR A) = (%v, %v), want (true, nil)", okA, err)
+		}
 
-			okB, err := m.AcquireLock(ctx, projectKey, prB, "https://example.com/pr/b", "bob")
-			if err != nil {
-				return false
-			}
-
-			return !okB
-		},
-		gen.Identifier(),
-		gen.IntRange(1, 100000),
-		gen.IntRange(100001, 200000),
-	))
-
-	properties.TestingRun(t)
+		okB, err := m.AcquireLock(ctx, projectKey, prB, "https://example.com/pr/b", "bob")
+		if err != nil {
+			t.Fatalf("AcquireLock(PR B) error = %v", err)
+		}
+		if okB {
+			t.Fatalf("AcquireLock(PR B) = true, want false: PR A already holds the lock")
+		}
+	})
 }
 
 // Feature: multi-iac-automation-platform, Property 10: Lock Release After Operation Completion
 func TestProperty_LockReleaseAfterOperationCompletion(t *testing.T) {
-	properties := gopter.NewProperties(testParameters())
+	rapid.Check(t, func(t *rapid.T) {
+		projectKey := rapid.StringMatching(identifierPattern).Draw(t, "projectKey")
+		pr := rapid.IntRange(1, 100000).Draw(t, "pr")
+		planData := rapid.SliceOf(rapid.Byte()).Draw(t, "planData")
 
-	properties.Property("releasing a lock after storing a plan (modeling a successful apply) leaves it unlocked", prop.ForAll(
-		func(projectKey string, pr int, planData []byte) bool {
-			ctx := context.Background()
-			m := NewRedisLockManager(newPropertyClient(t))
+		ctx := context.Background()
+		m := newPropertyManager(t)
 
-			if ok, err := m.AcquireLock(ctx, projectKey, pr, "https://example.com/pr", "alice"); err != nil || !ok {
-				return false
-			}
-			if err := m.StorePlanData(ctx, projectKey, pr, planData, plugin.ChangeSummary{Add: 1}); err != nil {
-				return false
-			}
-			if err := m.ReleaseLock(ctx, projectKey, pr); err != nil {
-				return false
-			}
+		if ok, err := m.AcquireLock(ctx, projectKey, pr, "https://example.com/pr", "alice"); err != nil || !ok {
+			t.Fatalf("AcquireLock() = (%v, %v), want (true, nil)", ok, err)
+		}
+		if err := m.StorePlanData(ctx, projectKey, pr, planData, plugin.ChangeSummary{Add: 1}); err != nil {
+			t.Fatalf("StorePlanData() error = %v", err)
+		}
+		if err := m.ReleaseLock(ctx, projectKey, pr); err != nil {
+			t.Fatalf("ReleaseLock() error = %v", err)
+		}
 
-			status, err := m.GetLockStatus(ctx, projectKey)
-			if err != nil {
-				return false
-			}
-
-			return !status.Locked
-		},
-		gen.Identifier(),
-		gen.IntRange(1, 100000),
-		gen.SliceOf(gen.UInt8()).Map(func(bs []uint8) []byte {
-			out := make([]byte, len(bs))
-			for i, b := range bs {
-				out[i] = byte(b)
-			}
-			return out
-		}),
-	))
-
-	properties.TestingRun(t)
+		status, err := m.GetLockStatus(ctx, projectKey)
+		if err != nil {
+			t.Fatalf("GetLockStatus() error = %v", err)
+		}
+		if status.Locked {
+			t.Fatalf("GetLockStatus() after release = %+v, want Locked: false", status)
+		}
+	})
 }
 
 // Feature: multi-iac-automation-platform, Property 11: Plan-Apply Lock Consistency
 func TestProperty_PlanApplyLockConsistency(t *testing.T) {
-	properties := gopter.NewProperties(testParameters())
+	rapid.Check(t, func(t *rapid.T) {
+		projectKey := rapid.StringMatching(identifierPattern).Draw(t, "projectKey")
+		pr := rapid.IntRange(1, 100000).Draw(t, "pr")
+		planData := rapid.SliceOfN(rapid.Byte(), 16, 16).Draw(t, "planData")
+		summary := genChangeSummary(t)
 
-	properties.Property("GetPlanData returns exactly what StorePlanData stored", prop.ForAll(
-		func(projectKey string, pr int, planData []byte, summary plugin.ChangeSummary) bool {
-			ctx := context.Background()
-			m := NewRedisLockManager(newPropertyClient(t))
+		ctx := context.Background()
+		m := newPropertyManager(t)
 
-			if ok, err := m.AcquireLock(ctx, projectKey, pr, "https://example.com/pr", "alice"); err != nil || !ok {
-				return false
-			}
-			if err := m.StorePlanData(ctx, projectKey, pr, planData, summary); err != nil {
-				return false
-			}
+		if ok, err := m.AcquireLock(ctx, projectKey, pr, "https://example.com/pr", "alice"); err != nil || !ok {
+			t.Fatalf("AcquireLock() = (%v, %v), want (true, nil)", ok, err)
+		}
+		if err := m.StorePlanData(ctx, projectKey, pr, planData, summary); err != nil {
+			t.Fatalf("StorePlanData() error = %v", err)
+		}
 
-			gotData, gotSummary, err := m.GetPlanData(ctx, projectKey, pr)
-			if err != nil {
-				return false
-			}
-
-			// A zero-length stored planData round-trips as ErrNoPlanData
-			// (Requirement 2.5), which is covered by the unit tests; the
-			// property here only holds for non-empty plan bytes.
-			if len(planData) == 0 {
-				return true
-			}
-
-			return reflect.DeepEqual(planData, gotData) && gotSummary == summary
-		},
-		gen.Identifier(),
-		gen.IntRange(1, 100000),
-		gen.SliceOfN(16, gen.UInt8()).Map(func(bs []uint8) []byte {
-			out := make([]byte, len(bs))
-			for i, b := range bs {
-				out[i] = byte(b)
-			}
-			return out
-		}),
-		changeSummaryGen,
-	))
-
-	properties.TestingRun(t)
+		gotData, gotSummary, err := m.GetPlanData(ctx, projectKey, pr)
+		if err != nil {
+			t.Fatalf("GetPlanData() error = %v", err)
+		}
+		if !reflect.DeepEqual(planData, gotData) {
+			t.Fatalf("GetPlanData() data = %v, want %v", gotData, planData)
+		}
+		if gotSummary != summary {
+			t.Fatalf("GetPlanData() summary = %+v, want %+v", gotSummary, summary)
+		}
+	})
 }
 
 // Feature: multi-iac-automation-platform, Property 36: Lock Acquisition Across Instances
 func TestProperty_LockAcquisitionAcrossInstances(t *testing.T) {
-	properties := gopter.NewProperties(testParameters())
+	rapid.Check(t, func(t *rapid.T) {
+		projectKey := rapid.StringMatching(identifierPattern).Draw(t, "projectKey")
+		base := rapid.IntRange(1, 100000).Draw(t, "base")
 
-	properties.Property("exactly one of N concurrent AcquireLock calls for the same key succeeds", prop.ForAll(
-		func(projectKey string, base int) bool {
-			client := newPropertyClient(t)
-			const numGoroutines = 10
+		client := newPropertyClient(t)
+		const numGoroutines = 10
 
-			var successes atomic.Int64
-			var wg sync.WaitGroup
-			wg.Add(numGoroutines)
-			for i := range numGoroutines {
-				pr := base + i
-				go func(pr int) {
-					defer wg.Done()
-					// Each goroutine uses its own LockManager value sharing
-					// one *redis.Client, per design.md, so the race is
-					// exercised at the Redis level, not masked by
-					// in-process serialization on a shared LockManager.
-					m := NewRedisLockManager(client)
-					ok, err := m.AcquireLock(context.Background(), projectKey, pr, "https://example.com/pr", "someone")
-					if err == nil && ok {
-						successes.Add(1)
-					}
-				}(pr)
-			}
-			wg.Wait()
+		var successes atomic.Int64
+		var wg sync.WaitGroup
+		wg.Add(numGoroutines)
+		for i := range numGoroutines {
+			pr := base + i
+			go func(pr int) {
+				defer wg.Done()
+				// Each goroutine uses its own LockManager value sharing
+				// one *redis.Client, per design.md, so the race is
+				// exercised at the Redis level, not masked by
+				// in-process serialization on a shared LockManager.
+				m := NewRedisLockManager(client)
+				ok, err := m.AcquireLock(context.Background(), projectKey, pr, "https://example.com/pr", "someone")
+				if err == nil && ok {
+					successes.Add(1)
+				}
+			}(pr)
+		}
+		wg.Wait()
 
-			return successes.Load() == 1
-		},
-		gen.Identifier(),
-		gen.IntRange(1, 100000),
-	))
-
-	properties.TestingRun(t)
+		if got := successes.Load(); got != 1 {
+			t.Fatalf("successes = %d, want exactly 1", got)
+		}
+	})
 }

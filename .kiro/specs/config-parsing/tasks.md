@@ -143,6 +143,23 @@ update, then tests (unit, then property).
   - [x] 14.3 Checkpoint - Verify tests pass with full coverage
     - Ensure `go test -race ./internal/config/...` passes and coverage remains at 100%
 
+- [x] 15. Migrate property tests from `gopter` to `pgregory.net/rapid` (2026-08 amendment)
+  - [x] 15.1 Rewrite `internal/config/property_test.go` against `rapid`
+    - `gopter`'s last release (`v0.2.11`) is from April 2024 with no newer tag; `pgregory.net/rapid` is actively maintained and became this repo's property-testing convention for all slices — see the global design doc's Testing Strategy and `CLAUDE.md`
+    - Replace `testParameters()`/`gopter.NewProperties`/`prop.ForAll` with `rapid.Check(t, func(t *rapid.T) {...})` per property function; `rapid.Check`'s default `checks` count (100) already satisfies the ≥100-iterations convention
+    - Replace the `gen.Struct`-based `projectGen`/`gen.IntRange(...).FlatMap`-based `projectsGen` with plain `genProject(t *rapid.T) Project`/`genProjects(t *rapid.T) []Project` helper functions; replace `gen.Identifier()` with `rapid.StringMatching(identifierPattern)` (a package-level `const identifierPattern = "[a-zA-Z][a-zA-Z0-9]{0,15}"`) and `gen.OneConstOf` with `rapid.SampledFrom`
+    - `uniqueNames`'s disambiguation logic is folded directly into `genProjects` rather than kept as a separate post-processing step, since generation order is already known at that point
+    - Property assertions moved from returning `bool` to calling `t.Fatalf` with a descriptive message on failure
+    - Verify `go test ./internal/config/... -run TestProperty` passes all 3 properties
+    - _Requirements: (maintenance amendment, no behavioral change — see the "Testing Strategy" section of design.md, which now names `rapid`)_
+
+  - [x] 15.2 Update dependencies
+    - Add `pgregory.net/rapid` as a direct dependency; `go mod tidy` removes `github.com/leanovate/gopter` once no package in the module imports it anymore (verified repo-wide, not just `internal/config`, since `internal/plugin` and `internal/lock` were migrated in the same amendment)
+    - _Requirements: (dependency infrastructure, no direct requirement)_
+
+  - [x] 15.3 Checkpoint - Full re-verification
+    - Ensure `go build ./...`, `go vet ./internal/config/...`, `gofmt -l internal/config/`, and `go test -race ./internal/config/...` all pass, coverage remains at 100%, and `go mod tidy` is stable
+
 ## Notes
 
 - No GitHub, Redis, gRPC, or plugin-system dependencies are introduced — this

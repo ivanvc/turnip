@@ -118,6 +118,22 @@ property).
 - [x] 13. Final checkpoint - Full verification
   - Ensure `go build ./...` compiles, `go test -race ./internal/plugin/...` passes including property tests, `go mod tidy` produces no changes, and `golangci-lint run ./internal/plugin/...` passes (or `go vet`/`gofmt -l` if golangci-lint is unavailable locally — see CLAUDE.md). Ask the user if questions arise.
 
+- [x] 14. Migrate property tests from `gopter` to `pgregory.net/rapid` (2026-08 amendment)
+  - [x] 14.1 Rewrite `internal/plugin/property_test.go` against `rapid`
+    - `gopter`'s last release (`v0.2.11`) is from April 2024 with no newer tag; `pgregory.net/rapid` is actively maintained and became this repo's property-testing convention for all slices — see the global design doc's Testing Strategy and `CLAUDE.md`
+    - Replace `testParameters()`/`gopter.NewProperties`/`prop.ForAll` with `rapid.Check(t, func(t *rapid.T) {...})` per property function; `rapid.Check`'s default `checks` count (100) already satisfies the ≥100-iterations convention
+    - Replace `gen.IntRange`/`gen.AlphaString`/`gen.OneConstOf` with `rapid.IntRange`/`rapid.String`/`rapid.SampledFrom`
+    - Property assertions moved from returning `bool` to calling `t.Fatalf` with a descriptive message on failure
+    - Verify `go test ./internal/plugin/... -run TestProperty` passes both properties
+    - _Requirements: (maintenance amendment, no behavioral change — see the "Testing Strategy" section of design.md, which now names `rapid`)_
+
+  - [x] 14.2 Update dependencies
+    - Add `pgregory.net/rapid` as a direct dependency; `go mod tidy` removes `github.com/leanovate/gopter` once no package in the module imports it anymore (verified repo-wide, not just `internal/plugin`, since `internal/config` and `internal/lock` were migrated in the same amendment) — note that this supersedes this file's own "Notes" section below, which predates the migration and is left as the historical record of Slice 2's original state
+    - _Requirements: (dependency infrastructure, no direct requirement)_
+
+  - [x] 14.3 Checkpoint - Full re-verification
+    - Ensure `go build ./...`, `go vet ./internal/plugin/...`, `gofmt -l internal/plugin/`, and `go test -race ./internal/plugin/...` all pass, coverage remains at 90%+, and `go mod tidy` is stable
+
 ## Notes
 
 - No new external dependencies — `gopter` is already a direct dependency from Slice 1; the command seam uses only `os/exec` and `context` from the standard library.

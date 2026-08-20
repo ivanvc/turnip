@@ -7,7 +7,6 @@ toolchain go1.26.6
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
-	github.com/leanovate/gopter v0.2.11
 	github.com/redis/go-redis/v9 v9.22.0
 	go.yaml.in/yaml/v3 v3.0.4
 	google.golang.org/grpc v1.81.1
@@ -15,6 +14,7 @@ require (
 	k8s.io/api v0.36.1
 	k8s.io/apimachinery v0.36.1
 	k8s.io/client-go v0.36.1
+	pgregory.net/rapid v1.3.0
 )
 
 require (

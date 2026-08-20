@@ -929,9 +929,13 @@ The platform requires both unit testing and property-based testing for comprehen
 
 ### Property-Based Testing
 
-**Framework**: Use [gopter](https://github.com/leanovate/gopter) for Go property-based testing.
+**Framework**: Use [pgregory.net/rapid](https://pkg.go.dev/pgregory.net/rapid)
+for Go property-based testing. (Originally [gopter](https://github.com/leanovate/gopter);
+replaced 2026-08 after it went stale — no release since April 2024. `internal/config`,
+`internal/plugin`, and `internal/lock` were migrated at the same time; see each
+slice's `tasks.md` for the amendment entry.)
 
-**Configuration**: Each property test should run a minimum of 100 iterations to ensure adequate randomization coverage.
+**Configuration**: Each property test should run a minimum of 100 iterations to ensure adequate randomization coverage (`rapid.Check`'s default `checks` count already satisfies this).
 
 **Tagging**: Each property test must include a comment tag referencing the design document property:
 ```go
