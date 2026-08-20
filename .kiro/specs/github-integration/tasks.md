@@ -194,6 +194,27 @@ package doc update, then tests (unit, then property).
     - Verify `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...` reports 0 issues repo-wide
     - _Requirements: (maintenance amendment, no behavioral change)_
 
+- [x] 20. Split oversized single-Project output across bodies instead of truncating (2026-08 amendment)
+  - [x] 20.1 Rewrite `comment.go`'s oversized-output handling
+    - Task 11.1's original design truncated a single `ProjectResult.Output` too large for one body with an `[output truncated]` marker, silently dropping the tail — flagged as a real defect (a truncated body also didn't close its own code fence/`<details>` tag, since the marker was plain text): Requirement 7.4 already calls for *splitting* oversized content across bodies, and there's no reason that guarantee should stop applying just because the overflow comes from one Project's `Output` instead of many Projects' combined content
+    - Replace `buildDetailSection` with `buildDetailSectionPart(r, chunk, part, total)`, appending a `(output part N/M)` suffix to the `<summary>` only when `total > 1`
+    - Add `splitDetailSection(r, reserve) []string`: returns the whole rendered piece unsplit when it already fits within `maxCommentLength-reserve`; otherwise chunks `r.Output` so each resulting piece (with its own full `<details>`/fence scaffold) fits within that budget, sizing the scaffold estimate against a pessimistic 4-digit `part`/`total` placeholder so the real suffix never pushes a piece over budget
+    - Add `reserveFor(table) int`, returning `max(len(table), minReserve)` — the summary table (group 0's overhead) is virtually always the largest overhead any piece could face, so reserving against it is conservative for every piece regardless of which body it lands in
+    - `BuildConsolidatedComment` now builds one `pieces []string` slice via `splitDetailSection` per result (rather than one `sections` entry per result) before handing them to the unchanged `packSections`
+    - `truncateBody`'s marker changes from `"\n\n[output truncated]"` to `` "\n```\n\n_(truncated)_\n</details>" `` — it's now a last-resort safety net for the residual per-piece join overhead `packSections` doesn't count, not the primary oversized-output mechanism, but when it does fire it must still close the fence/`<details>` tag it's cutting through
+    - Verify `go build ./internal/github/...`
+    - _Requirements: 7.4_
+
+  - [x] 20.2 Update tests
+    - `comment_test.go`: replace `TestBuildConsolidatedComment_TruncatesOversizedSingleOutput` with `TestBuildConsolidatedComment_SplitsOversizedSingleOutputAcrossBodies`, asserting multiple bodies, each within `maxCommentLength`, no `[output truncated]` marker, and — using a large distinguishable `numberedLines(n)` Output — that extracting and concatenating every body's fenced content byte-for-byte reconstructs the original `Output` exactly (no loss, no duplication, correct order)
+    - Add `TestSplitDetailSection_ReassemblesExactly` and `TestSplitDetailSection_FitsWithoutSplitting`, testing `splitDetailSection` directly
+    - Add `TestTruncateBody_ClosesOpenFenceAndDetails` and `TestTruncateBody_NoOpUnderLimit`, testing `truncateBody` directly
+    - Verify `go test -race ./internal/github/...` passes with 100% coverage on every function in `comment.go`
+    - _Requirements: (test coverage for 20.1, no new requirement)_
+
+  - [x] 20.3 Checkpoint - Full re-verification
+    - Ensure `go build ./...`, `go vet ./internal/github/...`, `gofmt -l internal/github/`, `go test -race ./internal/github/...`, and the real `golangci-lint` v2 (`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...`) all pass
+
 ## Notes
 
 - No Redis, gRPC, or Kubernetes dependencies are introduced — this slice

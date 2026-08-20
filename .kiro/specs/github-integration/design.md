@@ -445,26 +445,51 @@ Format of a single body:
 ```
 
 The summary table (Requirement 7.2) appears once, in the first body only.
-Each `ProjectResult` becomes one `<details>` section (Requirement 7.3) with
-its `Output` in a fenced code block. Sections are packed greedily into the
-first body until adding the next section would exceed
-`maxCommentLength`; overflow sections start a new body, each prefixed with
-a `_(continued N/M)_` line instead of the table (Requirement 7.4).
+Each `ProjectResult` becomes one or more `<details>` *pieces* (Requirement
+7.3) with its `Output` in a fenced code block. Pieces are packed greedily
+into the first body until adding the next piece would exceed
+`maxCommentLength`; overflow pieces start a new body, each prefixed with a
+`_(continued N/M)_` line instead of the table (Requirement 7.4).
 
-**Truncation happens once, at final body assembly — not per-section.** A
-single section whose own content exceeds `maxCommentLength` on its own
-(pathological — a huge plan output) still has to fit in one body by
-itself, rather than looping forever trying to split one section across
-bodies. *Alternative considered*: truncate each oversized section to
-`maxCommentLength` before packing. *Rejected* — that section still has to
-share its body with the table (group 0) or a continuation header (later
-groups), so a section truncated to exactly the limit plus that header's
-overhead pushes the *assembled* body back over the limit, and a naive
-final clamp on the assembled string then risks slicing off the
-truncation marker the per-section step had already appended. Truncating
-once, after the table/header is already in place, both bounds the real
-byte budget correctly and guarantees the `[output truncated]` marker is
-the literal last thing appended, so it can never itself be clipped.
+**A single Project's `Output` too large for one body is split across
+multiple pieces, not truncated.** Each piece is a fully self-contained
+`<details>` block — it opens and closes its own code fence and `<details>`
+tag — so it never depends on a neighboring piece to be valid markdown on
+its own. A split piece's `<summary>` gains a `(output part N/M)` suffix so
+the reader knows it's a fragment. *Alternative considered (this slice's
+original design)*: truncate the oversized section with an
+`[output truncated]` marker instead of splitting it. *Rejected* — silently
+dropping the tail of a Terraform/Pulumi plan is exactly the output a
+reviewer most needs to see in full; Requirement 7.4 already says content
+should be *split* across bodies, and there's no reason that guarantee
+should stop applying just because the overflow comes from one Project
+instead of many.
+
+**Sizing a piece so it fits wherever it lands.** Before packing, each
+Project's `Output` is pre-split (`splitDetailSection`) against a `reserve`
+— the largest overhead any body could impose on it. The summary table
+(group 0's overhead) is virtually always larger than a continuation
+header (a short `_(continued N/M)_` line), so reserving against
+`len(table)` (with a small fixed floor for tiny tables) is the
+conservative choice regardless of which body a piece ends up in — no
+piece needs to know its eventual body in advance. Each piece's own
+`<details>`/`<summary>`/fence scaffold size is computed against a
+pessimistic 4-digit `part`/`total` placeholder, so the real suffix -
+whatever it turns out to be - never makes a piece a few bytes larger than
+budgeted.
+
+**`truncateBody` is now a last-resort safety net, not the primary
+mechanism.** Since every piece is pre-sized to fit, the packed body should
+already be within `maxCommentLength`; `truncateBody`'s hard clamp exists
+only to cover the residual byte-level overhead `packSections` doesn't
+count (the `"\n\n"` join separators between pieces, and the exact
+continuation-header length) — a few bytes at most, in the rare case many
+pieces land in one body. If it does fire, its marker
+(`` "\n```\n\n_(truncated)_\n</details>" `` ) closes the code fence and
+`<details>` tag it's cutting through, appended last so it's never itself
+clipped by the length check — the same "reserve room to close the block"
+principle `splitDetailSection` applies proactively, applied here
+defensively.
 
 ## Errors
 
@@ -524,7 +549,8 @@ line was a malformed trigger attempt.
 | `Authorizer` called for the same user after the 5-minute TTL expires | Cache miss, fresh GitHub API call |
 | `BuildConsolidatedComment` with results totaling under `maxCommentLength` | Exactly one body |
 | `BuildConsolidatedComment` with results totaling over `maxCommentLength` | Multiple bodies; every body remains valid standalone markdown |
-| A single `ProjectResult.Output` alone exceeds `maxCommentLength` | That section is truncated with `[output truncated]` rather than causing an infinite split loop |
+| A single `ProjectResult.Output` alone exceeds `maxCommentLength` | Split into multiple self-contained `<details>` pieces (`(output part N/M)`), each closing its own fence — no content lost, no truncation marker |
+| `packSections`' unaccounted per-piece join overhead pushes an assembled body over `maxCommentLength` anyway (rare) | `truncateBody`'s last-resort clamp fires, closing the fence/`<details>` tag it cuts through with `` "\n```\n\n_(truncated)_\n</details>" `` |
 | `CheckRunOptions{}` (all fields empty) passed to `CreateCheckRun` | Every optional `go-github` pointer field is `nil`; GitHub applies its own defaults (e.g. `status: queued`) |
 
 ## Testing Strategy
