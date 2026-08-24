@@ -25,8 +25,16 @@ const (
 // OperationServiceClient is the client API for OperationService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// OperationService carries the Runner -> Server side of an Operation's
+// execution. ExecuteOperation is client-streaming: the Runner is the sole
+// producer of everything in this exchange (it has the cloned repo and the
+// tool binary; the Server has neither), so it opens the stream, sends one
+// Start, any number of Log lines, then one Result, then closes its send
+// side; the Server sends a single Ack once it has durably received the
+// whole stream.
 type OperationServiceClient interface {
-	ExecuteOperation(ctx context.Context, in *ExecuteOperationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteOperationResponse], error)
+	ExecuteOperation(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ExecuteOperationRequest, ExecuteOperationResponse], error)
 }
 
 type operationServiceClient struct {
@@ -37,30 +45,32 @@ func NewOperationServiceClient(cc grpc.ClientConnInterface) OperationServiceClie
 	return &operationServiceClient{cc}
 }
 
-func (c *operationServiceClient) ExecuteOperation(ctx context.Context, in *ExecuteOperationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteOperationResponse], error) {
+func (c *operationServiceClient) ExecuteOperation(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ExecuteOperationRequest, ExecuteOperationResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &OperationService_ServiceDesc.Streams[0], OperationService_ExecuteOperation_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	x := &grpc.GenericClientStream[ExecuteOperationRequest, ExecuteOperationResponse]{ClientStream: stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type OperationService_ExecuteOperationClient = grpc.ServerStreamingClient[ExecuteOperationResponse]
+type OperationService_ExecuteOperationClient = grpc.ClientStreamingClient[ExecuteOperationRequest, ExecuteOperationResponse]
 
 // OperationServiceServer is the server API for OperationService service.
 // All implementations must embed UnimplementedOperationServiceServer
 // for forward compatibility.
+//
+// OperationService carries the Runner -> Server side of an Operation's
+// execution. ExecuteOperation is client-streaming: the Runner is the sole
+// producer of everything in this exchange (it has the cloned repo and the
+// tool binary; the Server has neither), so it opens the stream, sends one
+// Start, any number of Log lines, then one Result, then closes its send
+// side; the Server sends a single Ack once it has durably received the
+// whole stream.
 type OperationServiceServer interface {
-	ExecuteOperation(*ExecuteOperationRequest, grpc.ServerStreamingServer[ExecuteOperationResponse]) error
+	ExecuteOperation(grpc.ClientStreamingServer[ExecuteOperationRequest, ExecuteOperationResponse]) error
 	mustEmbedUnimplementedOperationServiceServer()
 }
 
@@ -71,7 +81,7 @@ type OperationServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedOperationServiceServer struct{}
 
-func (UnimplementedOperationServiceServer) ExecuteOperation(*ExecuteOperationRequest, grpc.ServerStreamingServer[ExecuteOperationResponse]) error {
+func (UnimplementedOperationServiceServer) ExecuteOperation(grpc.ClientStreamingServer[ExecuteOperationRequest, ExecuteOperationResponse]) error {
 	return status.Error(codes.Unimplemented, "method ExecuteOperation not implemented")
 }
 func (UnimplementedOperationServiceServer) mustEmbedUnimplementedOperationServiceServer() {}
@@ -96,15 +106,11 @@ func RegisterOperationServiceServer(s grpc.ServiceRegistrar, srv OperationServic
 }
 
 func _OperationService_ExecuteOperation_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(ExecuteOperationRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(OperationServiceServer).ExecuteOperation(m, &grpc.GenericServerStream[ExecuteOperationRequest, ExecuteOperationResponse]{ServerStream: stream})
+	return srv.(OperationServiceServer).ExecuteOperation(&grpc.GenericServerStream[ExecuteOperationRequest, ExecuteOperationResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type OperationService_ExecuteOperationServer = grpc.ServerStreamingServer[ExecuteOperationResponse]
+type OperationService_ExecuteOperationServer = grpc.ClientStreamingServer[ExecuteOperationRequest, ExecuteOperationResponse]
 
 // OperationService_ServiceDesc is the grpc.ServiceDesc for OperationService service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -117,7 +123,7 @@ var OperationService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ExecuteOperation",
 			Handler:       _OperationService_ExecuteOperation_Handler,
-			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "turnip/v1/operation.proto",

@@ -13,7 +13,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 2 | Plugin System & Helmfile Plugin | `plugin-helmfile` | Complete | Slice 0 |
 | 3 | Redis Lock Manager | `redis-lock-manager` | Complete | Slice 0 |
 | 4 | GitHub Client & Webhook Handler | `github-integration` | Complete | Slice 0 |
-| 5 | gRPC & Runner | `grpc-runner` | Not Started | Slices 0, 2 |
+| 5 | gRPC & Runner | `grpc-runner` | Complete | Slices 0, 2 |
 | 6 | Server Orchestration | `server-orchestration` | Not Started | Slices 1–5 |
 | 7 | Terraform & Pulumi Plugins | `terraform-pulumi-plugins` | Not Started | Slice 2 (interface) |
 | 8 | HA, Observability & Deployment | `ha-observability` | Not Started | Slice 6 |
@@ -156,6 +156,11 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 - Structured logging, metrics (Prometheus)
 - Grafana dashboard
 - Kubernetes manifests and Helm chart
+- Versioned release images: replace the Server/Runner images' `:latest`
+  tag (a stand-in since Slice 0 — see `internal/jobs/build.go`'s
+  `runnerImage` constant) with a real release version, and evaluate
+  `goreleaser` for building/tagging/pushing both images as part of that
+  pipeline
 - Documentation (README, deployment guide, troubleshooting)
 
 **Global requirements covered**: 19 + non-functional

@@ -4,10 +4,63 @@ package turnip.v1;
 
 option go_package = "github.com/ivanvc/turnip/internal/grpc/turnip/v1";
 
+// OperationService carries the Runner -> Server side of an Operation's
+// execution. ExecuteOperation is client-streaming: the Runner is the sole
+// producer of everything in this exchange (it has the cloned repo and the
+// tool binary; the Server has neither), so it opens the stream, sends one
+// Start, any number of Log lines, then one Result, then closes its send
+// side; the Server sends a single Ack once it has durably received the
+// whole stream.
 service OperationService {
-  rpc ExecuteOperation(ExecuteOperationRequest) returns (stream ExecuteOperationResponse);
+  rpc ExecuteOperation(stream ExecuteOperationRequest) returns (ExecuteOperationResponse);
 }
 
-message ExecuteOperationRequest {}
+message ExecuteOperationRequest {
+  oneof payload {
+    OperationStart start = 1;
+    LogLine log = 2;
+    OperationResult result = 3;
+  }
+}
 
+message OperationStart {
+  string operation_id = 1;
+  string project_name = 2;
+  string project_dir = 3;
+  string tool = 4;
+  string operation = 5;
+  string repo_url = 6;
+  string commit_sha = 7;
+  string github_token = 8;
+  map<string, string> tool_config = 9;
+  repeated string extra_args = 10;
+  bytes plan_data = 11;
+  bool resumed = 12;
+}
+
+message LogLine {
+  string timestamp = 1;
+  string level = 2;
+  string message = 3;
+}
+
+message OperationResult {
+  bool success = 1;
+  string output = 2;
+  int32 exit_code = 3;
+  string error_message = 4;
+  ChangeSummary changes = 5;
+  bytes plan_data = 6;
+}
+
+message ChangeSummary {
+  int32 add = 1;
+  int32 change = 2;
+  int32 destroy = 3;
+}
+
+// ExecuteOperationResponse is deliberately empty: every substantive field
+// already exists on the request side, since the Runner is who produces it.
+// Its only job is to exist — its arrival is the signal the Runner's
+// reporter is waiting for to know delivery succeeded.
 message ExecuteOperationResponse {}

@@ -149,6 +149,23 @@ property).
   - [x] 15.3 Checkpoint - Full re-verification
     - Ensure `go build ./...`, `go vet ./internal/plugin/...`, `gofmt -l internal/plugin/`, `go test -race ./internal/plugin/...` (coverage 90%+), and the real `golangci-lint` v2 (`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...`) all pass
 
+- [x] 16. Add incremental-output support to `Plugin.Execute` (`grpc-runner` amendment)
+  - [x] 16.1 Add `ExecuteOptions.OnOutput` and rewrite `execCommand` for line-scanning
+    - `grpc-runner` (Slice 5) needs log lines to reach the Server as an Operation runs, not only after it finishes; `Plugin.Execute` and `execCommand` were both fully blocking (whole-buffer capture via `cmd.Output()`-style calls), with no point in the call chain where a partial line was observable — see `grpc-runner/design.md`'s Decision 2 for the alternatives considered and why an additive callback was chosen over a breaking channel-based signature or bypassing the Plugin interface entirely
+    - Added `OnOutput func(stream, line string)` to `ExecuteOptions` (`plugin.go`) — optional, nil preserves every existing caller's behavior exactly; `stream` is `"stdout"` or `"stderr"`
+    - Rewrote `execCommand` (`command.go`) to scan `cmd.StdoutPipe()`/`cmd.StderrPipe()` line-by-line via `bufio.Scanner`, one goroutine per pipe, accumulating into a mutex-guarded `syncBuffer` per stream and invoking `OnOutput` once per line when non-nil; `commandRunner`'s type grew the `onOutput` parameter (the single `fakeRunner` test helper in `helmfile_test.go` was the only call site needing a signature update, per design.md's "minimal change" guidance)
+    - `HelmfilePlugin.Execute` passes `opts.OnOutput` straight through to `p.run(...)`
+    - _Requirements: (Slice 5's Requirement 4.1, implemented as this Slice 2 amendment)_
+
+  - [x] 16.2 Add tests for the new incremental-output path
+    - `command_test.go`: `OnOutput` invoked once per line, in order, correctly tagged by stream, for a command producing output on both stdout and stderr; nil `OnOutput` remains a no-op; the whole-buffer `stdout`/`stderr` returned matches the per-stream lines joined with `"\n"`
+    - `helmfile_test.go`: `ExecuteOptions.OnOutput` reaches the underlying `commandRunner` unchanged through `HelmfilePlugin.Execute`
+    - Verified `go test -race ./internal/plugin/...` passes, coverage 90.1% (target: 90%+)
+    - _Requirements: (test coverage for 16.1)_
+
+  - [x] 16.3 Checkpoint - Full re-verification
+    - `go build ./internal/plugin/...`, `go vet ./internal/plugin/...`, `go test -race ./internal/plugin/... -cover` all pass
+
 ## Notes
 
 - No new external dependencies — `gopter` is already a direct dependency from Slice 1; the command seam uses only `os/exec` and `context` from the standard library.

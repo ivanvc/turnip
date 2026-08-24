@@ -17,7 +17,7 @@ type recordedCall struct {
 
 func fakeRunner(t *testing.T, calls *[]recordedCall, stdout, stderr []byte, exitCode int, err error) commandRunner {
 	t.Helper()
-	return func(ctx context.Context, dir, name string, args []string) ([]byte, []byte, int, error) {
+	return func(ctx context.Context, dir, name string, args []string, onOutput func(stream, line string)) ([]byte, []byte, int, error) {
 		*calls = append(*calls, recordedCall{dir: dir, name: name, args: args})
 		return stdout, stderr, exitCode, err
 	}
@@ -144,6 +144,26 @@ func TestHelmfilePlugin_StderrAppendedToOutput(t *testing.T) {
 	assert.Equal(t, 1, result.ExitCode)
 	assert.Equal(t, "out\nerr", result.Output)
 	assert.NoError(t, result.Error)
+}
+
+func TestHelmfilePlugin_OnOutputReachesCommandRunnerUnchanged(t *testing.T) {
+	var calls []recordedCall
+	var gotOnOutput func(stream, line string)
+	p := &HelmfilePlugin{run: func(ctx context.Context, dir, name string, args []string, onOutput func(stream, line string)) ([]byte, []byte, int, error) {
+		calls = append(calls, recordedCall{dir: dir, name: name, args: args})
+		gotOnOutput = onOutput
+		return []byte("out"), nil, 0, nil
+	}}
+
+	var got []string
+	wantOnOutput := func(stream, line string) { got = append(got, stream+":"+line) }
+
+	_, err := p.Execute(context.Background(), "diff", ExecuteOptions{OnOutput: wantOnOutput})
+	require.NoError(t, err)
+	require.NotNil(t, gotOnOutput)
+
+	gotOnOutput("stdout", "a line")
+	assert.Equal(t, []string{"stdout:a line"}, got)
 }
 
 func TestHelmfilePlugin_NameAndOperations(t *testing.T) {

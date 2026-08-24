@@ -22,7 +22,13 @@ const (
 )
 
 type ExecuteOperationRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*ExecuteOperationRequest_Start
+	//	*ExecuteOperationRequest_Log
+	//	*ExecuteOperationRequest_Result
+	Payload       isExecuteOperationRequest_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -57,6 +63,402 @@ func (*ExecuteOperationRequest) Descriptor() ([]byte, []int) {
 	return file_turnip_v1_operation_proto_rawDescGZIP(), []int{0}
 }
 
+func (x *ExecuteOperationRequest) GetPayload() isExecuteOperationRequest_Payload {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *ExecuteOperationRequest) GetStart() *OperationStart {
+	if x != nil {
+		if x, ok := x.Payload.(*ExecuteOperationRequest_Start); ok {
+			return x.Start
+		}
+	}
+	return nil
+}
+
+func (x *ExecuteOperationRequest) GetLog() *LogLine {
+	if x != nil {
+		if x, ok := x.Payload.(*ExecuteOperationRequest_Log); ok {
+			return x.Log
+		}
+	}
+	return nil
+}
+
+func (x *ExecuteOperationRequest) GetResult() *OperationResult {
+	if x != nil {
+		if x, ok := x.Payload.(*ExecuteOperationRequest_Result); ok {
+			return x.Result
+		}
+	}
+	return nil
+}
+
+type isExecuteOperationRequest_Payload interface {
+	isExecuteOperationRequest_Payload()
+}
+
+type ExecuteOperationRequest_Start struct {
+	Start *OperationStart `protobuf:"bytes,1,opt,name=start,proto3,oneof"`
+}
+
+type ExecuteOperationRequest_Log struct {
+	Log *LogLine `protobuf:"bytes,2,opt,name=log,proto3,oneof"`
+}
+
+type ExecuteOperationRequest_Result struct {
+	Result *OperationResult `protobuf:"bytes,3,opt,name=result,proto3,oneof"`
+}
+
+func (*ExecuteOperationRequest_Start) isExecuteOperationRequest_Payload() {}
+
+func (*ExecuteOperationRequest_Log) isExecuteOperationRequest_Payload() {}
+
+func (*ExecuteOperationRequest_Result) isExecuteOperationRequest_Payload() {}
+
+type OperationStart struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OperationId   string                 `protobuf:"bytes,1,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	ProjectName   string                 `protobuf:"bytes,2,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
+	ProjectDir    string                 `protobuf:"bytes,3,opt,name=project_dir,json=projectDir,proto3" json:"project_dir,omitempty"`
+	Tool          string                 `protobuf:"bytes,4,opt,name=tool,proto3" json:"tool,omitempty"`
+	Operation     string                 `protobuf:"bytes,5,opt,name=operation,proto3" json:"operation,omitempty"`
+	RepoUrl       string                 `protobuf:"bytes,6,opt,name=repo_url,json=repoUrl,proto3" json:"repo_url,omitempty"`
+	CommitSha     string                 `protobuf:"bytes,7,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
+	GithubToken   string                 `protobuf:"bytes,8,opt,name=github_token,json=githubToken,proto3" json:"github_token,omitempty"`
+	ToolConfig    map[string]string      `protobuf:"bytes,9,rep,name=tool_config,json=toolConfig,proto3" json:"tool_config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ExtraArgs     []string               `protobuf:"bytes,10,rep,name=extra_args,json=extraArgs,proto3" json:"extra_args,omitempty"`
+	PlanData      []byte                 `protobuf:"bytes,11,opt,name=plan_data,json=planData,proto3" json:"plan_data,omitempty"`
+	Resumed       bool                   `protobuf:"varint,12,opt,name=resumed,proto3" json:"resumed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OperationStart) Reset() {
+	*x = OperationStart{}
+	mi := &file_turnip_v1_operation_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OperationStart) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OperationStart) ProtoMessage() {}
+
+func (x *OperationStart) ProtoReflect() protoreflect.Message {
+	mi := &file_turnip_v1_operation_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OperationStart.ProtoReflect.Descriptor instead.
+func (*OperationStart) Descriptor() ([]byte, []int) {
+	return file_turnip_v1_operation_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *OperationStart) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+func (x *OperationStart) GetProjectName() string {
+	if x != nil {
+		return x.ProjectName
+	}
+	return ""
+}
+
+func (x *OperationStart) GetProjectDir() string {
+	if x != nil {
+		return x.ProjectDir
+	}
+	return ""
+}
+
+func (x *OperationStart) GetTool() string {
+	if x != nil {
+		return x.Tool
+	}
+	return ""
+}
+
+func (x *OperationStart) GetOperation() string {
+	if x != nil {
+		return x.Operation
+	}
+	return ""
+}
+
+func (x *OperationStart) GetRepoUrl() string {
+	if x != nil {
+		return x.RepoUrl
+	}
+	return ""
+}
+
+func (x *OperationStart) GetCommitSha() string {
+	if x != nil {
+		return x.CommitSha
+	}
+	return ""
+}
+
+func (x *OperationStart) GetGithubToken() string {
+	if x != nil {
+		return x.GithubToken
+	}
+	return ""
+}
+
+func (x *OperationStart) GetToolConfig() map[string]string {
+	if x != nil {
+		return x.ToolConfig
+	}
+	return nil
+}
+
+func (x *OperationStart) GetExtraArgs() []string {
+	if x != nil {
+		return x.ExtraArgs
+	}
+	return nil
+}
+
+func (x *OperationStart) GetPlanData() []byte {
+	if x != nil {
+		return x.PlanData
+	}
+	return nil
+}
+
+func (x *OperationStart) GetResumed() bool {
+	if x != nil {
+		return x.Resumed
+	}
+	return false
+}
+
+type LogLine struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Timestamp     string                 `protobuf:"bytes,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Level         string                 `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"`
+	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogLine) Reset() {
+	*x = LogLine{}
+	mi := &file_turnip_v1_operation_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogLine) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogLine) ProtoMessage() {}
+
+func (x *LogLine) ProtoReflect() protoreflect.Message {
+	mi := &file_turnip_v1_operation_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogLine.ProtoReflect.Descriptor instead.
+func (*LogLine) Descriptor() ([]byte, []int) {
+	return file_turnip_v1_operation_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *LogLine) GetTimestamp() string {
+	if x != nil {
+		return x.Timestamp
+	}
+	return ""
+}
+
+func (x *LogLine) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+func (x *LogLine) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type OperationResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Output        string                 `protobuf:"bytes,2,opt,name=output,proto3" json:"output,omitempty"`
+	ExitCode      int32                  `protobuf:"varint,3,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	ErrorMessage  string                 `protobuf:"bytes,4,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	Changes       *ChangeSummary         `protobuf:"bytes,5,opt,name=changes,proto3" json:"changes,omitempty"`
+	PlanData      []byte                 `protobuf:"bytes,6,opt,name=plan_data,json=planData,proto3" json:"plan_data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OperationResult) Reset() {
+	*x = OperationResult{}
+	mi := &file_turnip_v1_operation_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OperationResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OperationResult) ProtoMessage() {}
+
+func (x *OperationResult) ProtoReflect() protoreflect.Message {
+	mi := &file_turnip_v1_operation_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OperationResult.ProtoReflect.Descriptor instead.
+func (*OperationResult) Descriptor() ([]byte, []int) {
+	return file_turnip_v1_operation_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *OperationResult) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *OperationResult) GetOutput() string {
+	if x != nil {
+		return x.Output
+	}
+	return ""
+}
+
+func (x *OperationResult) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+func (x *OperationResult) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+func (x *OperationResult) GetChanges() *ChangeSummary {
+	if x != nil {
+		return x.Changes
+	}
+	return nil
+}
+
+func (x *OperationResult) GetPlanData() []byte {
+	if x != nil {
+		return x.PlanData
+	}
+	return nil
+}
+
+type ChangeSummary struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Add           int32                  `protobuf:"varint,1,opt,name=add,proto3" json:"add,omitempty"`
+	Change        int32                  `protobuf:"varint,2,opt,name=change,proto3" json:"change,omitempty"`
+	Destroy       int32                  `protobuf:"varint,3,opt,name=destroy,proto3" json:"destroy,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChangeSummary) Reset() {
+	*x = ChangeSummary{}
+	mi := &file_turnip_v1_operation_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChangeSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChangeSummary) ProtoMessage() {}
+
+func (x *ChangeSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_turnip_v1_operation_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChangeSummary.ProtoReflect.Descriptor instead.
+func (*ChangeSummary) Descriptor() ([]byte, []int) {
+	return file_turnip_v1_operation_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ChangeSummary) GetAdd() int32 {
+	if x != nil {
+		return x.Add
+	}
+	return 0
+}
+
+func (x *ChangeSummary) GetChange() int32 {
+	if x != nil {
+		return x.Change
+	}
+	return 0
+}
+
+func (x *ChangeSummary) GetDestroy() int32 {
+	if x != nil {
+		return x.Destroy
+	}
+	return 0
+}
+
+// ExecuteOperationResponse is deliberately empty: every substantive field
+// already exists on the request side, since the Runner is who produces it.
+// Its only job is to exist — its arrival is the signal the Runner's
+// reporter is waiting for to know delivery succeeded.
 type ExecuteOperationResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -65,7 +467,7 @@ type ExecuteOperationResponse struct {
 
 func (x *ExecuteOperationResponse) Reset() {
 	*x = ExecuteOperationResponse{}
-	mi := &file_turnip_v1_operation_proto_msgTypes[1]
+	mi := &file_turnip_v1_operation_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -77,7 +479,7 @@ func (x *ExecuteOperationResponse) String() string {
 func (*ExecuteOperationResponse) ProtoMessage() {}
 
 func (x *ExecuteOperationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_turnip_v1_operation_proto_msgTypes[1]
+	mi := &file_turnip_v1_operation_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -90,18 +492,58 @@ func (x *ExecuteOperationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteOperationResponse.ProtoReflect.Descriptor instead.
 func (*ExecuteOperationResponse) Descriptor() ([]byte, []int) {
-	return file_turnip_v1_operation_proto_rawDescGZIP(), []int{1}
+	return file_turnip_v1_operation_proto_rawDescGZIP(), []int{5}
 }
 
 var File_turnip_v1_operation_proto protoreflect.FileDescriptor
 
 const file_turnip_v1_operation_proto_rawDesc = "" +
 	"\n" +
-	"\x19turnip/v1/operation.proto\x12\tturnip.v1\"\x19\n" +
-	"\x17ExecuteOperationRequest\"\x1a\n" +
+	"\x19turnip/v1/operation.proto\x12\tturnip.v1\"\xb5\x01\n" +
+	"\x17ExecuteOperationRequest\x121\n" +
+	"\x05start\x18\x01 \x01(\v2\x19.turnip.v1.OperationStartH\x00R\x05start\x12&\n" +
+	"\x03log\x18\x02 \x01(\v2\x12.turnip.v1.LogLineH\x00R\x03log\x124\n" +
+	"\x06result\x18\x03 \x01(\v2\x1a.turnip.v1.OperationResultH\x00R\x06resultB\t\n" +
+	"\apayload\"\xe7\x03\n" +
+	"\x0eOperationStart\x12!\n" +
+	"\foperation_id\x18\x01 \x01(\tR\voperationId\x12!\n" +
+	"\fproject_name\x18\x02 \x01(\tR\vprojectName\x12\x1f\n" +
+	"\vproject_dir\x18\x03 \x01(\tR\n" +
+	"projectDir\x12\x12\n" +
+	"\x04tool\x18\x04 \x01(\tR\x04tool\x12\x1c\n" +
+	"\toperation\x18\x05 \x01(\tR\toperation\x12\x19\n" +
+	"\brepo_url\x18\x06 \x01(\tR\arepoUrl\x12\x1d\n" +
+	"\n" +
+	"commit_sha\x18\a \x01(\tR\tcommitSha\x12!\n" +
+	"\fgithub_token\x18\b \x01(\tR\vgithubToken\x12J\n" +
+	"\vtool_config\x18\t \x03(\v2).turnip.v1.OperationStart.ToolConfigEntryR\n" +
+	"toolConfig\x12\x1d\n" +
+	"\n" +
+	"extra_args\x18\n" +
+	" \x03(\tR\textraArgs\x12\x1b\n" +
+	"\tplan_data\x18\v \x01(\fR\bplanData\x12\x18\n" +
+	"\aresumed\x18\f \x01(\bR\aresumed\x1a=\n" +
+	"\x0fToolConfigEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"W\n" +
+	"\aLogLine\x12\x1c\n" +
+	"\ttimestamp\x18\x01 \x01(\tR\ttimestamp\x12\x14\n" +
+	"\x05level\x18\x02 \x01(\tR\x05level\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"\xd6\x01\n" +
+	"\x0fOperationResult\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x16\n" +
+	"\x06output\x18\x02 \x01(\tR\x06output\x12\x1b\n" +
+	"\texit_code\x18\x03 \x01(\x05R\bexitCode\x12#\n" +
+	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\x122\n" +
+	"\achanges\x18\x05 \x01(\v2\x18.turnip.v1.ChangeSummaryR\achanges\x12\x1b\n" +
+	"\tplan_data\x18\x06 \x01(\fR\bplanData\"S\n" +
+	"\rChangeSummary\x12\x10\n" +
+	"\x03add\x18\x01 \x01(\x05R\x03add\x12\x16\n" +
+	"\x06change\x18\x02 \x01(\x05R\x06change\x12\x18\n" +
+	"\adestroy\x18\x03 \x01(\x05R\adestroy\"\x1a\n" +
 	"\x18ExecuteOperationResponse2q\n" +
 	"\x10OperationService\x12]\n" +
-	"\x10ExecuteOperation\x12\".turnip.v1.ExecuteOperationRequest\x1a#.turnip.v1.ExecuteOperationResponse0\x01B2Z0github.com/ivanvc/turnip/internal/grpc/turnip/v1b\x06proto3"
+	"\x10ExecuteOperation\x12\".turnip.v1.ExecuteOperationRequest\x1a#.turnip.v1.ExecuteOperationResponse(\x01B2Z0github.com/ivanvc/turnip/internal/grpc/turnip/v1b\x06proto3"
 
 var (
 	file_turnip_v1_operation_proto_rawDescOnce sync.Once
@@ -115,19 +557,29 @@ func file_turnip_v1_operation_proto_rawDescGZIP() []byte {
 	return file_turnip_v1_operation_proto_rawDescData
 }
 
-var file_turnip_v1_operation_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_turnip_v1_operation_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_turnip_v1_operation_proto_goTypes = []any{
 	(*ExecuteOperationRequest)(nil),  // 0: turnip.v1.ExecuteOperationRequest
-	(*ExecuteOperationResponse)(nil), // 1: turnip.v1.ExecuteOperationResponse
+	(*OperationStart)(nil),           // 1: turnip.v1.OperationStart
+	(*LogLine)(nil),                  // 2: turnip.v1.LogLine
+	(*OperationResult)(nil),          // 3: turnip.v1.OperationResult
+	(*ChangeSummary)(nil),            // 4: turnip.v1.ChangeSummary
+	(*ExecuteOperationResponse)(nil), // 5: turnip.v1.ExecuteOperationResponse
+	nil,                              // 6: turnip.v1.OperationStart.ToolConfigEntry
 }
 var file_turnip_v1_operation_proto_depIdxs = []int32{
-	0, // 0: turnip.v1.OperationService.ExecuteOperation:input_type -> turnip.v1.ExecuteOperationRequest
-	1, // 1: turnip.v1.OperationService.ExecuteOperation:output_type -> turnip.v1.ExecuteOperationResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	1, // 0: turnip.v1.ExecuteOperationRequest.start:type_name -> turnip.v1.OperationStart
+	2, // 1: turnip.v1.ExecuteOperationRequest.log:type_name -> turnip.v1.LogLine
+	3, // 2: turnip.v1.ExecuteOperationRequest.result:type_name -> turnip.v1.OperationResult
+	6, // 3: turnip.v1.OperationStart.tool_config:type_name -> turnip.v1.OperationStart.ToolConfigEntry
+	4, // 4: turnip.v1.OperationResult.changes:type_name -> turnip.v1.ChangeSummary
+	0, // 5: turnip.v1.OperationService.ExecuteOperation:input_type -> turnip.v1.ExecuteOperationRequest
+	5, // 6: turnip.v1.OperationService.ExecuteOperation:output_type -> turnip.v1.ExecuteOperationResponse
+	6, // [6:7] is the sub-list for method output_type
+	5, // [5:6] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_turnip_v1_operation_proto_init() }
@@ -135,13 +587,18 @@ func file_turnip_v1_operation_proto_init() {
 	if File_turnip_v1_operation_proto != nil {
 		return
 	}
+	file_turnip_v1_operation_proto_msgTypes[0].OneofWrappers = []any{
+		(*ExecuteOperationRequest_Start)(nil),
+		(*ExecuteOperationRequest_Log)(nil),
+		(*ExecuteOperationRequest_Result)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_turnip_v1_operation_proto_rawDesc), len(file_turnip_v1_operation_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

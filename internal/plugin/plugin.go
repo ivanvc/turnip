@@ -27,6 +27,15 @@ type ExecuteOptions struct {
 	Config     map[string]string
 	ExtraArgs  []string
 	PlanData   []byte
+
+	// OnOutput, when non-nil, is invoked once per line of output as the
+	// subprocess produces it, tagged with which pipe it came from
+	// ("stdout" or "stderr"). It is optional; nil means no incremental
+	// callback, matching every existing caller's behavior before this
+	// field existed. Reporting which stream a line came from is what lets
+	// a caller both mirror it to the matching local stream and pick a log
+	// level without guessing.
+	OnOutput func(stream, line string)
 }
 
 // ExecuteResult carries the standardized outputs of a Plugin's Execute call.
