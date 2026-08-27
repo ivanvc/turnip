@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -29,26 +30,62 @@ func execGit(ctx context.Context, dir, name string, args []string) ([]byte, erro
 	return out.Bytes(), nil
 }
 
-// Clone checks out commitSHA of repoURL into dir: a shallow, single-commit
-// fetch rather than a full clone, since IaC repos can be large and only
-// one commit's tree is ever needed (Requirement 5.1). token authenticates
-// against a private repository (Requirement 5.2) and is never allowed to
-// reach an error message or log line this function produces.
-func Clone(ctx context.Context, dir, repoURL, commitSHA, token string) error {
-	return cloneWith(ctx, execGit, dir, repoURL, commitSHA, token)
+// mergeFetchDepth bounds the fetch's history depth to the common case of a
+// base and PR that haven't diverged by an unusual number of commits,
+// preserving Clone's original shallow-fetch rationale (IaC repos can be
+// large, and a full clone of one for every Operation is wasteful).
+// runMerge falls back to a full, unshallow fetch only when this depth
+// isn't enough to find a common ancestor.
+const mergeFetchDepth = 50
+
+// headRef/baseLocalRef are the local ref names Clone fetches commitSHA and
+// baseRef into. Named local refs are used instead of FETCH_HEAD because
+// two refs are ever in flight at once here, and FETCH_HEAD only
+// unambiguously identifies one.
+const (
+	headRef      = "refs/turnip/head"
+	baseLocalRef = "refs/turnip/base"
+)
+
+// mergeIdentity sets a synthetic committer identity for the merge commit
+// Clone creates. Nothing downstream reads this history or its authorship —
+// only the resulting working tree — so any stable identity is fine.
+var mergeIdentity = []string{"-c", "user.name=turnip", "-c", "user.email=turnip@localhost"}
+
+// Clone checks out commitSHA of repoURL into dir: a shallow fetch rather
+// than a full clone, since IaC repos can be large and only one commit's
+// tree is ever needed (Requirement 5.1). When baseRef is non-empty, Clone
+// also merges baseRef's current tip into the checked-out commit —
+// Atlantis' "atlantis-merge" strategy — so a Plugin operates on the tree
+// that would result from merging the PR, not the PR branch alone
+// (Requirement 5.3). An empty baseRef skips the merge entirely, mirroring
+// embedToken's "empty means no-op" convention. IF that merge can't
+// complete cleanly because of a genuine content conflict, Clone returns a
+// *MergeConflictError, distinguishable from any other clone/fetch failure
+// (Requirement 5.4). token authenticates against a private repository
+// (Requirement 5.2) and is never allowed to reach an error message or log
+// line this function produces.
+func Clone(ctx context.Context, dir, repoURL, commitSHA, baseRef, token string) error {
+	return cloneWith(ctx, execGit, dir, repoURL, commitSHA, baseRef, token)
 }
 
-func cloneWith(ctx context.Context, run gitRunner, dir, repoURL, commitSHA, token string) error {
+func cloneWith(ctx context.Context, run gitRunner, dir, repoURL, commitSHA, baseRef, token string) error {
 	authedURL, err := embedToken(repoURL, token)
 	if err != nil {
 		return fmt.Errorf("runner: clone: build authenticated remote URL: %w", err)
 	}
 
+	fetchRefspecs := []string{commitSHA + ":" + headRef}
+	if baseRef != "" {
+		fetchRefspecs = append(fetchRefspecs, baseRef+":"+baseLocalRef)
+	}
+	fetchArgs := append([]string{"-C", dir, "fetch", "--depth", strconv.Itoa(mergeFetchDepth), "origin"}, fetchRefspecs...)
+
 	steps := [][]string{
 		{"init", dir},
 		{"-C", dir, "remote", "add", "origin", authedURL},
-		{"-C", dir, "fetch", "--depth", "1", "origin", commitSHA},
-		{"-C", dir, "checkout", "FETCH_HEAD"},
+		fetchArgs,
+		{"-C", dir, "checkout", headRef},
 	}
 
 	for _, args := range steps {
@@ -60,7 +97,55 @@ func cloneWith(ctx context.Context, run gitRunner, dir, repoURL, commitSHA, toke
 		}
 	}
 
-	return nil
+	if baseRef == "" {
+		return nil
+	}
+	return runMerge(ctx, run, dir, authedURL)
+}
+
+// runMerge merges baseLocalRef into the already-checked-out headRef. If
+// the bounded-depth fetch above didn't reach a common ancestor (git
+// reports "refusing to merge unrelated histories" — the two refs' shallow
+// grafts have no recorded parents in common, indistinguishable to git
+// from actually unrelated history), runMerge falls back to a single full,
+// unshallow re-fetch and retries the merge exactly once (Requirement 5.6)
+// rather than misreporting that as a content conflict. A genuine content
+// conflict, whether on the first attempt or after the fallback, is
+// reported as a *MergeConflictError after aborting the merge to leave a
+// clean working tree.
+func runMerge(ctx context.Context, run gitRunner, dir, authedURL string) error {
+	mergeArgs := append(append([]string{"-C", dir}, mergeIdentity...), "merge", "--no-ff", "-m", "turnip-merge", baseLocalRef)
+
+	out, err := run(ctx, "", "git", mergeArgs)
+	if err != nil && strings.Contains(string(out), "refusing to merge unrelated histories") {
+		unshallowArgs := []string{"-C", dir, "fetch", "--unshallow", "origin"}
+		if unshallowOut, unshallowErr := run(ctx, "", "git", unshallowArgs); unshallowErr != nil {
+			return fmt.Errorf("runner: clone: git %s: %w: %s", strings.Join(unshallowArgs, " "), unshallowErr, redact(string(unshallowOut), authedURL))
+		}
+		out, err = run(ctx, "", "git", mergeArgs)
+	}
+	if err == nil {
+		return nil
+	}
+
+	if strings.Contains(string(out), "CONFLICT") || strings.Contains(string(out), "Automatic merge failed") {
+		_, _ = run(ctx, "", "git", []string{"-C", dir, "merge", "--abort"})
+		return &MergeConflictError{Output: redact(string(out), authedURL)}
+	}
+
+	return fmt.Errorf("runner: clone: git %s: %w: %s", strings.Join(redactArgs(mergeArgs, authedURL, redactedRemote), " "), err, redact(string(out), authedURL))
+}
+
+// MergeConflictError reports that a PR's base branch could not be merged
+// cleanly into its head — a conflict the developer needs to resolve by
+// editing their PR, distinguishable (Requirement 5.4) from a generic
+// clone/fetch failure (invalid token, network error, missing ref).
+type MergeConflictError struct {
+	Output string
+}
+
+func (e *MergeConflictError) Error() string {
+	return fmt.Sprintf("runner: clone: merge conflict: %s", e.Output)
 }
 
 const redactedRemote = "<redacted>"

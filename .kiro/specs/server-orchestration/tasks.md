@@ -233,6 +233,20 @@ worked in parallel.
 - [x] 20. Final checkpoint - Full verification
   - Ensure `go build ./...` compiles, `go test -race ./...` passes including property and integration-style tests, `go mod tidy` produces no changes (`github.com/google/uuid` promoted from indirect to direct), and `golangci-lint run ./...` passes via `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...` (see `CLAUDE.md`). Ask the user if questions arise.
 
+- [x] 21. Pass PR `BaseRef` through to `jobs.OperationParams` (2026-08 amendment, grpc-runner-driven)
+  - grpc-runner's Decision 3 (merging the PR's base branch into the clone,
+    Atlantis-style) needs `executeOne` in `internal/orchestrator/execute.go`
+    to set `BaseRef: pr.BaseRef` on the `jobs.OperationParams` literal it
+    builds — `github.PullRequest.BaseRef` is already populated by the
+    GitHub integration slice, so this is a one-line addition, not new
+    parsing
+  - Full task detail (the driving change, in `internal/jobs`/
+    `internal/runner`) lives in `grpc-runner/tasks.md`'s task 21; this
+    entry exists so this slice's own audit trail records the touch to its
+    file, per task 20's precedent for cross-slice changes recorded on both
+    sides
+  - _Requirements: (wiring for grpc-runner's Requirement 5.3)_
+
 ## Notes
 
 - No new third-party dependencies (design.md's "Dependencies" section);

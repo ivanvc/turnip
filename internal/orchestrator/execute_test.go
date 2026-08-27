@@ -112,8 +112,9 @@ type fakeJobCreator struct {
 	result    github.ProjectResult
 	statusFn  func(ctx context.Context, jobName string) (*jobs.JobStatus, error)
 
-	mu      sync.Mutex
-	created int
+	mu          sync.Mutex
+	created     int
+	capturedJob *batchv1.Job
 }
 
 func (f *fakeJobCreator) createCount() int {
@@ -122,9 +123,16 @@ func (f *fakeJobCreator) createCount() int {
 	return f.created
 }
 
+func (f *fakeJobCreator) lastCreatedJob() *batchv1.Job {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.capturedJob
+}
+
 func (f *fakeJobCreator) Create(ctx context.Context, job *batchv1.Job) (*batchv1.Job, error) {
 	f.mu.Lock()
 	f.created++
+	f.capturedJob = job
 	f.mu.Unlock()
 	if f.createErr != nil {
 		return nil, f.createErr
@@ -180,7 +188,7 @@ func testHelmfileTarget() Target {
 }
 
 var testRepo = github.Repository{Owner: "owner", Name: "repo", URL: "https://github.com/owner/repo"}
-var testPR = github.PullRequest{Number: 42, HeadSHA: "abc123"}
+var testPR = github.PullRequest{Number: 42, HeadSHA: "abc123", BaseRef: "main"}
 
 func TestExecuteOne_PlanLockConflictIsRejected(t *testing.T) {
 	locks := &fakeLockManager{
@@ -256,6 +264,24 @@ func TestExecuteOne_SuccessfulPlanPublishesResult(t *testing.T) {
 
 	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
 	assert.Equal(t, want, result)
+}
+
+func TestExecuteOne_JobCarriesPullRequestBaseRef(t *testing.T) {
+	locks := &fakeLockManager{}
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
+	o, _ := testOrchestrator(t, locks, jobsClient)
+	client := &fakeExecuteClient{}
+
+	o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+
+	job := jobsClient.lastCreatedJob()
+	require.NotNil(t, job)
+	require.Len(t, job.Spec.Template.Spec.Containers, 1)
+	env := make(map[string]string, len(job.Spec.Template.Spec.Containers[0].Env))
+	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
+		env[e.Name] = e.Value
+	}
+	assert.Equal(t, testPR.BaseRef, env["TURNIP_BASE_REF"])
 }
 
 func TestExecuteTargets_RunsConcurrentlyAndWaitsForAll(t *testing.T) {

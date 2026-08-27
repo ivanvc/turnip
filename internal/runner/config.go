@@ -19,6 +19,7 @@ type Config struct {
 	Operation   string
 	RepoURL     string
 	CommitSHA   string
+	BaseRef     string
 	GitHubToken string
 	ToolConfig  map[string]string
 	ExtraArgs   []string
@@ -61,6 +62,7 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 		{"TURNIP_OPERATION", &cfg.Operation},
 		{"TURNIP_REPO_URL", &cfg.RepoURL},
 		{"TURNIP_COMMIT_SHA", &cfg.CommitSHA},
+		{"TURNIP_BASE_REF", &cfg.BaseRef},
 		{"TURNIP_GITHUB_TOKEN", &cfg.GitHubToken},
 		{"TURNIP_TOOLS_DIR", &cfg.ToolsDir},
 	}

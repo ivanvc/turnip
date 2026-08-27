@@ -61,7 +61,7 @@ func fakeSelector(p plugin.Plugin) pluginSelector {
 	return func(tool string) (plugin.Plugin, error) { return p, nil }
 }
 
-func noopClone(context.Context, string, string, string, string) error { return nil }
+func noopClone(context.Context, string, string, string, string, string) error { return nil }
 
 // fakeReporter records every call run.go makes, and can be told to block
 // LogLine for one specific line, signaling entry via entered so a test can
@@ -183,7 +183,7 @@ func TestRunWith_LocalWriteNeverWaitsOnReporter(t *testing.T) {
 func TestRunWith_UnrecognizedToolFailsFastBeforeConnectOrClone(t *testing.T) {
 	rep := &fakeReporter{}
 	cloneCalled := false
-	clone := func(context.Context, string, string, string, string) error {
+	clone := func(context.Context, string, string, string, string, string) error {
 		cloneCalled = true
 		return nil
 	}
@@ -202,7 +202,7 @@ func TestRunWith_UnrecognizedToolFailsFastBeforeConnectOrClone(t *testing.T) {
 func TestRunWith_ConnectFailureFailsFastBeforeClone(t *testing.T) {
 	rep := &fakeReporter{connectErr: errors.New("no route to server")}
 	cloneCalled := false
-	clone := func(context.Context, string, string, string, string) error {
+	clone := func(context.Context, string, string, string, string, string) error {
 		cloneCalled = true
 		return nil
 	}
@@ -217,7 +217,7 @@ func TestRunWith_ConnectFailureFailsFastBeforeClone(t *testing.T) {
 
 func TestRunWith_CloneFailureReportsFailureResult(t *testing.T) {
 	rep := &fakeReporter{}
-	clone := func(context.Context, string, string, string, string) error {
+	clone := func(context.Context, string, string, string, string, string) error {
 		return errors.New("commit not found")
 	}
 	p := &fakePlugin{operations: []string{"diff"}}

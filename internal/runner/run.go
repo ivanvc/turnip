@@ -21,7 +21,7 @@ type resultReporter interface {
 
 type pluginSelector func(tool string) (plugin.Plugin, error)
 
-type cloner func(ctx context.Context, dir, repoURL, commitSHA, token string) error
+type cloner func(ctx context.Context, dir, repoURL, commitSHA, baseRef, token string) error
 
 // selectPlugin resolves cfg.Tool to a Plugin (Requirement 6.1). Today only
 // "helmfile" (Slice 2) exists; Slice 7 adds Terraform and Pulumi.
@@ -106,7 +106,7 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, clone cloner, rep
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	if err := clone(ctx, dir, cfg.RepoURL, cfg.CommitSHA, cfg.GitHubToken); err != nil {
+	if err := clone(ctx, dir, cfg.RepoURL, cfg.CommitSHA, cfg.BaseRef, cfg.GitHubToken); err != nil {
 		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: fmt.Sprintf("clone failed: %v", err)}
 	}
 

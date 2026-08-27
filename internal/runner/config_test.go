@@ -18,6 +18,7 @@ func fullEnv() map[string]string {
 		"TURNIP_OPERATION":    "diff",
 		"TURNIP_REPO_URL":     "https://github.com/acme/repo.git",
 		"TURNIP_COMMIT_SHA":   "abc123",
+		"TURNIP_BASE_REF":     "main",
 		"TURNIP_GITHUB_TOKEN": "ghs_token",
 		"TURNIP_TOOLS_DIR":    "/tools",
 		"TURNIP_TOOL_CONFIG":  `{"environment":"staging"}`,
@@ -42,6 +43,7 @@ func TestConfigFromEnv_FullyPopulated(t *testing.T) {
 	assert.Equal(t, "diff", cfg.Operation)
 	assert.Equal(t, "https://github.com/acme/repo.git", cfg.RepoURL)
 	assert.Equal(t, "abc123", cfg.CommitSHA)
+	assert.Equal(t, "main", cfg.BaseRef)
 	assert.Equal(t, "ghs_token", cfg.GitHubToken)
 	assert.Equal(t, "/tools", cfg.ToolsDir)
 	assert.Equal(t, map[string]string{"environment": "staging"}, cfg.ToolConfig)

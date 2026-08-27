@@ -43,6 +43,7 @@ type OperationParams struct {
 	Operation   string
 	RepoURL     string
 	CommitSHA   string
+	BaseRef     string
 	GitHubToken string
 	ServerAddr  string
 	ExtraArgs   []string
@@ -78,6 +79,7 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		{Name: "TURNIP_OPERATION", Value: op.Operation},
 		{Name: "TURNIP_REPO_URL", Value: op.RepoURL},
 		{Name: "TURNIP_COMMIT_SHA", Value: op.CommitSHA},
+		{Name: "TURNIP_BASE_REF", Value: op.BaseRef},
 		{Name: "TURNIP_GITHUB_TOKEN", Value: op.GitHubToken},
 		{Name: "TURNIP_TOOL_CONFIG", Value: string(toolConfig)},
 		{Name: "TURNIP_EXTRA_ARGS", Value: string(extraArgs)},

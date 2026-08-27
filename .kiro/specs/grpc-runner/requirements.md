@@ -40,6 +40,24 @@ as-is:
   connection Requirement 8.3 establishes), not Requirement 8.5's literal
   wording.
 
+- **Requirement 5.1** ("THE Runner SHALL clone the repository at the commit
+  SHA it was given") and the global spec's Requirement 14.3 / Property 24
+  ("clone the repository and checkout exactly that commit SHA") describe
+  checking out the PR branch in isolation. A 2026-08 amendment (task 21)
+  supersedes that: the Runner now merges the PR's base branch into the
+  checked-out commit before any Plugin runs, Atlantis-style. Planning (or
+  applying) against the raw PR branch can silently diverge from what a
+  Plugin operation is actually being asked to speak to — the tree that
+  results once the PR is merged, not the tree the PR branch alone
+  contains — and `internal/lock`'s design already commits to reusing a
+  plan's exact result at apply time rather than re-planning, which only
+  holds if the plan was taken against a tree that can actually merge.
+  Requirement 5 below reflects the superseding behavior directly (this is
+  a live requirements document, not a historical record — see task 21's
+  entry in `tasks.md` for the audit trail); Property 24 is reinterpreted
+  the same way task 17.1 already reinterprets Property 25, following that
+  precedent for a slice-level reinterpretation of a global property.
+
 ## Glossary
 
 (Inherited from the global spec glossary.)
@@ -167,11 +185,13 @@ vanishing along with it.
    throughout the Operation, whether or not Requirement 2.4's reconnection
    logic is actively retrying, has given up, or was never needed at all
 
-### Requirement 5: Repository Cloning
+### Requirement 5: Repository Cloning and Base Merge
 
-**User Story:** As a developer, I want the Runner to check out the exact
-commit my PR is at, so that plan/apply output reflects what I'm actually
-reviewing.
+**User Story:** As a developer, I want the Runner to check out my PR
+merged into its base branch — not the PR branch in isolation — so that
+plan/apply output reflects what will actually exist once the PR lands,
+and so a PR that can't merge cleanly is caught before it's planned or
+applied at all.
 
 #### Acceptance Criteria
 
@@ -179,9 +199,34 @@ reviewing.
    before invoking any Plugin operation
 2. THE Runner SHALL use the installation token it was given to
    authenticate the clone against a private repository
-3. IF cloning fails (invalid token, network error, missing commit), THEN
-   THE Runner SHALL report that failure as the Operation's result rather
-   than crashing without a reported outcome
+3. THE Runner SHALL merge the base branch it was given into the checked-out
+   commit (Atlantis' `atlantis-merge` strategy: fetch, then `git merge
+   --no-ff`) before invoking any Plugin operation, so the Plugin operates
+   on the tree that would result from merging the PR, not the PR branch
+   alone (2026-08 amendment, task 21 — see requirements.md's Introduction
+   for why this supersedes the global spec's Requirement 14.3/Property 24)
+4. IF that merge cannot complete cleanly — a genuine content conflict
+   between the PR and its current base — THEN THE Runner SHALL abort the
+   merge and report that failure as the Operation's result, with an error
+   message that is distinguishable as a merge conflict (rather than
+   reading like a generic clone failure), so a developer immediately
+   understands they need to resolve the conflict with the base branch, not
+   debug a plugin or infrastructure problem
+5. IF cloning or fetching fails for a reason other than a merge conflict
+   (invalid token, network error, missing commit or base ref), THEN THE
+   Runner SHALL report that failure as the Operation's result rather than
+   crashing without a reported outcome
+6. THE Runner's fetch of the commit SHA and the base branch SHALL request a
+   bounded depth of history (sufficient to find their common ancestor in
+   the common case of a base and PR that haven't diverged by an unusual
+   number of commits) rather than a full clone, preserving this
+   Requirement's original shallow-fetch rationale (IaC repos can be large
+   and a full clone of one for every Operation is wasteful); IF that
+   bounded fetch leaves no common ancestor reachable, THEN THE Runner
+   SHALL fall back to a single full (unshallow) re-fetch and retry the
+   merge once before treating the result as any other clone/merge failure
+   — so a long-diverged branch still merges correctly instead of silently
+   misreporting a "conflict" that isn't one
 
 ### Requirement 6: Plugin Dispatch
 

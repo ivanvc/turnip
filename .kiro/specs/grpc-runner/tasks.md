@@ -233,6 +233,90 @@ wiring, then tests (unit, then property).
   - [x] 20.3 Checkpoint - Full re-verification
     - `go build ./internal/jobs/...` and `go test ./internal/jobs/...` pass
 
+- [x] 21. Merge base branch into head during clone, Atlantis-style (2026-08 amendment)
+  - [x] 21.1 Rewrite `internal/runner/clone.go` per design.md's Decision 3
+    - Change `Clone`/`cloneWith`'s signature to `(ctx, dir, repoURL, commitSHA, baseRef, token string) error`
+    - Replace the fetch/checkout `steps` slice with: one `fetch --depth
+      <mergeFetchDepth> origin <commitSHA>:refs/turnip/head
+      <baseRef>:refs/turnip/base` (both refs in the same fetch call — see
+      design.md's Decision 3 for why this, not two separate calls, is what
+      makes shared history discoverable), `checkout refs/turnip/head`, then
+      `-c user.name=turnip -c user.email=turnip@localhost merge --no-ff -m
+      turnip-merge refs/turnip/base`
+    - Define `const mergeFetchDepth = 50`
+    - On a merge failure whose combined output contains `"refusing to merge
+      unrelated histories"`, re-run the fetch with no `--depth` flag and
+      retry checkout+merge exactly once before giving up
+    - On a merge failure whose combined output contains `CONFLICT` or
+      `Automatic merge failed`, return a new `*MergeConflictError` (wrapping
+      the redacted output) instead of the generic wrapped-git-error `Clone`
+      returns for every other step failure
+    - Continue redacting the authenticated remote URL from every error
+      message and from `MergeConflictError`'s output exactly as today
+    - Verify compilation with `go build ./internal/runner/...`
+    - _Requirements: 5.3, 5.4, 5.5, 5.6_
+
+  - [x] 21.2 Update `internal/runner/config.go` and `run.go`
+    - Add `Config.BaseRef`, read from a new required `TURNIP_BASE_REF`
+      environment variable in `ConfigFromEnv`
+    - Update the `cloner` function type and `execute`'s call to `clone(...)`
+      in `run.go` to pass `cfg.BaseRef`
+    - _Requirements: 5.3_
+
+  - [x] 21.3 Update `internal/jobs/build.go`
+    - Add `OperationParams.BaseRef`
+    - Add `{Name: "TURNIP_BASE_REF", Value: op.BaseRef}` to the main
+      container's `env` alongside `TURNIP_COMMIT_SHA`
+    - _Requirements: 7.2 (extended per Decision 3)_
+
+  - [x] 21.4 Update `internal/orchestrator/execute.go` (server-orchestration, Slice 6)
+    - Pass `BaseRef: pr.BaseRef` into the `jobs.OperationParams` literal in
+      `executeOne` — `github.PullRequest.BaseRef` is already populated by
+      the GitHub integration slice, so no webhook-parsing change is needed
+    - Cross-slice touch scoped and recorded here per task 20's precedent
+      (that task's reverse case: a server-orchestration need driving a
+      change inside this slice's own `internal/jobs`); a matching pointer
+      entry is added to `server-orchestration/tasks.md`
+    - _Requirements: (server-orchestration wiring for this slice's Requirement 5.3)_
+
+  - [x] 21.5 Update tests
+    - [x] `internal/runner/clone_test.go`: extended the real
+      local-git-repository fixture (`newDivergingFixture`) with a clean
+      merge case (disjoint file changes), a real conflict case
+      (`*MergeConflictError`, asserted via `errors.As`), and a base branch
+      only reachable after the unshallow fallback (`mergeFetchDepth+10`
+      filler commits past the fork point) — all three pass against a real
+      `git` binary, confirming the shallow-boundary/fallback reasoning in
+      design.md's Decision 3 holds in practice
+    - [x] `internal/runner/config_test.go`: `TURNIP_BASE_REF` required-var
+      and round-trip cases added to the existing fixture
+    - [x] `internal/runner/property_test.go`: added
+      `TestProperty_RunnerClonesCorrectCommit_WithBaseMerge` (tagged
+      `// Feature: multi-iac-automation-platform, Property 24: Runner
+      Clones Correct Commit`, reinterpreted per requirements.md's
+      Introduction note) alongside the original — a `divergingFixture`
+      helper builds one base branch and one head branch with disjoint
+      marker files, and for a random head commit index (100 rapid
+      iterations) asserts `Clone`'s resulting tree contains both that
+      commit's unique content and the base branch's current tip content;
+      the original test is kept as-is since it still validates the
+      `baseRef == ""` no-op path
+    - [x] `internal/jobs/build_test.go`: `TURNIP_BASE_REF` added to
+      `testParams()` and asserted in
+      `TestBuildJob_MainContainerHasAllEnvironmentVariables`
+    - [x] `internal/orchestrator/execute_test.go` (server-orchestration):
+      `testPR` now carries `BaseRef: "main"`; new
+      `TestExecuteOne_JobCarriesPullRequestBaseRef` captures the Job
+      `fakeJobCreator.Create` receives and asserts `TURNIP_BASE_REF`
+      matches `pr.BaseRef`
+    - _Requirements: (test coverage for 21.1-21.4)_
+
+  - [x] 21.6 Checkpoint - Full re-verification
+    - `go build ./...`, `go test -race ./...` (including the reinterpreted
+      Property 24), `go mod tidy` produces no changes, `gofmt -l .` clean,
+      and the real `golangci-lint` v2 (see `CLAUDE.md`) all pass — all
+      confirmed green
+
 ## Notes
 
 - `k8s.io/api`, `k8s.io/apimachinery`, and `k8s.io/client-go` are already

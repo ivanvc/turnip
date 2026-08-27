@@ -94,6 +94,117 @@ is a Slice 2 amendment (`plugin-helmfile`'s `tasks.md` gains a new
 numbered task per this repo's audit-trail convention — see this slice's
 own `tasks.md`).
 
+### Decision 3: the clone merges the PR's base branch in, Atlantis-style (2026-08 amendment)
+
+Requirement 5 originally had the Runner check out the PR's commit SHA and
+nothing else. That's a problem this codebase already has the pieces to
+notice: `internal/lock`'s design commits to reusing a plan's exact result
+at apply time rather than re-planning, on the premise that the plan
+reflects what will actually land. A plan taken against the PR branch in
+isolation doesn't reflect that — it reflects a tree that may not even be
+mergeable, let alone match post-merge reality — so the reuse guarantee was
+resting on an assumption Requirement 5 never actually established.
+
+**Resolution**: `Clone` also merges the PR's base branch into the checked-out
+commit, mirroring [Atlantis'](https://www.runatlantis.io/) `atlantis-merge`
+strategy — fetch the base branch, `git merge --no-ff -m turnip-merge
+<base>`, and if that merge can't complete cleanly, abort it and report a
+distinguishable conflict rather than proceeding to plan/apply against
+something that was never going to be mergeable in the first place.
+
+```go
+// internal/runner/clone.go
+func Clone(ctx context.Context, dir, repoURL, commitSHA, baseRef, token string) error
+```
+
+Concrete sequence, using named local refs rather than `FETCH_HEAD` (which
+only unambiguously names one ref at a time — two refs are in flight here):
+
+```
+git init <dir>
+git -C <dir> remote add origin <authedURL>
+git -C <dir> fetch --depth <mergeFetchDepth> origin <commitSHA>:refs/turnip/head <baseRef>:refs/turnip/base
+git -C <dir> checkout refs/turnip/head
+git -C <dir> -c user.name=turnip -c user.email=turnip@localhost merge --no-ff -m turnip-merge refs/turnip/base
+```
+
+Fetching both refs in **one** `git fetch` call (not two independent calls)
+is load-bearing, not stylistic: two separate `--depth 1` fetches each
+produce their own shallow-grafted tip with no recorded parents, so they
+can never share history — `git merge` would then see "unrelated
+histories" for every pair of refs, not just genuinely stale ones. A single
+fetch computes its shallow boundary across every ref it's asked for
+together, so when the two tips' histories actually do overlap within
+`mergeFetchDepth` commits, the fetched object graph reflects that overlap.
+
+`mergeFetchDepth` is a small constant (50) — enough for the common case of
+an active PR against a base that hasn't diverged far, while keeping this
+Requirement's original shallow-fetch rationale intact (a full clone of a
+large IaC repo on every Operation is wasteful). **Fallback**: if `git
+merge` reports it can't find shared history (`git`'s own "refusing to
+merge unrelated histories" message is the detectable signal), `Clone`
+re-fetches both refs once more with no depth limit at all and retries the
+checkout/merge exactly once — trading the shallow-fetch cost for
+correctness only in the (expected to be rare) case of a long-diverged
+branch, rather than silently misreporting a stale-history situation as a
+content conflict.
+
+**Conflict detection**: a real content conflict and a still-broken merge
+after the unshallow fallback are both a non-zero `git merge` exit, but
+only the former is a conflict a developer can act on by editing their PR.
+`Clone` distinguishes them the same pragmatic way the global design's
+"Output Parsing Failure" section already accepts elsewhere in this
+codebase — matching git's own human-readable output (`CONFLICT` /
+`Automatic merge failed` for a real conflict) — and returns a distinct
+`*MergeConflictError` so `redact`/`redactArgs` still strip the token from
+its message exactly as they do for any other clone step, and so a caller
+that wants to special-case conflicts later (e.g. a future PR-comment
+template distinct from a generic clone failure) has a typed hook without
+a proto change; today `run.go`'s `execute()` still folds it into
+`OperationResult.ErrorMessage` like any other clone error, satisfying
+Requirement 5.4's "distinguishable in its error message" bar without
+needing a structured error-code field on `OperationResult`.
+
+`internal/runner.Config` and `internal/jobs.OperationParams` both gain a
+`BaseRef string` field (populated from `github.PullRequest.BaseRef`,
+already parsed by the GitHub integration slice — no new webhook field is
+needed), and `internal/jobs.BuildJob` sets a new `TURNIP_BASE_REF`
+environment variable alongside the existing `TURNIP_COMMIT_SHA` one.
+`internal/orchestrator.executeOne` (server-orchestration, Slice 6) passes
+`pr.BaseRef` through when it builds `OperationParams` — the one line this
+amendment needs outside this slice's own packages, following task 20's
+precedent for a small, clearly-scoped cross-slice touch recorded in the
+driving slice's own `tasks.md`.
+
+Apply operations go through the same `Clone` call as plan — there's no
+special-casing between the two. If the base branch has moved between plan
+and apply, the re-merged tree at apply time can differ from what was
+planned; that's caught by Terraform's own "saved plan is stale" check
+(the tool refusing to apply a plan against a tree it no longer matches),
+which is a better safety net here than the Runner trying to pin the exact
+base commit a plan was taken against.
+
+*Alternative considered*: use GitHub's asynchronously-computed
+`merge_commit_sha` instead of merging locally. *Rejected* — it's
+eventually consistent (not guaranteed ready when the Runner starts),
+requires an extra GitHub API round-trip and a distinct code path for
+whatever backend doesn't offer it, and produces a worse error on conflict
+(GitHub reports the PR as simply "not mergeable," with no diff-level
+detail) than `git merge`'s own conflict output does.
+
+*Alternative considered*: two independent `--depth 1` fetches (the
+original, per-ref shallow approach, extended naively to also fetch the
+base). *Rejected* — as above, this can never produce shared history, so
+`git merge` would treat every merge as unrelated histories regardless of
+how closely related the branches actually are; it doesn't just fail on
+genuinely stale branches, it fails universally.
+
+*Alternative considered*: always do a full (unshallow) clone, skipping the
+bounded-depth fast path entirely. *Rejected* — correct, but pays the
+"IaC repos can be large" cost (this Requirement's original justification
+for shallow fetching in the first place) on every single Operation rather
+than only the rare long-diverged-branch case.
+
 ## Package Layout
 
 ```
@@ -105,7 +216,7 @@ internal/plugin/                  // Slice 2, amended (Decision 2)
 
 internal/runner/                  // NEW — the Runner binary's logic
   config.go     // env var parsing into a Config struct
-  clone.go      // git clone via commandRunner-style subprocess seam (mirrors internal/plugin's)
+  clone.go      // git clone + base-branch merge (Decision 3) via commandRunner-style subprocess seam (mirrors internal/plugin's)
   reporter.go   // the retrying gRPC client: connect, stream start/log/result, backoff
   run.go        // Run(ctx, Config) int — wires clone -> plugin dispatch -> reporter together
 
@@ -302,6 +413,7 @@ type Config struct {
     Operation      string
     RepoURL        string
     CommitSHA      string
+    BaseRef        string // 2026-08 amendment (Decision 3) — the branch Clone merges in
     GitHubToken    string
     ToolConfig     map[string]string
     ExtraArgs      []string
@@ -355,6 +467,7 @@ type OperationParams struct {
     Operation      string
     RepoURL        string
     CommitSHA      string
+    BaseRef        string // 2026-08 amendment (Decision 3), from github.PullRequest.BaseRef
     GitHubToken    string
     ServerAddr     string
     ExtraArgs      []string
@@ -384,9 +497,10 @@ The Job's Pod spec: one initContainer per Requirement 8.1
 variables Requirement 7.2 lists — every one prefixed `TURNIP_`
 (`TURNIP_SERVER_ADDR`, `TURNIP_OPERATION_ID`, `TURNIP_PROJECT_NAME`,
 `TURNIP_PROJECT_DIR`, `TURNIP_TOOL`, `TURNIP_OPERATION`,
-`TURNIP_REPO_URL`, `TURNIP_COMMIT_SHA`, `TURNIP_GITHUB_TOKEN`,
-`TURNIP_TOOL_CONFIG`, `TURNIP_EXTRA_ARGS`, `TURNIP_PLAN_DATA`,
-`TURNIP_TOOLS_DIR`) rather than bare names like `TOOL` or `OPERATION`,
+`TURNIP_REPO_URL`, `TURNIP_COMMIT_SHA`, `TURNIP_BASE_REF` (2026-08
+amendment, Decision 3), `TURNIP_GITHUB_TOKEN`, `TURNIP_TOOL_CONFIG`,
+`TURNIP_EXTRA_ARGS`, `TURNIP_PLAN_DATA`, `TURNIP_TOOLS_DIR`) rather than
+bare names like `TOOL` or `OPERATION`,
 to avoid colliding with anything Kubernetes itself injects into the Pod's
 environment (e.g. `enableServiceLinks`' per-Service `<NAME>_SERVICE_HOST`
 variables) or a future base-image `ENV` — `RestartPolicy: Never` (a

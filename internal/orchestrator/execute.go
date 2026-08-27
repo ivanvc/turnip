@@ -153,6 +153,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		Operation:   t.Operation,
 		RepoURL:     repo.URL,
 		CommitSHA:   pr.HeadSHA,
+		BaseRef:     pr.BaseRef,
 		GitHubToken: token,
 		ServerAddr:  o.runnerServerAddr,
 		ExtraArgs:   t.ExtraArgs,

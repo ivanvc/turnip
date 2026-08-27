@@ -26,6 +26,7 @@ func testParams() OperationParams {
 		Operation:   "diff",
 		RepoURL:     "https://github.com/acme/repo.git",
 		CommitSHA:   "abc123",
+		BaseRef:     "main",
 		GitHubToken: "ghs_token",
 		ServerAddr:  "server.turnip.svc:9443",
 		ExtraArgs:   []string{"--quiet"},
@@ -75,6 +76,7 @@ func TestBuildJob_MainContainerHasAllEnvironmentVariables(t *testing.T) {
 	assert.Equal(t, params.Operation, env["TURNIP_OPERATION"])
 	assert.Equal(t, params.RepoURL, env["TURNIP_REPO_URL"])
 	assert.Equal(t, params.CommitSHA, env["TURNIP_COMMIT_SHA"])
+	assert.Equal(t, params.BaseRef, env["TURNIP_BASE_REF"])
 	assert.Equal(t, params.GitHubToken, env["TURNIP_GITHUB_TOKEN"])
 	assert.JSONEq(t, `{"environment":"staging"}`, env["TURNIP_TOOL_CONFIG"])
 	assert.JSONEq(t, `["--quiet"]`, env["TURNIP_EXTRA_ARGS"])
