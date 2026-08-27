@@ -148,12 +148,13 @@ func TestClient_PostComment(t *testing.T) {
 	client, mux := newTestClient(t)
 
 	mux.HandleFunc("/repos/owner/repo/issues/5/comments", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, map[string]int64{"id": 555})
+		writeJSON(t, w, map[string]any{"id": 555, "node_id": "IC_kwDOexample"})
 	})
 
-	id, err := client.PostComment(t.Context(), "owner", "repo", 5, "hello")
+	posted, err := client.PostComment(t.Context(), "owner", "repo", 5, "hello")
 	require.NoError(t, err)
-	assert.EqualValues(t, 555, id)
+	assert.EqualValues(t, 555, posted.ID)
+	assert.Equal(t, "IC_kwDOexample", posted.NodeID)
 }
 
 func TestClient_UpdateComment(t *testing.T) {

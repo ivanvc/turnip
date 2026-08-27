@@ -7,17 +7,22 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	batchv1client "k8s.io/client-go/kubernetes/typed/batch/v1"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/utils/ptr"
 )
 
 // Client creates and deletes Runner Jobs in one Kubernetes namespace.
 type Client struct {
 	jobs batchv1client.JobInterface
+	pods corev1client.PodInterface
 }
 
 // NewClient constructs a Client backed by clientset, scoped to namespace.
 func NewClient(clientset kubernetes.Interface, namespace string) *Client {
-	return &Client{jobs: clientset.BatchV1().Jobs(namespace)}
+	return &Client{
+		jobs: clientset.BatchV1().Jobs(namespace),
+		pods: clientset.CoreV1().Pods(namespace),
+	}
 }
 
 // Create submits job to the cluster and returns the created object

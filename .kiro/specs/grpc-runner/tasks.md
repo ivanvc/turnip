@@ -219,6 +219,20 @@ wiring, then tests (unit, then property).
   - [x] 19.3 Checkpoint - Full re-verification
     - `go build ./...`, `go test -race ./...` (jobs 85.2%, runner 84.1%), `go mod tidy` (stable), `gofmt -l .` (clean), and the real `golangci-lint` v2 all pass with 0 issues
 
+- [x] 20. Add `Client.Status` for Job/Pod diagnostics (server-orchestration amendment)
+  - [x] 20.1 Amend `client.go` and add `status.go`
+    - server-orchestration (Slice 6) needs to diagnose *why* a Runner Job never started (e.g. an `ImagePullBackOff` on the tool-provisioning initContainer) once its own 5-minute start-deadline sweep claims a timeout — `internal/jobs` only offered `Create`/`Delete`, with no way to query a Job's or its Pod's actual Kubernetes state
+    - Added a `pods corev1client.PodInterface` field to `Client`, set in `NewClient` via `clientset.CoreV1().Pods(namespace)` — no signature change
+    - Added `JobStatus` and `Client.Status(ctx, jobName) (*JobStatus, error)` in new `status.go`: a not-found Job is `JobStatus{JobFound: false}`, not an error; Pods are found via the `batch.kubernetes.io/job-name={jobName}` label selector (the namespaced label, not the legacy `job-name` — this platform targets only currently-supported Kubernetes versions, so there's no compatibility reason to prefer the older form); init-container `Waiting` statuses are checked before regular container statuses, since the tool-provisioning initContainer (task 4.2) is the more likely place for an image-pull failure than the Runner's own image
+    - _Requirements: server-orchestration's Requirement 8.4_
+
+  - [x] 20.2 Add `status_test.go`
+    - Using `k8s.io/client-go/kubernetes/fake`: not-found Job, Job with no Pod yet, a Pod with an init-container `ImagePullBackOff` (asserting it isn't overridden by a later regular container also `Waiting`), and a cleanly `Running` Pod with no `Waiting` statuses at all
+    - _Requirements: (test coverage for 20.1)_
+
+  - [x] 20.3 Checkpoint - Full re-verification
+    - `go build ./internal/jobs/...` and `go test ./internal/jobs/...` pass
+
 ## Notes
 
 - `k8s.io/api`, `k8s.io/apimachinery`, and `k8s.io/client-go` are already

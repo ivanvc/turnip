@@ -1,0 +1,98 @@
+package orchestrator
+
+import (
+	"context"
+	"log"
+
+	"github.com/ivanvc/turnip/internal/github"
+)
+
+// postResults partitions results by kind and posts them per Requirement
+// 10: the plan-kind group is minimized-then-reposted (Decision 4, gated
+// by o.minimizeOutdatedPlanComments), the apply-kind group is always
+// posted fresh and never tracked or minimized.
+func (o *Orchestrator) postResults(ctx context.Context, client github.GitHubClient, repo github.Repository, prNumber int, results []github.ProjectResult) {
+	planResults, applyResults := o.partitionByKind(results)
+
+	if len(planResults) > 0 {
+		o.postPlanResults(ctx, client, repo, prNumber, planResults)
+	}
+	if len(applyResults) > 0 {
+		o.postApplyResults(ctx, client, repo, prNumber, applyResults)
+	}
+}
+
+// partitionByKind splits results into plan-kind (Operation equals that
+// result's own Tool's GetPlanOperation()) and apply-kind (every other
+// operation) per Requirement 10.2. A result whose Tool can't be resolved
+// (shouldn't normally happen — every Target came from a candidate whose
+// tool was already validated) is treated as apply-kind, the more
+// conservative bucket (never auto-collapsed).
+func (o *Orchestrator) partitionByKind(results []github.ProjectResult) (plan, apply []github.ProjectResult) {
+	for _, r := range results {
+		if o.isPlanResult(r) {
+			plan = append(plan, r)
+		} else {
+			apply = append(apply, r)
+		}
+	}
+	return plan, apply
+}
+
+func (o *Orchestrator) isPlanResult(r github.ProjectResult) bool {
+	p, ok := o.plugins[r.Tool]
+	return ok && p.GetPlanOperation() == r.Operation
+}
+
+func (o *Orchestrator) postPlanResults(ctx context.Context, client github.GitHubClient, repo github.Repository, prNumber int, results []github.ProjectResult) {
+	if o.minimizeOutdatedPlanComments {
+		if rec, err := o.records.GetPlanCommentRecord(ctx, repo.Owner, repo.Name, prNumber); err != nil {
+			log.Printf("orchestrator: reading plan comment record for %s/%s#%d: %v", repo.Owner, repo.Name, prNumber, err)
+		} else if rec != nil {
+			for _, nodeID := range rec.NodeIDs {
+				if err := client.MinimizeComment(ctx, nodeID); err != nil {
+					// Soft failure (Decision 3): a comment that fails to
+					// collapse is a readability regression, not a
+					// correctness one — posting the new comment proceeds.
+					log.Printf("orchestrator: minimizing comment %s: %v", nodeID, err)
+				}
+			}
+		}
+		// A missing record (never existed, or its safety-net TTL expired)
+		// is not an error — the minimize step is simply skipped, per
+		// Requirement 10.6. No fallback scan is performed.
+	}
+
+	bodies := github.BuildConsolidatedComment(results)
+	nodeIDs := postBodies(ctx, client, repo, prNumber, bodies)
+
+	if o.minimizeOutdatedPlanComments {
+		if err := o.records.SetPlanCommentRecord(ctx, repo.Owner, repo.Name, prNumber, nodeIDs); err != nil {
+			log.Printf("orchestrator: writing plan comment record for %s/%s#%d: %v", repo.Owner, repo.Name, prNumber, err)
+		}
+	}
+}
+
+// postApplyResults always posts fresh — never minimized, never tracked,
+// never updated in place (Requirement 10.7): an apply is a permanent
+// record of what happened to real infrastructure, not a superseded
+// prediction the way an older plan is.
+func (o *Orchestrator) postApplyResults(ctx context.Context, client github.GitHubClient, repo github.Repository, prNumber int, results []github.ProjectResult) {
+	bodies := github.BuildConsolidatedComment(results)
+	postBodies(ctx, client, repo, prNumber, bodies)
+}
+
+// postBodies posts every body as a fresh comment, returning the posted
+// comments' GraphQL node IDs (only meaningful to the plan-kind caller).
+func postBodies(ctx context.Context, client github.GitHubClient, repo github.Repository, prNumber int, bodies []string) []string {
+	var nodeIDs []string
+	for _, body := range bodies {
+		posted, err := client.PostComment(ctx, repo.Owner, repo.Name, prNumber, body)
+		if err != nil {
+			log.Printf("orchestrator: posting comment on %s/%s#%d: %v", repo.Owner, repo.Name, prNumber, err)
+			continue
+		}
+		nodeIDs = append(nodeIDs, posted.NodeID)
+	}
+	return nodeIDs
+}

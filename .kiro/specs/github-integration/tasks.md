@@ -215,6 +215,23 @@ package doc update, then tests (unit, then property).
   - [x] 20.3 Checkpoint - Full re-verification
     - Ensure `go build ./...`, `go vet ./internal/github/...`, `gofmt -l internal/github/`, `go test -race ./internal/github/...`, and the real `golangci-lint` v2 (`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...`) all pass
 
+- [x] 21. Add `MinimizeComment` and a comment's GraphQL node ID (server-orchestration amendment)
+  - [x] 21.1 Amend `client.go` and add `graphql.go`
+    - server-orchestration (Slice 6) needs to mark a superseded plan comment "outdated" on GitHub, which only exists as a GraphQL mutation (`minimizeComment`) — no REST equivalent — and needs the comment's GraphQL node ID as that mutation's `subjectId`, which `PostComment`'s numeric-ID-only return didn't carry
+    - Added `PostedComment{ID, NodeID}`, changed `PostComment`'s return from `(int64, error)` to `(*PostedComment, error)` — a plain signature change, not a new method alongside the old one, since no caller existed yet anywhere in this codebase
+    - Added `GitHubClient.MinimizeComment(ctx, nodeID string) error`, implemented in new `graphql.go` as a single hand-rolled GraphQL POST (not a new client library dependency) to `https://api.github.com/graphql`, reusing `c.itr` (the same installation-authenticated transport `c.gh` already uses) as the `http.RoundTripper` — guarding against `c.itr` being a nil `*ghinstallation.Transport` stored in a non-nil `http.RoundTripper` interface value (a real Go gotcha that panicked in this package's own tests until caught), falling back to `http.DefaultTransport` in that case
+    - `classifier` is hardcoded to `OUTDATED` — this package has no other use for the mutation
+    - Added `graphQLURL` as an unexported test-only override field on `Client`, since the endpoint is otherwise a fixed constant with no way for a test to redirect it
+    - Updated `authorize_test.go`'s `fakeGitHubClient` and `client_test.go`'s `TestClient_PostComment` for the new signatures
+    - _Requirements: server-orchestration's Requirement 10.3, 10.4_
+
+  - [x] 21.2 Add `graphql_test.go`
+    - Against an `httptest.Server` standing in for `api.github.com/graphql` (via `graphQLURL`): asserts the outgoing request body's shape (`query` containing `minimizeComment`/`OUTDATED`, `variables.id` matching the given node ID), and that a GraphQL-level `errors` entry in the response is surfaced as a Go error
+    - _Requirements: (test coverage for 21.1)_
+
+  - [x] 21.3 Checkpoint - Full re-verification
+    - `go build ./internal/github/...` and `go test ./internal/github/...` pass
+
 ## Notes
 
 - No Redis, gRPC, or Kubernetes dependencies are introduced — this slice

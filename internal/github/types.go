@@ -61,7 +61,13 @@ type TriggerCommand struct {
 // ProjectResult is BuildConsolidatedComment's per-Project input.
 type ProjectResult struct {
 	ProjectName string
-	Operation   string
-	Success     bool
-	Output      string
+	// Tool is the Project's IaC tool (e.g. "helmfile"). BuildConsolidatedComment
+	// doesn't read it — it exists so a caller (server-orchestration) can
+	// resolve which Plugin's operation names Operation should be compared
+	// against, without having to carry a second, parallel data structure
+	// alongside a []ProjectResult.
+	Tool      string
+	Operation string
+	Success   bool
+	Output    string
 }

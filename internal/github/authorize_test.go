@@ -53,13 +53,16 @@ func (f *fakeGitHubClient) CreateCheckRun(ctx context.Context, owner, repo strin
 func (f *fakeGitHubClient) UpdateCheckRun(ctx context.Context, owner, repo string, checkRunID int64, opts CheckRunOptions) error {
 	panic("not used by Authorizer")
 }
-func (f *fakeGitHubClient) PostComment(ctx context.Context, owner, repo string, prNumber int, body string) (int64, error) {
+func (f *fakeGitHubClient) PostComment(ctx context.Context, owner, repo string, prNumber int, body string) (*PostedComment, error) {
 	panic("not used by Authorizer")
 }
 func (f *fakeGitHubClient) UpdateComment(ctx context.Context, owner, repo string, commentID int64, body string) error {
 	panic("not used by Authorizer")
 }
 func (f *fakeGitHubClient) IsCollaborator(ctx context.Context, owner, repo, username string) (bool, error) {
+	panic("not used by Authorizer")
+}
+func (f *fakeGitHubClient) MinimizeComment(ctx context.Context, nodeID string) error {
 	panic("not used by Authorizer")
 }
 

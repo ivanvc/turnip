@@ -19,10 +19,11 @@ type GitHubClient interface {
 	GetPullRequest(ctx context.Context, owner, repo string, prNumber int) (*PullRequest, error)
 	CreateCheckRun(ctx context.Context, owner, repo string, opts CheckRunOptions) (int64, error)
 	UpdateCheckRun(ctx context.Context, owner, repo string, checkRunID int64, opts CheckRunOptions) error
-	PostComment(ctx context.Context, owner, repo string, prNumber int, body string) (int64, error)
+	PostComment(ctx context.Context, owner, repo string, prNumber int, body string) (*PostedComment, error)
 	UpdateComment(ctx context.Context, owner, repo string, commentID int64, body string) error
 	IsCollaborator(ctx context.Context, owner, repo, username string) (bool, error)
 	GetCollaboratorPermission(ctx context.Context, owner, repo, username string) (string, error)
+	MinimizeComment(ctx context.Context, nodeID string) error
 }
 
 // Client implements GitHubClient by wrapping a *gh.Client whose transport
@@ -30,6 +31,9 @@ type GitHubClient interface {
 type Client struct {
 	gh  *gh.Client
 	itr *ghinstallation.Transport
+
+	// graphQLURL overrides graphQLEndpoint when set; used by tests only.
+	graphQLURL string
 }
 
 var _ GitHubClient = (*Client)(nil)
@@ -109,12 +113,21 @@ func (c *Client) UpdateCheckRun(ctx context.Context, owner, repo string, checkRu
 	return nil
 }
 
-func (c *Client) PostComment(ctx context.Context, owner, repo string, prNumber int, body string) (int64, error) {
+// PostedComment identifies a newly-created comment by both its numeric
+// REST id and its GraphQL node id — the latter is what MinimizeComment
+// needs, and go-github's create-comment response already carries it, so
+// capturing it here costs no extra API call.
+type PostedComment struct {
+	ID     int64
+	NodeID string
+}
+
+func (c *Client) PostComment(ctx context.Context, owner, repo string, prNumber int, body string) (*PostedComment, error) {
 	comment, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, prNumber, &gh.IssueComment{Body: &body})
 	if err != nil {
-		return 0, fmt.Errorf("github: posting comment on %s/%s#%d: %w", owner, repo, prNumber, err)
+		return nil, fmt.Errorf("github: posting comment on %s/%s#%d: %w", owner, repo, prNumber, err)
 	}
-	return comment.GetID(), nil
+	return &PostedComment{ID: comment.GetID(), NodeID: comment.GetNodeID()}, nil
 }
 
 func (c *Client) UpdateComment(ctx context.Context, owner, repo string, commentID int64, body string) error {

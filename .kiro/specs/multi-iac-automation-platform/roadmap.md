@@ -14,7 +14,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 3 | Redis Lock Manager | `redis-lock-manager` | Complete | Slice 0 |
 | 4 | GitHub Client & Webhook Handler | `github-integration` | Complete | Slice 0 |
 | 5 | gRPC & Runner | `grpc-runner` | Complete | Slices 0, 2 |
-| 6 | Server Orchestration | `server-orchestration` | Not Started | Slices 1–5 |
+| 6 | Server Orchestration | `server-orchestration` | Complete | Slices 1–5 |
 | 7 | Terraform & Pulumi Plugins | `terraform-pulumi-plugins` | Not Started | Slice 2 (interface) |
 | 8 | HA, Observability & Deployment | `ha-observability` | Not Started | Slice 6 |
 
