@@ -118,6 +118,8 @@ func TestWebhookHandler_PullRequestDispatches(t *testing.T) {
 	handler := &recordingEventHandler{}
 	h := NewWebhookHandler(testWebhookSecret, handler)
 
+	before := scrapeMetric(t, "turnip_webhook_events_total", map[string]string{"event_type": "pull_request", "outcome": "dispatched"})
+
 	req := signedWebhookRequest(t, "pull_request", testPullRequestPayload(t))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -126,6 +128,7 @@ func TestWebhookHandler_PullRequestDispatches(t *testing.T) {
 	pr, comment := handler.calls()
 	assert.Equal(t, 1, pr)
 	assert.Equal(t, 0, comment)
+	assert.InDelta(t, before+1, scrapeMetric(t, "turnip_webhook_events_total", map[string]string{"event_type": "pull_request", "outcome": "dispatched"}), 0.0001)
 
 	event := handler.lastEvent
 	require.NotNil(t, event)
@@ -164,6 +167,8 @@ func TestWebhookHandler_IssueCommentOnPlainIssueDoesNotDispatch(t *testing.T) {
 	handler := &recordingEventHandler{}
 	h := NewWebhookHandler(testWebhookSecret, handler)
 
+	before := scrapeMetric(t, "turnip_webhook_events_total", map[string]string{"event_type": "issue_comment", "outcome": "skipped"})
+
 	req := signedWebhookRequest(t, "issue_comment", testIssueCommentPayload(t, false))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -172,11 +177,14 @@ func TestWebhookHandler_IssueCommentOnPlainIssueDoesNotDispatch(t *testing.T) {
 	pr, comment := handler.calls()
 	assert.Equal(t, 0, pr)
 	assert.Equal(t, 0, comment)
+	assert.InDelta(t, before+1, scrapeMetric(t, "turnip_webhook_events_total", map[string]string{"event_type": "issue_comment", "outcome": "skipped"}), 0.0001)
 }
 
 func TestWebhookHandler_InvalidSignatureRejected(t *testing.T) {
 	handler := &recordingEventHandler{}
 	h := NewWebhookHandler(testWebhookSecret, handler)
+
+	before := scrapeMetric(t, "turnip_webhook_events_total", map[string]string{"event_type": "unknown", "outcome": "rejected"})
 
 	payload := testPullRequestPayload(t)
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(payload)))
@@ -191,11 +199,14 @@ func TestWebhookHandler_InvalidSignatureRejected(t *testing.T) {
 	pr, comment := handler.calls()
 	assert.Equal(t, 0, pr)
 	assert.Equal(t, 0, comment)
+	assert.InDelta(t, before+1, scrapeMetric(t, "turnip_webhook_events_total", map[string]string{"event_type": "unknown", "outcome": "rejected"}), 0.0001)
 }
 
 func TestWebhookHandler_UnrelatedEventTypeIgnored(t *testing.T) {
 	handler := &recordingEventHandler{}
 	h := NewWebhookHandler(testWebhookSecret, handler)
+
+	before := scrapeMetric(t, "turnip_webhook_events_total", map[string]string{"event_type": "ping", "outcome": "skipped"})
 
 	req := signedWebhookRequest(t, "ping", []byte(`{"zen":"hello"}`))
 	w := httptest.NewRecorder()
@@ -205,6 +216,7 @@ func TestWebhookHandler_UnrelatedEventTypeIgnored(t *testing.T) {
 	pr, comment := handler.calls()
 	assert.Equal(t, 0, pr)
 	assert.Equal(t, 0, comment)
+	assert.InDelta(t, before+1, scrapeMetric(t, "turnip_webhook_events_total", map[string]string{"event_type": "ping", "outcome": "skipped"}), 0.0001)
 }
 
 func TestWebhookHandler_HandlerErrorReturns500(t *testing.T) {

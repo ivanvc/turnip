@@ -84,19 +84,28 @@ func TestRecordStore_SetJobName_SurvivesTTL(t *testing.T) {
 func TestRecordStore_MarkStarted_Idempotent(t *testing.T) {
 	s, _ := newTestRecordStore(t)
 	ctx := context.Background()
-	require.NoError(t, s.Create(ctx, testRecord("op-1")))
+	rec := testRecord("op-1")
+	require.NoError(t, s.Create(ctx, rec))
 
-	require.NoError(t, s.MarkStarted(ctx, "op-1"))
-	require.NoError(t, s.MarkStarted(ctx, "op-1")) // second call: harmless no-op
-
-	rec, err := s.get(ctx, "op-1")
+	justStarted, createdAt, err := s.MarkStarted(ctx, "op-1")
 	require.NoError(t, err)
-	assert.True(t, rec.Started)
+	assert.True(t, justStarted)
+	assert.WithinDuration(t, rec.CreatedAt, createdAt, time.Second)
+
+	justStarted, _, err = s.MarkStarted(ctx, "op-1") // second call: harmless no-op
+	require.NoError(t, err)
+	assert.False(t, justStarted)
+
+	got, err := s.get(ctx, "op-1")
+	require.NoError(t, err)
+	assert.True(t, got.Started)
 }
 
 func TestRecordStore_MarkStarted_MissingRecordIsNotAnError(t *testing.T) {
 	s, _ := newTestRecordStore(t)
-	require.NoError(t, s.MarkStarted(context.Background(), "does-not-exist"))
+	justStarted, _, err := s.MarkStarted(context.Background(), "does-not-exist")
+	require.NoError(t, err)
+	assert.False(t, justStarted)
 }
 
 func TestRecordStore_ClaimForResult_NotClaimedWhenMissing(t *testing.T) {
@@ -127,7 +136,8 @@ func TestRecordStore_ClaimForTimeout_NotClaimedWhenStarted(t *testing.T) {
 	rec := testRecord("op-1")
 	rec.StartDeadline = time.Now().Add(-time.Minute).Unix() // already past
 	require.NoError(t, s.Create(ctx, rec))
-	require.NoError(t, s.MarkStarted(ctx, "op-1"))
+	_, _, err := s.MarkStarted(ctx, "op-1")
+	require.NoError(t, err)
 
 	_, claimed, err := s.ClaimForTimeout(ctx, "op-1", time.Now())
 	require.NoError(t, err)

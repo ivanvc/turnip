@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/ivanvc/turnip/internal/github"
+	"github.com/ivanvc/turnip/internal/metrics"
 	"github.com/ivanvc/turnip/internal/plugin"
 	"github.com/ivanvc/turnip/internal/rpc"
 )
@@ -13,9 +15,18 @@ import (
 var _ rpc.OperationHandler = (*Orchestrator)(nil)
 
 // HandleLog records that operationID has produced output (Requirement
-// 7.7/8.2) — nothing else reacts to a log line at this layer.
+// 7.7/8.2), and observes Runner Job Start Latency the one time this call
+// is the one that actually performs the started transition (Decision 2
+// in metrics' design.md).
 func (o *Orchestrator) HandleLog(ctx context.Context, operationID string, line rpc.LogLine) error {
-	return o.records.MarkStarted(ctx, operationID)
+	justStarted, createdAt, err := o.records.MarkStarted(ctx, operationID)
+	if err != nil {
+		return err
+	}
+	if justStarted {
+		metrics.ObserveJobStartLatency(time.Since(createdAt))
+	}
+	return nil
 }
 
 // HandleResult finalizes an Operation: Lock (Requirement 6.6-6.8),

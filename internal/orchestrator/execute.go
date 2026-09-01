@@ -13,6 +13,7 @@ import (
 	"github.com/ivanvc/turnip/internal/github"
 	"github.com/ivanvc/turnip/internal/jobs"
 	"github.com/ivanvc/turnip/internal/lock"
+	"github.com/ivanvc/turnip/internal/metrics"
 )
 
 func projectKey(owner, repo, project string) string {
@@ -50,6 +51,11 @@ func (o *Orchestrator) executeTargets(ctx context.Context, client github.GitHubC
 // genuine result or a sweep-detected timeout) and returning its
 // ProjectResult.
 func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, installationID int64, t Target) github.ProjectResult {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveOperationDuration(t.Project.Tool, t.Operation, time.Since(start))
+	}()
+
 	p, ok := o.plugins[t.Project.Tool]
 	if !ok {
 		return rejectedResult(t, fmt.Sprintf("tool %q is not supported", t.Project.Tool))
@@ -63,15 +69,18 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	if isPlan {
 		acquired, err := o.locks.AcquireLock(ctx, key, pr.Number, pullRequestURL(repo.Owner, repo.Name, pr.Number), t.TriggeredBy)
 		if err != nil {
+			metrics.LockAttempt("rejected")
 			return rejectedResult(t, fmt.Sprintf("acquiring lock: %v", err))
 		}
 		if !acquired {
+			metrics.LockAttempt("rejected")
 			status, err := o.locks.GetLockStatus(ctx, key)
 			if err != nil || !status.Locked {
 				return rejectedResult(t, "locked by another PR")
 			}
 			return rejectedResult(t, fmt.Sprintf("locked by PR #%d", status.PRNumber))
 		}
+		metrics.LockAttempt("acquired")
 	} else {
 		locked, err := o.locks.IsLockedByPR(ctx, key, pr.Number)
 		if err != nil || !locked {
@@ -183,6 +192,11 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	if waitErr != nil {
 		return rejectedResult(t, fmt.Sprintf("waiting for result: %v", waitErr))
 	}
+	outcome := "failure"
+	if waitResult.Success {
+		outcome = "success"
+	}
+	metrics.OperationDispatched(t.Project.Tool, t.Operation, outcome)
 	return waitResult
 }
 
@@ -196,6 +210,7 @@ func (o *Orchestrator) deleteRecord(ctx context.Context, operationID string) {
 }
 
 func rejectedResult(t Target, reason string) github.ProjectResult {
+	metrics.OperationDispatched(t.Project.Tool, t.Operation, "rejected")
 	return github.ProjectResult{
 		ProjectName: t.Project.Name,
 		Tool:        t.Project.Tool,

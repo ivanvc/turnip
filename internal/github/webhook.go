@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	gh "github.com/google/go-github/v90/github"
+
+	"github.com/ivanvc/turnip/internal/metrics"
 )
 
 // EventHandler reacts to parsed, signature-verified webhook events. Slice 6
@@ -30,18 +32,23 @@ type webhookHandler struct {
 func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	payload, err := gh.ValidatePayload(r, h.secret)
 	if err != nil {
+		// eventType isn't known yet at this point — signature
+		// verification happens before we even look at the event type.
+		metrics.WebhookEvent("unknown", "rejected")
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
 	eventType := gh.WebHookType(r)
 	if eventType != "pull_request" && eventType != "issue_comment" {
+		metrics.WebhookEvent(eventType, "skipped")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
 	raw, err := gh.ParseWebHook(eventType, payload)
 	if err != nil {
+		metrics.WebhookEvent(eventType, "rejected")
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -55,6 +62,7 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		event, dispatch = issueCommentWebhookEvent(raw.(*gh.IssueCommentEvent))
 	}
 	if !dispatch {
+		metrics.WebhookEvent(eventType, "skipped")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -67,6 +75,7 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		handleErr = h.handler.HandleIssueComment(r.Context(), event)
 	}
 
+	metrics.WebhookEvent(eventType, "dispatched")
 	if handleErr != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

@@ -18,9 +18,11 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/ivanvc/turnip/internal/github"
+	"github.com/ivanvc/turnip/internal/health"
 	"github.com/ivanvc/turnip/internal/jobs"
 	"github.com/ivanvc/turnip/internal/lock"
 	"github.com/ivanvc/turnip/internal/logging"
+	"github.com/ivanvc/turnip/internal/metrics"
 	"github.com/ivanvc/turnip/internal/orchestrator"
 	"github.com/ivanvc/turnip/internal/rpc"
 )
@@ -71,9 +73,16 @@ func run(cfg orchestrator.Config) error {
 		cfg.RunnerServerAddr,
 	)
 
+	pingRedis := func(ctx context.Context) error { return redisClient.Ping(ctx).Err() }
+	mux := http.NewServeMux()
+	mux.Handle("GET /healthz", health.Healthz())
+	mux.Handle("GET /readyz", health.Readyz(pingRedis))
+	mux.Handle("GET /metrics", metrics.Handler())
+	mux.Handle("/", github.NewWebhookHandler([]byte(cfg.GitHubWebhookSecret), orch))
+
 	httpServer := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: github.NewWebhookHandler([]byte(cfg.GitHubWebhookSecret), orch),
+		Handler: mux,
 	}
 
 	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)

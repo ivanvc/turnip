@@ -119,25 +119,31 @@ func (s *recordStore) get(ctx context.Context, operationID string) (*OperationRe
 }
 
 // markStartedScript atomically marks an Operation Record started, unless
-// it's already finalized or already gone (Requirement 8.2).
+// it's already finalized or already gone (Requirement 8.2). Also reports
+// whether this call performed the false→true transition, and the
+// record's created_at when it did — Requirement 2.3's Runner Job Start
+// Latency needs both to be observed exactly once per Operation, cluster-
+// wide, across however many Server instances or reconnects call this.
 //
 // KEYS[1] = operation:{id}
-// Returns 1 on success (marked, or already started), -1 if the record is
-// gone or already finalized.
+// Returns {-1, ""} if the record is gone or already finalized, {1,
+// created_at} if this call performed the transition, {0, ""} if it was
+// already started.
 const markStartedScript = `
 local existing = redis.call('GET', KEYS[1])
 if not existing then
-    return -1
+    return {-1, ''}
 end
 local data = cjson.decode(existing)
 if data.finalized then
-    return -1
+    return {-1, ''}
 end
 if not data.started then
     data.started = true
     redis.call('SET', KEYS[1], cjson.encode(data), 'KEEPTTL')
+    return {1, data.created_at}
 end
-return 1
+return {0, ''}
 `
 
 // claimForFinalizationScript atomically claims an Operation Record for
@@ -175,12 +181,29 @@ return 1
 
 // MarkStarted records that operationID has produced output (Requirement
 // 8.2). A late call against an already-finalized or already-deleted
-// record is silently accepted, not an error.
-func (s *recordStore) MarkStarted(ctx context.Context, operationID string) error {
-	if _, err := s.client.Eval(ctx, markStartedScript, []string{operationKey(operationID)}).Result(); err != nil {
-		return fmt.Errorf("orchestrator: marking operation %q started: %w", operationID, err)
+// record is silently accepted, not an error. justStarted is true only
+// for the one caller, across every Server instance and every reconnect,
+// whose call actually performed the false→true transition — everyone
+// else gets false, so Requirement 2.3's Runner Job Start Latency
+// histogram is observed exactly once per Operation.
+func (s *recordStore) MarkStarted(ctx context.Context, operationID string) (justStarted bool, createdAt time.Time, err error) {
+	res, err := s.client.Eval(ctx, markStartedScript, []string{operationKey(operationID)}).Result()
+	if err != nil {
+		return false, time.Time{}, fmt.Errorf("orchestrator: marking operation %q started: %w", operationID, err)
 	}
-	return nil
+	items, ok := res.([]any)
+	if !ok || len(items) != 2 {
+		return false, time.Time{}, fmt.Errorf("orchestrator: marking operation %q started: unexpected script reply %v", operationID, res)
+	}
+	if toInt64(items[0]) != 1 {
+		return false, time.Time{}, nil
+	}
+	raw, _ := items[1].(string)
+	created, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return false, time.Time{}, fmt.Errorf("orchestrator: marking operation %q started: parsing created_at %q: %w", operationID, raw, err)
+	}
+	return true, created, nil
 }
 
 // ClaimForResult atomically claims operationID for a genuine HandleResult

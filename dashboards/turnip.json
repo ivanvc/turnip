@@ -1,0 +1,120 @@
+{
+  "title": "turnip",
+  "uid": "turnip-server",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "tags": ["turnip"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Webhook throughput & error rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (event_type, outcome) (rate(turnip_webhook_events_total[5m]))",
+          "legendFormat": "{{event_type}} / {{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Operation dispatch rate by tool & outcome",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": { "unit": "ops" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (tool, operation, outcome) (rate(turnip_operations_dispatched_total[5m]))",
+          "legendFormat": "{{tool}} / {{operation}} / {{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Lock acquisition rejection rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(turnip_lock_attempts_total{outcome=\"rejected\"}[5m]))",
+          "legendFormat": "rejected"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Runner Job Start Latency (p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": { "unit": "s" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum(rate(turnip_runner_job_start_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Operation duration (p50 / p99) by tool",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": { "unit": "s" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum(rate(turnip_operation_duration_seconds_bucket[5m])) by (le, tool, operation))",
+          "legendFormat": "p50 {{tool}} / {{operation}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum(rate(turnip_operation_duration_seconds_bucket[5m])) by (le, tool, operation))",
+          "legendFormat": "p99 {{tool}} / {{operation}}"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      }
+    ]
+  }
+}

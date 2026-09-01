@@ -17,7 +17,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 6 | Server Orchestration | `server-orchestration` | Complete | Slices 1–5 |
 | 7 | Terraform & Pulumi Plugins | `terraform-pulumi-plugins` | Not Started | Slice 2 (interface) |
 | 8 | Structured Logging | `structured-logging` | Not Started | Slice 6 |
-| 9 | Metrics & Health Endpoints | `metrics` | Not Started | Slice 6 |
+| 9 | Metrics & Health Endpoints | `metrics` | Complete | Slice 6 |
 | 10 | Deployment: Kustomize & Release Images | `deployment-kustomize` | Not Started | Slices 6, 9 |
 | 11 | HA Validation & Documentation | `ha-validation` | Not Started | Slices 6, 9, 10 |
 

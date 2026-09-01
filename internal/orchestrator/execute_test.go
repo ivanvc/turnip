@@ -202,9 +202,15 @@ func TestExecuteOne_PlanLockConflictIsRejected(t *testing.T) {
 	o, _ := testOrchestrator(t, locks, &fakeJobCreator{t: t})
 	client := &fakeExecuteClient{}
 
+	dispatchedBefore := scrapeMetric(t, "turnip_operations_dispatched_total", map[string]string{"tool": "helmfile", "operation": "diff", "outcome": "rejected"})
+	lockBefore := scrapeMetric(t, "turnip_lock_attempts_total", map[string]string{"outcome": "rejected"})
+
 	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "#7")
+
+	assert.InDelta(t, dispatchedBefore+1, scrapeMetric(t, "turnip_operations_dispatched_total", map[string]string{"tool": "helmfile", "operation": "diff", "outcome": "rejected"}), 0.0001)
+	assert.InDelta(t, lockBefore+1, scrapeMetric(t, "turnip_lock_attempts_total", map[string]string{"outcome": "rejected"}), 0.0001)
 }
 
 func TestExecuteOne_ApplyWithoutLockIsRejected(t *testing.T) {
@@ -262,8 +268,16 @@ func TestExecuteOne_SuccessfulPlanPublishesResult(t *testing.T) {
 	o, _ := testOrchestrator(t, locks, jobsClient)
 	client := &fakeExecuteClient{}
 
+	dispatchedBefore := scrapeMetric(t, "turnip_operations_dispatched_total", map[string]string{"tool": "helmfile", "operation": "diff", "outcome": "success"})
+	lockBefore := scrapeMetric(t, "turnip_lock_attempts_total", map[string]string{"outcome": "acquired"})
+	durationCountBefore := scrapeMetric(t, "turnip_operation_duration_seconds", map[string]string{"tool": "helmfile", "operation": "diff"})
+
 	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
 	assert.Equal(t, want, result)
+
+	assert.InDelta(t, dispatchedBefore+1, scrapeMetric(t, "turnip_operations_dispatched_total", map[string]string{"tool": "helmfile", "operation": "diff", "outcome": "success"}), 0.0001)
+	assert.InDelta(t, lockBefore+1, scrapeMetric(t, "turnip_lock_attempts_total", map[string]string{"outcome": "acquired"}), 0.0001)
+	assert.InDelta(t, durationCountBefore+1, scrapeMetric(t, "turnip_operation_duration_seconds", map[string]string{"tool": "helmfile", "operation": "diff"}), 0.0001)
 }
 
 func TestExecuteOne_JobCarriesPullRequestBaseRef(t *testing.T) {

@@ -49,11 +49,19 @@ func TestHandleLog_MarksStarted(t *testing.T) {
 	o, _ := testResultOrchestrator(t, &fakeLockManager{})
 	createTestRecord(t, o, "op-1", "diff", false)
 
+	before := scrapeMetric(t, "turnip_runner_job_start_latency_seconds", nil)
+
 	require.NoError(t, o.HandleLog(context.Background(), "op-1", rpc.LogLine{Message: "hi"}))
 
 	rec, err := o.records.get(context.Background(), "op-1")
 	require.NoError(t, err)
 	assert.True(t, rec.Started)
+	assert.InDelta(t, before+1, scrapeMetric(t, "turnip_runner_job_start_latency_seconds", nil), 0.0001)
+
+	// A second HandleLog for the same operation is a no-op transition
+	// (Decision 2) — the histogram must not be observed again.
+	require.NoError(t, o.HandleLog(context.Background(), "op-1", rpc.LogLine{Message: "again"}))
+	assert.InDelta(t, before+1, scrapeMetric(t, "turnip_runner_job_start_latency_seconds", nil), 0.0001)
 }
 
 func TestHandleResult_UnclaimableIsNoop(t *testing.T) {
