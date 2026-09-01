@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/ivanvc/turnip/internal/github"
 	"github.com/ivanvc/turnip/internal/plugin"
@@ -58,7 +58,7 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 			opts.Conclusion = "failure"
 		}
 		if err := client.UpdateCheckRun(ctx, rec.Owner, rec.Repo, rec.CheckRunID, opts); err != nil {
-			log.Printf("orchestrator: updating check run for operation %q: %v", operationID, err)
+			slog.ErrorContext(ctx, "updating check run", "operation_id", operationID, "error", err)
 		}
 	}
 
@@ -72,11 +72,11 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 				Destroy: int(result.Changes.Destroy),
 			}
 			if err := o.locks.StorePlanData(ctx, rec.ProjectKey, rec.PRNumber, result.PlanData, summary); err != nil {
-				log.Printf("orchestrator: storing plan data for operation %q: %v", operationID, err)
+				slog.ErrorContext(ctx, "storing plan data", "operation_id", operationID, "error", err)
 			}
 		case rec.IsApply:
 			if err := o.locks.ReleaseLock(ctx, rec.ProjectKey, rec.PRNumber); err != nil {
-				log.Printf("orchestrator: releasing lock for operation %q: %v", operationID, err)
+				slog.ErrorContext(ctx, "releasing lock", "operation_id", operationID, "error", err)
 			} else {
 				pr.Output += "\n\nLock released — this Project is now free for another PR to plan against."
 			}
@@ -87,10 +87,10 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 	// plan data, a failed apply leaves the Lock held rather than released.
 
 	if err := o.records.Delete(ctx, operationID); err != nil {
-		log.Printf("orchestrator: deleting operation record %q: %v", operationID, err)
+		slog.ErrorContext(ctx, "deleting operation record", "operation_id", operationID, "error", err)
 	}
 	if err := publishDone(ctx, o.redis, operationID, pr); err != nil {
-		log.Printf("orchestrator: publishing done notification for %q: %v", operationID, err)
+		slog.ErrorContext(ctx, "publishing done notification", "operation_id", operationID, "error", err)
 	}
 
 	return nil

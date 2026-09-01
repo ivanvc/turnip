@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -32,7 +32,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 func (o *Orchestrator) sweepOnce(ctx context.Context) {
 	keys, err := o.records.ScanOperationKeys(ctx)
 	if err != nil {
-		log.Printf("orchestrator: sweep scan: %v", err)
+		slog.ErrorContext(ctx, "sweep scan", "error", err)
 		return
 	}
 
@@ -41,7 +41,7 @@ func (o *Orchestrator) sweepOnce(ctx context.Context) {
 		operationID := strings.TrimPrefix(key, "operation:")
 		rec, claimed, err := o.records.ClaimForTimeout(ctx, operationID, now)
 		if err != nil {
-			log.Printf("orchestrator: sweep claim for %q: %v", operationID, err)
+			slog.ErrorContext(ctx, "sweep claim", "operation_id", operationID, "error", err)
 			continue
 		}
 		if !claimed {
@@ -56,7 +56,7 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 	if rec.JobName != "" {
 		s, err := o.jobs.Status(ctx, rec.JobName)
 		if err != nil {
-			log.Printf("orchestrator: diagnosing timeout for operation %q: %v", operationID, err)
+			slog.ErrorContext(ctx, "diagnosing timeout", "operation_id", operationID, "error", err)
 		} else {
 			status = s
 		}
@@ -79,7 +79,7 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 			Text:       pr.Output,
 		})
 		if err != nil {
-			log.Printf("orchestrator: updating check run for timed-out operation %q: %v", operationID, err)
+			slog.ErrorContext(ctx, "updating check run for timed-out operation", "operation_id", operationID, "error", err)
 		}
 	}
 
@@ -89,10 +89,10 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 	// real tool work — the Job's TTL is this path's cleanup mechanism.
 
 	if err := o.records.Delete(ctx, operationID); err != nil {
-		log.Printf("orchestrator: deleting timed-out operation record %q: %v", operationID, err)
+		slog.ErrorContext(ctx, "deleting timed-out operation record", "operation_id", operationID, "error", err)
 	}
 	if err := publishDone(ctx, o.redis, operationID, pr); err != nil {
-		log.Printf("orchestrator: publishing timeout notification for %q: %v", operationID, err)
+		slog.ErrorContext(ctx, "publishing timeout notification", "operation_id", operationID, "error", err)
 	}
 }
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -98,7 +98,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		// Soft failure (Decision 3): logged and ignored, the Operation
 		// still runs. checkRunID stays 0, so later UpdateCheckRun calls
 		// for this Target are skipped.
-		log.Printf("orchestrator: creating check run for %s/%s#%d %s: %v", repo.Owner, repo.Name, pr.Number, t.Project.Name, err)
+		slog.ErrorContext(ctx, "creating check run", "owner", repo.Owner, "repo", repo.Name, "pr_number", pr.Number, "project", t.Project.Name, "error", err)
 	}
 
 	operationID := uuid.NewString()
@@ -176,7 +176,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		return rejectedResult(t, fmt.Sprintf("creating job: %v", err))
 	}
 	if err := o.records.SetJobName(ctx, operationID, created.Name); err != nil {
-		log.Printf("orchestrator: recording job name for operation %q: %v", operationID, err)
+		slog.ErrorContext(ctx, "recording job name for operation", "operation_id", operationID, "error", err)
 	}
 
 	<-done
@@ -191,7 +191,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 // prevention TTL (design.md's Redis Key Format) cleans it up eventually.
 func (o *Orchestrator) deleteRecord(ctx context.Context, operationID string) {
 	if err := o.records.Delete(ctx, operationID); err != nil {
-		log.Printf("orchestrator: deleting operation record %q: %v", operationID, err)
+		slog.ErrorContext(ctx, "deleting operation record", "operation_id", operationID, "error", err)
 	}
 }
 

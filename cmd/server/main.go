@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -19,19 +20,22 @@ import (
 	"github.com/ivanvc/turnip/internal/github"
 	"github.com/ivanvc/turnip/internal/jobs"
 	"github.com/ivanvc/turnip/internal/lock"
+	"github.com/ivanvc/turnip/internal/logging"
 	"github.com/ivanvc/turnip/internal/orchestrator"
 	"github.com/ivanvc/turnip/internal/rpc"
 )
 
 func main() {
+	slog.SetDefault(logging.New(os.Stderr, logging.ParseLevel(os.Getenv("TURNIP_LOG_LEVEL"))))
+
 	cfg, err := orchestrator.ConfigFromEnv(os.Getenv)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "server: %v\n", err)
+		slog.Error("loading config", "error", err)
 		os.Exit(1)
 	}
 
 	if err := run(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "server: %v\n", err)
+		slog.Error("running server", "error", err)
 		os.Exit(1)
 	}
 }

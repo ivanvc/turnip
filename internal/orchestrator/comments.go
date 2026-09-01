@@ -2,7 +2,7 @@ package orchestrator
 
 import (
 	"context"
-	"log"
+	"log/slog"
 
 	"github.com/ivanvc/turnip/internal/github"
 )
@@ -47,14 +47,14 @@ func (o *Orchestrator) isPlanResult(r github.ProjectResult) bool {
 func (o *Orchestrator) postPlanResults(ctx context.Context, client github.GitHubClient, repo github.Repository, prNumber int, results []github.ProjectResult) {
 	if o.minimizeOutdatedPlanComments {
 		if rec, err := o.records.GetPlanCommentRecord(ctx, repo.Owner, repo.Name, prNumber); err != nil {
-			log.Printf("orchestrator: reading plan comment record for %s/%s#%d: %v", repo.Owner, repo.Name, prNumber, err)
+			slog.ErrorContext(ctx, "reading plan comment record", "owner", repo.Owner, "repo", repo.Name, "pr_number", prNumber, "error", err)
 		} else if rec != nil {
 			for _, nodeID := range rec.NodeIDs {
 				if err := client.MinimizeComment(ctx, nodeID); err != nil {
 					// Soft failure (Decision 3): a comment that fails to
 					// collapse is a readability regression, not a
 					// correctness one — posting the new comment proceeds.
-					log.Printf("orchestrator: minimizing comment %s: %v", nodeID, err)
+					slog.ErrorContext(ctx, "minimizing comment", "node_id", nodeID, "error", err)
 				}
 			}
 		}
@@ -68,7 +68,7 @@ func (o *Orchestrator) postPlanResults(ctx context.Context, client github.GitHub
 
 	if o.minimizeOutdatedPlanComments {
 		if err := o.records.SetPlanCommentRecord(ctx, repo.Owner, repo.Name, prNumber, nodeIDs); err != nil {
-			log.Printf("orchestrator: writing plan comment record for %s/%s#%d: %v", repo.Owner, repo.Name, prNumber, err)
+			slog.ErrorContext(ctx, "writing plan comment record", "owner", repo.Owner, "repo", repo.Name, "pr_number", prNumber, "error", err)
 		}
 	}
 }
@@ -89,7 +89,7 @@ func postBodies(ctx context.Context, client github.GitHubClient, repo github.Rep
 	for _, body := range bodies {
 		posted, err := client.PostComment(ctx, repo.Owner, repo.Name, prNumber, body)
 		if err != nil {
-			log.Printf("orchestrator: posting comment on %s/%s#%d: %v", repo.Owner, repo.Name, prNumber, err)
+			slog.ErrorContext(ctx, "posting comment", "owner", repo.Owner, "repo", repo.Name, "pr_number", prNumber, "error", err)
 			continue
 		}
 		nodeIDs = append(nodeIDs, posted.NodeID)

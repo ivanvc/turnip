@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/ivanvc/turnip/internal/config"
 	"github.com/ivanvc/turnip/internal/github"
@@ -67,7 +67,7 @@ func (o *Orchestrator) handlePRClosed(ctx context.Context, client github.GitHubC
 		// No other source of Project identity exists in this stateless
 		// design — log and skip Lock release, but the PlanCommentRecord
 		// deletion below is independent of knowing any Project.
-		log.Printf("orchestrator: fetching config at PR close for %s/%s#%d: %v", owner, repoName, prNumber, err)
+		slog.ErrorContext(ctx, "fetching config at PR close", "owner", owner, "repo", repoName, "pr_number", prNumber, "error", err)
 		cfg = nil
 	}
 
@@ -80,7 +80,7 @@ func (o *Orchestrator) handlePRClosed(ctx context.Context, client github.GitHubC
 				continue
 			}
 			if err := o.locks.ReleaseLock(ctx, key, prNumber); err != nil {
-				log.Printf("orchestrator: releasing lock %q on PR close: %v", key, err)
+				slog.ErrorContext(ctx, "releasing lock on PR close", "lock_key", key, "error", err)
 				continue
 			}
 			unlocked = append(unlocked, project.Name)
@@ -93,12 +93,12 @@ func (o *Orchestrator) handlePRClosed(ctx context.Context, client github.GitHubC
 			body += fmt.Sprintf("- %s\n", name)
 		}
 		if _, err := client.PostComment(ctx, owner, repoName, prNumber, body); err != nil {
-			log.Printf("orchestrator: posting unlock comment for %s/%s#%d: %v", owner, repoName, prNumber, err)
+			slog.ErrorContext(ctx, "posting unlock comment", "owner", owner, "repo", repoName, "pr_number", prNumber, "error", err)
 		}
 	}
 
 	if err := o.records.DeletePlanCommentRecord(ctx, owner, repoName, prNumber); err != nil {
-		log.Printf("orchestrator: deleting plan comment record for %s/%s#%d: %v", owner, repoName, prNumber, err)
+		slog.ErrorContext(ctx, "deleting plan comment record", "owner", owner, "repo", repoName, "pr_number", prNumber, "error", err)
 	}
 
 	return nil

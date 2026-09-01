@@ -16,7 +16,10 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 5 | gRPC & Runner | `grpc-runner` | Complete | Slices 0, 2 |
 | 6 | Server Orchestration | `server-orchestration` | Complete | Slices 1–5 |
 | 7 | Terraform & Pulumi Plugins | `terraform-pulumi-plugins` | Not Started | Slice 2 (interface) |
-| 8 | HA, Observability & Deployment | `ha-observability` | Not Started | Slice 6 |
+| 8 | Structured Logging | `structured-logging` | Not Started | Slice 6 |
+| 9 | Metrics & Health Endpoints | `metrics` | Not Started | Slice 6 |
+| 10 | Deployment: Kustomize & Release Images | `deployment-kustomize` | Not Started | Slices 6, 9 |
+| 11 | HA Validation & Documentation | `ha-validation` | Not Started | Slices 6, 9, 10 |
 
 ## Slice Details
 
@@ -146,24 +149,71 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 
 ---
 
-### Slice 8: HA, Observability & Deployment
+### Slices 8-11: Production Readiness (formerly one "HA, Observability & Deployment" slice)
 
-**Goal**: Production readiness — multi-instance, monitoring, deployment artifacts.
+What was originally scoped as a single Slice 8 turned out to be too
+broad for one implementable unit and was split into four, sequenced by
+actual dependency rather than the original bullet order. Each has its
+own spec directory (`requirements.md`/`design.md`); Slice 7 (Terraform &
+Pulumi Plugins) is independent of all four and can be picked up in any
+order relative to them.
+
+### Slice 8: Structured Logging
+
+**Goal**: Replace unstructured `log.Printf`/`fmt.Fprintf` calls with
+`log/slog`-based structured, leveled logging.
 
 **Delivers**:
-- Stateless server validation (no in-memory state)
-- Multi-instance testing under concurrent load
-- Structured logging, metrics (Prometheus)
-- Grafana dashboard
-- Kubernetes manifests and Helm chart
+- `internal/logging` package (`TURNIP_LOG_LEVEL` parsing, `log/slog` setup)
+- Every existing Server/Runner log call site rewritten to structured logging
+
+**Global requirements covered**: non-functional
+
+---
+
+### Slice 9: Metrics & Health Endpoints
+
+**Goal**: Give the Server an HTTP observability surface.
+
+**Delivers**:
+- `/healthz`/`/readyz` endpoints (and the `http.ServeMux` routing change
+  they require in `cmd/server/main.go`)
+- Prometheus metrics (`/metrics`) — webhook, Operation, lock, and Runner
+  Job Start Latency signals
+- A Grafana dashboard (JSON) for those metrics
+
+**Global requirements covered**: non-functional
+
+---
+
+### Slice 10: Deployment — Kustomize & Release Images
+
+**Goal**: Make turnip actually deployable, with real versioned images.
+
+**Delivers**:
+- Kustomize base (Deployment, Service, RBAC) + an example `kind` overlay
+  + an opt-in Grafana-dashboard-provisioning component
 - Versioned release images: replace the Server/Runner images' `:latest`
   tag (a stand-in since Slice 0 — see `internal/jobs/build.go`'s
-  `runnerImage` constant) with a real release version, and evaluate
-  `goreleaser` for building/tagging/pushing both images as part of that
-  pipeline
+  `runnerImage` constant) with a real release version, via `goreleaser`
+
+**Global requirements covered**: non-functional
+
+---
+
+### Slice 11: HA Validation & Documentation
+
+**Goal**: Prove the stateless/multi-instance HA design holds under real
+concurrency and a real deployment; document the finished platform.
+
+**Delivers**:
+- Stateless server validation (no in-memory state) — real-Redis,
+  multi-instance integration tests, part of default CI
+- Multi-instance testing under concurrent load, including a `kind`-cluster
+  variant deployed via Slice 10's overlay (run on demand, not default CI)
 - Documentation (README, deployment guide, troubleshooting)
 
-**Global requirements covered**: 19 + non-functional
+**Global requirements covered**: 19
 
 ---
 

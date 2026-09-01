@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 
 	"github.com/ivanvc/turnip/internal/config"
@@ -104,7 +104,7 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 
 	for _, reply := range replies {
 		if _, err := client.PostComment(ctx, owner, repoName, event.PullRequest.Number, reply); err != nil {
-			log.Printf("orchestrator: posting reply comment on %s/%s#%d: %v", owner, repoName, event.PullRequest.Number, err)
+			slog.ErrorContext(ctx, "posting reply comment", "owner", owner, "repo", repoName, "pr_number", event.PullRequest.Number, "error", err)
 		}
 	}
 
@@ -159,7 +159,7 @@ func (o *Orchestrator) handleUnlock(ctx context.Context, cfg *config.Config, cmd
 				heldByOther = append(heldByOther, project.Name)
 			}
 		default:
-			log.Printf("orchestrator: releasing lock %q via unlock command: %v", key, err)
+			slog.ErrorContext(ctx, "releasing lock via unlock command", "lock_key", key, "error", err)
 		}
 	}
 

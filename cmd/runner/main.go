@@ -2,16 +2,19 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"os"
 
+	"github.com/ivanvc/turnip/internal/logging"
 	"github.com/ivanvc/turnip/internal/runner"
 )
 
 func main() {
+	slog.SetDefault(logging.New(os.Stderr, logging.ParseLevel(os.Getenv("TURNIP_LOG_LEVEL"))))
+
 	cfg, err := runner.ConfigFromEnv(os.Getenv)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "runner: %v\n", err)
+		slog.Error("loading config", "error", err)
 		os.Exit(1)
 	}
 
