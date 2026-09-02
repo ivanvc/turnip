@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: turnip-server
+  labels:
+    app.kubernetes.io/name: turnip-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: turnip-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: turnip-server
+    spec:
+      serviceAccountName: turnip-server
+      containers:
+        - name: server
+          image: ghcr.io/ivanvc/turnip-server:latest
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: grpc
+              containerPort: 9090
+          envFrom:
+            - configMapRef:
+                name: turnip-server-config
+          env:
+            - name: TURNIP_GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: turnip-github-app
+                  key: webhook-secret
+            - name: TURNIP_GITHUB_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: turnip-github-app
+                  key: private-key
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5

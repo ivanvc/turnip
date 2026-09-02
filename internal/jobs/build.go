@@ -14,12 +14,6 @@ import (
 )
 
 const (
-	// runnerImage is the Runner's own container image — never tool-
-	// specific; the tool binary is provisioned separately by an
-	// initContainer (Requirement 7.3).
-	// TODO: This should point to the released version.
-	runnerImage = "ghcr.io/ivanvc/turnip-runner:latest"
-
 	// toolsVolumeName/toolsMountPath are the shared emptyDir volume an
 	// initContainer copies a tool binary onto, and the main container
 	// reads it from (Requirement 8.1/8.2).
@@ -48,6 +42,9 @@ type OperationParams struct {
 	ServerAddr  string
 	ExtraArgs   []string
 	PlanData    []byte
+	// RunnerImage is the Runner container's image, sourced from the
+	// Server's own TURNIP_RUNNER_IMAGE config.
+	RunnerImage string
 }
 
 // BuildJob constructs the Kubernetes Job that runs one Operation for one
@@ -130,7 +127,7 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 					Containers: []corev1.Container{
 						{
 							Name:         "runner",
-							Image:        runnerImage,
+							Image:        op.RunnerImage,
 							Env:          env,
 							VolumeMounts: []corev1.VolumeMount{toolsVolumeMount},
 						},

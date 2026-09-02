@@ -52,12 +52,15 @@ type Orchestrator struct {
 	redis                        *redis.Client
 	minimizeOutdatedPlanComments bool
 	runnerServerAddr             string
+	runnerImage                  string
 	startTimeout                 time.Duration
 	sweepInterval                time.Duration
 }
 
 // New constructs an Orchestrator. runnerServerAddr is the address a
 // Runner Pod dials to reach the Server's gRPC endpoint (Config.RunnerServerAddr).
+// runnerImage is the Runner Job's container image (Config.RunnerImage) —
+// empty lets internal/jobs.BuildJob fall back to its own default.
 func New(
 	appAuth *github.AppAuth,
 	locks lock.LockManager,
@@ -66,6 +69,7 @@ func New(
 	redisClient *redis.Client,
 	minimizeOutdatedPlanComments bool,
 	runnerServerAddr string,
+	runnerImage string,
 ) *Orchestrator {
 	return &Orchestrator{
 		installationClient:           func(id int64) github.GitHubClient { return appAuth.InstallationClient(id) },
@@ -76,6 +80,7 @@ func New(
 		redis:                        redisClient,
 		minimizeOutdatedPlanComments: minimizeOutdatedPlanComments,
 		runnerServerAddr:             runnerServerAddr,
+		runnerImage:                  runnerImage,
 		startTimeout:                 defaultStartTimeout,
 		sweepInterval:                defaultSweepInterval,
 	}

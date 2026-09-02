@@ -24,6 +24,9 @@ type Config struct {
 	// Server process itself binds to.
 	RunnerServerAddr             string
 	MinimizeOutdatedPlanComments bool
+	// RunnerImage is the Runner Job's container image, threaded into
+	// internal/jobs.OperationParams.RunnerImage (Decision 3).
+	RunnerImage string
 }
 
 // MissingEnvVarsError names every required environment variable that was
@@ -49,6 +52,7 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 		HTTPAddr:            env("TURNIP_HTTP_ADDR"),
 		GRPCAddr:            env("TURNIP_GRPC_ADDR"),
 		RunnerServerAddr:    env("TURNIP_RUNNER_SERVER_ADDR"),
+		RunnerImage:         env("TURNIP_RUNNER_IMAGE"),
 	}
 
 	var missing []string
@@ -62,6 +66,7 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 		{"TURNIP_HTTP_ADDR", cfg.HTTPAddr},
 		{"TURNIP_GRPC_ADDR", cfg.GRPCAddr},
 		{"TURNIP_RUNNER_SERVER_ADDR", cfg.RunnerServerAddr},
+		{"TURNIP_RUNNER_IMAGE", cfg.RunnerImage},
 	} {
 		if req.value == "" {
 			missing = append(missing, req.name)

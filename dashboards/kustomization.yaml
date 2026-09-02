@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Makes turnip.json (owned by the metrics slice, Slice 9 — this file only
+# packages it for deployment) consumable as a labeled ConfigMap by
+# deploy/components/grafana-dashboard. Kustomize's configMapGenerator
+# requires its `files:` source to live inside the kustomization's own
+# directory (a sandboxing restriction, not configurable from `kubectl
+# apply -k`) — this file exists here, rather than under deploy/, so that
+# restriction is satisfied without vendoring a second copy of the JSON.
+configMapGenerator:
+  - name: turnip-grafana-dashboard
+    files:
+      - turnip.json
+    options:
+      labels:
+        grafana_dashboard: "1"

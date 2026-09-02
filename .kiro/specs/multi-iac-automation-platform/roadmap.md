@@ -16,9 +16,9 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 5 | gRPC & Runner | `grpc-runner` | Complete | Slices 0, 2 |
 | 6 | Server Orchestration | `server-orchestration` | Complete | Slices 1–5 |
 | 7 | Terraform & Pulumi Plugins | `terraform-pulumi-plugins` | Not Started | Slice 2 (interface) |
-| 8 | Structured Logging | `structured-logging` | Not Started | Slice 6 |
+| 8 | Structured Logging | `structured-logging` | Complete | Slice 6 |
 | 9 | Metrics & Health Endpoints | `metrics` | Complete | Slice 6 |
-| 10 | Deployment: Kustomize & Release Images | `deployment-kustomize` | Not Started | Slices 6, 9 |
+| 10 | Deployment: Kustomize & Release Images | `deployment-kustomize` | Complete | Slices 6, 9 |
 | 11 | HA Validation & Documentation | `ha-validation` | Not Started | Slices 6, 9, 10 |
 
 ## Slice Details
@@ -194,8 +194,10 @@ order relative to them.
 - Kustomize base (Deployment, Service, RBAC) + an example `kind` overlay
   + an opt-in Grafana-dashboard-provisioning component
 - Versioned release images: replace the Server/Runner images' `:latest`
-  tag (a stand-in since Slice 0 — see `internal/jobs/build.go`'s
-  `runnerImage` constant) with a real release version, via `goreleaser`
+  tag (a stand-in since Slice 0) with a real release version, via
+  `goreleaser` — the Runner image is now a required
+  `TURNIP_RUNNER_IMAGE` config value (`internal/jobs.OperationParams.RunnerImage`),
+  not a package constant
 
 **Global requirements covered**: non-functional
 

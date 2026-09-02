@@ -19,6 +19,7 @@ func envMap(overrides map[string]string) func(string) string {
 		"TURNIP_HTTP_ADDR":             ":8080",
 		"TURNIP_GRPC_ADDR":             ":9090",
 		"TURNIP_RUNNER_SERVER_ADDR":    "turnip-server:9090",
+		"TURNIP_RUNNER_IMAGE":          "ghcr.io/ivanvc/turnip-runner:test",
 	}
 	for k, v := range overrides {
 		if v == "" {
@@ -42,6 +43,7 @@ func TestConfigFromEnv_FullyPopulated(t *testing.T) {
 	assert.Equal(t, ":9090", cfg.GRPCAddr)
 	assert.Equal(t, "turnip-server:9090", cfg.RunnerServerAddr)
 	assert.False(t, cfg.MinimizeOutdatedPlanComments)
+	assert.Equal(t, "ghcr.io/ivanvc/turnip-runner:test", cfg.RunnerImage)
 }
 
 func TestConfigFromEnv_MinimizeFlagDefaultsFalse(t *testing.T) {
@@ -59,6 +61,20 @@ func TestConfigFromEnv_MinimizeFlagParsesTrue(t *testing.T) {
 func TestConfigFromEnv_MinimizeFlagInvalidValue(t *testing.T) {
 	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS": "not-a-bool"}))
 	assert.Error(t, err)
+}
+
+func TestConfigFromEnv_RunnerImageRoundTrip(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_IMAGE": "ghcr.io/ivanvc/turnip-runner:v1.2.3"}))
+	require.NoError(t, err)
+	assert.Equal(t, "ghcr.io/ivanvc/turnip-runner:v1.2.3", cfg.RunnerImage)
+}
+
+func TestConfigFromEnv_MissingRunnerImage(t *testing.T) {
+	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_IMAGE": ""}))
+	require.Error(t, err)
+	var missing *MissingEnvVarsError
+	require.ErrorAs(t, err, &missing)
+	assert.Contains(t, missing.Names, "TURNIP_RUNNER_IMAGE")
 }
 
 func TestConfigFromEnv_MissingVariablesNamedTogether(t *testing.T) {

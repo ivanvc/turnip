@@ -167,6 +167,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		ServerAddr:  o.runnerServerAddr,
 		ExtraArgs:   t.ExtraArgs,
 		PlanData:    planData,
+		RunnerImage: o.runnerImage,
 	})
 	if err != nil {
 		o.deleteRecord(ctx, operationID)

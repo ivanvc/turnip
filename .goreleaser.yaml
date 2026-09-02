@@ -1,0 +1,85 @@
+version: 2
+
+project_name: turnip
+
+builds:
+  - id: server
+    main: ./cmd/server
+    binary: server
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+  - id: runner
+    main: ./cmd/runner
+    binary: runner
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+# Both dockers: entries reuse the existing multi-stage, source-based
+# Dockerfiles (build/server/Dockerfile, build/runner/Dockerfile — Slice 0)
+# rather than goreleaser's usual prebuilt-binary-COPY convention: the
+# Dockerfiles already run their own `go build`, so extra_files supplies
+# the source tree their `COPY . .` step expects, and the builds: section
+# above exists only to satisfy goreleaser's artifact bookkeeping (ids:),
+# not to feed a binary into the image.
+dockers:
+  - id: turnip-server
+    ids: [server]
+    use: buildx
+    dockerfile: build/server/Dockerfile
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/ivanvc/turnip-server:{{ .Tag }}"
+      - "ghcr.io/ivanvc/turnip-server:latest"
+    extra_files:
+      - go.mod
+      - go.sum
+      - cmd
+      - internal
+      - proto
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+  - id: turnip-runner
+    ids: [runner]
+    use: buildx
+    dockerfile: build/runner/Dockerfile
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/ivanvc/turnip-runner:{{ .Tag }}"
+      - "ghcr.io/ivanvc/turnip-runner:latest"
+    extra_files:
+      - go.mod
+      - go.sum
+      - cmd
+      - internal
+      - proto
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^test:"
+      - "^chore:"

@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - serviceaccount.yaml
+  - role.yaml
+  - rolebinding.yaml
+
+# Non-secret defaults. No TURNIP_REDIS_ADDR or TURNIP_GITHUB_APP_ID here —
+# there's no sane base-level default for either (Requirement 1.3: the base
+# owns no Redis of its own), so every overlay must supply them via a
+# configMapGenerator with `behavior: merge`.
+configMapGenerator:
+  - name: turnip-server-config
+    literals:
+      - TURNIP_LOG_LEVEL=info
+      - TURNIP_HTTP_ADDR=:8080
+      - TURNIP_GRPC_ADDR=:9090
+      - TURNIP_K8S_NAMESPACE=default
+      - TURNIP_RUNNER_SERVER_ADDR=turnip-server:9090
+      - TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS=false
+      # TURNIP_RUNNER_IMAGE is required (orchestrator.ConfigFromEnv), so
+      # the base ships a real default rather than an empty placeholder —
+      # an overlay overrides it to match its own Runner image tag
+      # (Decision 3).
+      - TURNIP_RUNNER_IMAGE=ghcr.io/ivanvc/turnip-runner:latest

@@ -1,0 +1,11 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: turnip-server
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: turnip-server
+subjects:
+  - kind: ServiceAccount
+    name: turnip-server

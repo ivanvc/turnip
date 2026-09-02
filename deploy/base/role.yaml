@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: turnip-server
+rules:
+  # internal/jobs/client.go: Create/Delete Runner Jobs.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  # internal/jobs/status.go: list a Job's Pods to diagnose start timeouts.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]

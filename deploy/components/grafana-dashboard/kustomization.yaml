@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# Opt-in packaging of the Grafana dashboard (Requirement 1.6). The
+# generator that turns dashboards/turnip.json into a labeled ConfigMap
+# lives at ../../../dashboards/kustomization.yaml — see the comment there
+# for why (Kustomize's configMapGenerator file-source sandboxing). Opt in
+# by adding this component to an overlay's own kustomization.yaml:
+#
+#   components:
+#     - ../../components/grafana-dashboard
+
+resources:
+  - ../../../dashboards

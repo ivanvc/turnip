@@ -35,3 +35,11 @@ jobs:
         run: |
           cd proto && buf generate
           git diff --exit-code
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+
+      - name: Validate Kustomize manifests
+        run: |
+          kubectl kustomize deploy/overlays/kind | \
+            go run github.com/yannh/kubeconform/cmd/kubeconform@latest -strict -summary

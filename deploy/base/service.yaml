@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: turnip-server
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: turnip-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: grpc
+      port: 9090
+      targetPort: grpc

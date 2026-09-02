@@ -31,6 +31,7 @@ func testParams() OperationParams {
 		ServerAddr:  "server.turnip.svc:9443",
 		ExtraArgs:   []string{"--quiet"},
 		PlanData:    []byte("plan-bytes"),
+		RunnerImage: "ghcr.io/ivanvc/turnip-runner:test",
 	}
 }
 
@@ -106,6 +107,17 @@ func TestBuildJob_SharedVolumeMountedByBothContainers(t *testing.T) {
 
 	assert.Contains(t, job.Spec.Template.Spec.InitContainers[0].VolumeMounts, corev1.VolumeMount{Name: toolsVolumeName, MountPath: toolsMountPath})
 	assert.Contains(t, job.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: toolsVolumeName, MountPath: toolsMountPath})
+}
+
+func TestBuildJob_RunnerImageFromParams(t *testing.T) {
+	params := testParams()
+	params.RunnerImage = "ghcr.io/ivanvc/turnip-runner:v1.2.3"
+
+	job, err := BuildJob(testProject("helmfile"), params)
+	require.NoError(t, err)
+
+	require.Len(t, job.Spec.Template.Spec.Containers, 1)
+	assert.Equal(t, params.RunnerImage, job.Spec.Template.Spec.Containers[0].Image)
 }
 
 func TestBuildJob_UnrecognizedVersionReturnsErrorAndNoJob(t *testing.T) {
