@@ -76,6 +76,17 @@ dockers:
 checksum:
   name_template: "checksums.txt"
 
+# turnip-install.yaml is rendered by .github/workflows/release.yml (a
+# `kubectl kustomize deploy/overlays/release` render, tags substituted
+# for this release) *before* goreleaser runs, into a directory outside
+# goreleaser's own dist/ — goreleaser cleans dist/ at the start of every
+# run, which would otherwise delete a file placed there ahead of time.
+# This is the artifact docs/deployment.md's primary "install a release"
+# path points at.
+release:
+  extra_files:
+    - glob: dist-manifests/turnip-install.yaml
+
 changelog:
   sort: asc
   use: github

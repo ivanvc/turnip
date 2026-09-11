@@ -21,6 +21,18 @@ jobs:
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
+      - name: Install kubectl
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+
+      - name: Render install manifest
+        run: |
+          sed -i \
+            -e "s/newTag: latest/newTag: ${GITHUB_REF_NAME}/" \
+            -e "s/turnip-runner:latest/turnip-runner:${GITHUB_REF_NAME}/" \
+            deploy/overlays/release/kustomization.yaml
+          mkdir -p dist-manifests
+          kubectl kustomize deploy/overlays/release > dist-manifests/turnip-install.yaml
+
       - name: Log in to ghcr.io
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:

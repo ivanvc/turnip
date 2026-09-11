@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Rendered by .github/workflows/release.yml into a single YAML file
+# attached to every GitHub Release (as turnip-install.yaml) — CI
+# substitutes the `:latest` placeholders below for the real release tag
+# before rendering. This overlay is a render source, not something an
+# operator is expected to run `kubectl apply -k` against directly (though
+# nothing stops it — it's just base plus correctly-tagged images).
+#
+# It deliberately adds nothing else: TURNIP_REDIS_ADDR and
+# TURNIP_GITHUB_APP_ID have no sane cross-environment default (base's own
+# comment explains why), so the rendered manifest ships without them —
+# `kubectl apply -f` this and then `kubectl set env deployment/turnip-server
+# TURNIP_REDIS_ADDR=... TURNIP_GITHUB_APP_ID=...` (see docs/deployment.md's
+# "Quick install" section). Most operators are better served by
+# docs/deployment.md's primary "With Kustomize" section instead — a
+# remote-base reference plus a configMapGenerator/secretGenerator of their
+# own, generating everything (including the credentials Secret) in one
+# `kubectl apply -k .` with no imperative follow-up commands at all.
+
+resources:
+  - ../../base
+
+images:
+  - name: ghcr.io/ivanvc/turnip-server
+    newTag: latest
+
+configMapGenerator:
+  - name: turnip-server-config
+    behavior: merge
+    literals:
+      - TURNIP_RUNNER_IMAGE=ghcr.io/ivanvc/turnip-runner:latest

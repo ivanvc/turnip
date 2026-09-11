@@ -128,6 +128,61 @@ transformer (Decision 1) — same overlay-level source of truth, enforced
 by the config now refusing to start without it rather than by a
 code-level fallback.
 
+## Decision 4 (amendment): a downloadable, per-release install manifest
+
+Added after this slice was first marked complete, per user feedback:
+`docs/deployment.md` (the `ha-validation` slice's Requirement 2) was
+telling operators to hand-copy `deploy/overlays/kind/` — a local-testing
+overlay pinning a `dev` image tag — as if it were a production starting
+point. Every other Kubernetes project's install story is "download one
+YAML from the release, `kubectl apply -f` it"; turnip's Kustomize
+base/overlay split (Decision 1) is the right shape for *authoring*
+per-environment manifests, but isn't by itself an install artifact an
+operator can point `kubectl apply -f` at without cloning the repo first.
+
+**Resolution**: a new `deploy/overlays/release/kustomization.yaml` —
+`deploy/base` plus the `images:`/`TURNIP_RUNNER_IMAGE` overrides Decision
+1 already established, both left as literal `:latest` placeholders. A new
+`.github/workflows/release.yml` step ("Render install manifest"), running
+*before* the `goreleaser-action` step, `sed`-substitutes those
+placeholders for `${GITHUB_REF_NAME}` (the pushed tag) and renders the
+whole overlay via `kubectl kustomize` into `dist-manifests/turnip-install.yaml`
+— deliberately a directory other than goreleaser's own `dist/`, since
+goreleaser cleans that directory at the start of every run (confirmed
+empirically: a file placed in `dist/` ahead of time doesn't survive to the
+upload step). `.goreleaser.yaml` gained a `release.extra_files:` entry
+pointing at that path, so goreleaser uploads it as a GitHub Release asset
+alongside the checksums file — no new dependency, this is goreleaser's
+own documented mechanism for attaching arbitrary files to a release.
+
+The substitution step needed two separate `sed` rules, not one: `images:`
+transformer's `newTag: latest` (space after the colon, a YAML
+`key: value` pair) and the `TURNIP_RUNNER_IMAGE` ConfigMap literal's
+`turnip-runner:latest` (no space, an image-reference string) don't share
+a common substring — a single `s/:latest/:$TAG/` pattern silently missed
+the first one entirely, caught only by rendering and inspecting the
+output before wiring it into CI, not by `goreleaser check`'s config-schema
+validation (which has no way to know what the rendered YAML *contains*).
+
+`docs/deployment.md`'s primary install path is now
+`kubectl apply -f https://github.com/ivanvc/turnip/releases/download/vX.Y.Z/turnip-install.yaml`
+(or `/releases/latest/download/...` — GitHub's own stable "latest
+release" URL convention) followed by `kubectl set env` for the two
+values Requirement 1.3 deliberately leaves unset
+(`TURNIP_REDIS_ADDR`/`TURNIP_GITHUB_APP_ID`) and creating the credentials
+Secret. `deploy/overlays/kind/` is now documented purely as a local-dev
+example; hand-maintaining a live overlay is demoted to an explicitly
+opt-in "Alternative" for GitOps users, with `deploy/overlays/release/` as
+its suggested starting point.
+
+*Alternative considered*: keep `turnip-install.yaml` builds a no-op
+(since goreleaser also pushes `:latest`-tagged images, an operator could
+in principle build their own manifest referencing `:latest` and never
+touch a version at all). *Rejected* — that's exactly the moving-target
+problem this slice's own Requirement 2 ("a real, reproducible version tag
+... not a moving `:latest` tag") already ruled out for the images
+themselves; the install manifest shouldn't reintroduce it one level up.
+
 ## Package Layout
 
 ```

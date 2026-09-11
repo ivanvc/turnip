@@ -288,6 +288,113 @@ task 1.3 lands.
     (0 issues), and `kubectl kustomize deploy/overlays/kind` confirmed
     `TURNIP_RUNNER_IMAGE` resolves to the real default value end-to-end.
 
+- [x] 10. Amendment - Downloadable per-release install manifest (Decision 4)
+  - User feedback: `docs/deployment.md` was telling operators to
+    hand-copy the local-testing `kind` overlay as if it were a production
+    starting point, instead of shipping a ready-to-apply release
+    artifact.
+  - [x] 10.1 Create `deploy/overlays/release/kustomization.yaml`
+    - `deploy/base` + `images:`/`TURNIP_RUNNER_IMAGE` overrides, both
+      left as literal `:latest` placeholders for CI to substitute
+    - Verified: `kubectl kustomize deploy/overlays/release` builds
+      cleanly with no `TURNIP_REDIS_ADDR`/`TURNIP_GITHUB_APP_ID` in the
+      rendered ConfigMap (as intended — Requirement 1.3)
+    - _Requirements: 1.2, 1.3_
+  - [x] 10.2 Amend `.github/workflows/release.yml`
+    - New "Render install manifest" step (needs `kubectl`, so
+      `azure/setup-kubectl` added here too), running *before* the
+      `goreleaser-action` step: `sed`-substitutes the two `:latest`
+      placeholders for `${GITHUB_REF_NAME}`, then `kubectl kustomize
+      deploy/overlays/release > dist-manifests/turnip-install.yaml`
+    - Discovered by testing: a single `sed 's/:latest/:$TAG/'` pattern
+      only matches the `TURNIP_RUNNER_IMAGE` literal
+      (`turnip-runner:latest`, no space) — it silently misses the
+      `images:` transformer's `newTag: latest` (space after the colon),
+      leaving the Server's own image tag un-substituted. Needed two
+      separate `sed` rules; caught by actually rendering and grepping the
+      output, not by config validation alone
+    - `dist-manifests/` (not goreleaser's own `dist/`) — goreleaser
+      cleans `dist/` at the start of every run, confirmed empirically,
+      which would silently delete a file placed there ahead of time
+    - _Requirements: 2.1, 2.3_
+  - [x] 10.3 Amend `.goreleaser.yaml`
+    - Added `release.extra_files: [{glob: dist-manifests/turnip-install.yaml}]`
+      — goreleaser's own documented mechanism for attaching arbitrary
+      files to a release, no new dependency
+    - `goreleaser check` validates the schema; the actual upload only
+      happens on a real publish (a live GitHub Release), which
+      `--snapshot`/`--skip=publish` both skip — verified as far as this
+      environment allows (file exists at the exact glob path by the time
+      goreleaser would run; config schema valid) without a real release
+    - _Requirements: 2.1, 2.3_
+  - [x] 10.4 Add `.gitignore`
+    - None existed; added one covering `/bin/`, `/dist/`, `/dist-manifests/`
+      — the latter two are new build-artifact directories this amendment
+      introduces, and `/bin/` was an existing gap worth closing while
+      touching this
+  - [x] 10.5 Rewrite `docs/deployment.md`
+    - New primary "Installing a release" section:
+      `kubectl apply -f https://github.com/ivanvc/turnip/releases/download/vX.Y.Z/turnip-install.yaml`
+      (or `/releases/latest/download/...`), then `kubectl set env` for
+      `TURNIP_REDIS_ADDR`/`TURNIP_GITHUB_APP_ID` and creating the
+      credentials Secret
+    - `deploy/overlays/kind/` demoted to a "Local development" section,
+      explicitly not a production starting point; hand-maintaining a live
+      overlay demoted to an opt-in "Alternative" section (kept, not
+      deleted — legitimate for GitOps users), pointing at
+      `deploy/overlays/release/` as its starting point, with the
+      "values an overlay must supply" reference table moved there
+    - Verified the `kubectl apply -k https://github.com/...?ref=...`
+      remote-Kustomize syntax against a known-public repo
+      (`kubernetes-sigs/kustomize`) before publishing it, rather than
+      guessing the URL form
+    - Confirmed the public repo really is `github.com/ivanvc/turnip`
+      (matching the Go module path and every `ghcr.io` image name)
+      despite this working copy's `git remote origin` pointing at a
+      differently-named repo — asked rather than guessed, given
+      contradicting evidence
+    - _Requirements: 2.1, 2.2_
+
+- [x] 11. Amendment - Declarative Kustomize install, replacing imperative post-apply steps
+  - User feedback, pointing at `deploy/base/deployment.yaml`'s
+    `secretKeyRef`/`configMapRef` lines: task 10's "Quick install" flow
+    still told operators to `kubectl set env`/`kubectl create secret`
+    *after* applying — imperative patch-on-top, not a declarative install.
+    Asked for the pattern
+    [nfs-subdir-external-provisioner uses](https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner#with-kustomize):
+    a user-authored `kustomization.yaml` referencing the project's base as
+    a remote resource, generating everything (including the credentials
+    Secret) in one `kubectl apply -k .`.
+  - [x] 11.1 Verified the exact mechanics before documenting them
+    - Confirmed `kubectl kustomize`'s double-slash remote-base syntax
+      (`github.com/OWNER/REPO//path?ref=TAG`) against a known-public repo
+    - Built and rendered the full worked example locally (a scratch
+      overlay referencing `deploy/base` with `configMapGenerator`
+      `behavior: merge` + a `secretGenerator` using `files:` for both the
+      webhook secret and the private key) — confirmed Kustomize's
+      generator-hash-suffix mechanism automatically rewrites the base's
+      static `secretKeyRef`/`configMapRef` names to match what gets
+      generated, so nothing needs hand-patching; validated the rendered
+      output with `kubeconform` (7/7 resources valid, including the new
+      Secret)
+  - [x] 11.2 Rewrote `docs/deployment.md`'s install section
+    - New `## Installing turnip` with two subsections: `### With
+      Kustomize (recommended)` (the four-step worked example above,
+      crediting nfs-subdir-external-provisioner's docs as the pattern
+      this follows) and `### Quick install (single file)` (task 10's
+      original `turnip-install.yaml` + imperative-command flow, kept as a
+      documented option for anyone who'd rather not write Kustomize, but
+      no longer the primary recommendation)
+    - Removed the now-redundant "Alternative: maintain your own overlay"
+      section entirely (task 10.5) — superseded by the new primary
+      section, which covers the same ground more thoroughly
+    - _Requirements: 2.1, 2.2_
+  - [x] 11.3 Fixed the now-stale cross-reference inside
+    `deploy/overlays/release/kustomization.yaml`'s own comment (pointed at
+    the deleted "Alternative" section) and `docs/configuration.md`'s
+    cross-reference (pointed at the renamed "Installing a release"
+    heading)
+
 ## Notes
 
 - No new Go dependency beyond what's already in `go.mod` — `goreleaser` is

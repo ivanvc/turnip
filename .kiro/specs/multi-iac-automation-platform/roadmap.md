@@ -19,7 +19,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 8 | Structured Logging | `structured-logging` | Complete | Slice 6 |
 | 9 | Metrics & Health Endpoints | `metrics` | Complete | Slice 6 |
 | 10 | Deployment: Kustomize & Release Images | `deployment-kustomize` | Complete | Slices 6, 9 |
-| 11 | HA Validation & Documentation | `ha-validation` | Not Started | Slices 6, 9, 10 |
+| 11 | HA Validation & Documentation | `ha-validation` | Complete | Slices 6, 9, 10 |
 
 ## Slice Details
 
