@@ -319,17 +319,16 @@ wiring, then tests (unit, then property).
 
 - [x] 22. Stop gating `version` on an exhaustive allowlist
   - [x] 22.1 Rewrite `internal/jobs/versions.go`'s validation
-    - User-flagged in review, while scoping turnip's first real external
-      adoption (a Helmfile-only consumer pinned to a version nowhere near
-      `toolImages["helmfile"].versions`' pre-1.0 entries): "we're not
-      baking the binaries in our image, but we're limiting it in our
-      code" — `resolveVersion` required `slices.Contains(ti.versions,
-      requestedVersion)`, so adopting any vendor release turnip hadn't
-      already hardcoded still needed a turnip code change and redeploy,
-      contradicting Requirement 8's own user story ("turnip never lags
-      behind a tool's latest release the way a bundled-binary approach
-      would") — see design.md's new "Version validation" section for the
-      full reconciliation and the alternative considered
+    - Found in design review: `resolveVersion` required
+      `slices.Contains(ti.versions, requestedVersion)`, so adopting any
+      vendor-published release turnip hadn't already hardcoded into
+      `toolImages[tool].versions` still needed a turnip code change and
+      redeploy — contradicting Requirement 8's own user story ("turnip
+      never lags behind a tool's latest release the way a bundled-binary
+      approach would") and reintroducing, one layer up, exactly the
+      release-cadence bottleneck the per-tool initContainer/vendor-image
+      design exists to avoid — see design.md's new "Version validation"
+      section for the full reconciliation and the alternative considered
     - Replaced the `slices.Contains` membership check with
       `versionPattern`, a permissive semver-shaped regex
       (`^[0-9]+\.[0-9]+\.[0-9]+(-[…])?(\+[…])?$`) — any well-formed
