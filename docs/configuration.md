@@ -40,9 +40,17 @@ every problem in one pass, not one-at-a-time.
 
 - **`version`**: pins which release of the tool binary the Runner
   provisions (e.g. `terraform 1.9.5`, not whatever `:latest` happens to
-  be). Omit it to get the current default. An unrecognized value is
-  rejected at Job-build time with the list of versions turnip actually
-  ships images for.
+  be). Omit it to get the current default. turnip keeps no list of
+  "supported" versions to validate against — any value that looks like a
+  real version (roughly semver: `1.9.5`, `0.170.1`, `1.7.4-rc1`) is
+  accepted and passed straight through to the vendor's own per-version
+  image, so a tool's new release works the moment the vendor publishes it,
+  with no turnip release required. Only obviously malformed input (a
+  floating tag like `latest`, a typo, stray whitespace) is rejected at
+  Job-build time; if the value is well-formed but the vendor doesn't
+  actually publish that tag, the Job fails when its initContainer can't
+  pull the image — reported as a normal operation failure, not caught
+  ahead of time.
 - **`environment`** (Helmfile only): passed through as helmfile's own
   `--environment` flag.
 

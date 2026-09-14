@@ -475,10 +475,10 @@ type OperationParams struct {
 }
 ```
 
-`BuildJob` resolves `project.Config["version"]` against the per-tool
-table below (Requirement 8.3-8.5) *before* constructing anything else,
-returning an error immediately on an unrecognized version — so a bad
-config never gets as far as a half-built Job spec.
+`BuildJob` resolves `project.Config["version"]` via `resolveVersion`
+(Requirement 8.3-8.5) *before* constructing anything else, returning an
+error immediately on a malformed version — so a bad config never gets as
+far as a half-built Job spec.
 
 | Tool | Vendor image | Binary path | Default version |
 |---|---|---|---|
@@ -490,6 +490,45 @@ config never gets as far as a half-built Job spec.
 section, which already verified these image/path pairs by pulling and
 inspecting each one — re-verify at implementation time per that section's
 own caveat that a vendor could restructure their image layout since.)
+
+### Version validation
+
+`resolveVersion` checks an explicit `version` against `versionPattern`, a
+permissive semver-shaped regex (`^[0-9]+\.[0-9]+\.[0-9]+(-[…])?(\+[…])?$`)
+— it does **not** require membership in `toolImage.versions`. That field
+holds a handful of known-good *example* versions, used only to pick the
+default when `version` is omitted (Requirement 8.5) and as a hint in the
+error message; it was never meant to be exhaustive.
+
+This reconciles a self-contradiction between Requirement 8's own user
+story — *"so that turnip never lags behind a tool's latest release the
+way a bundled-binary approach would"* — and its original acceptance
+criteria 8.3/8.4 ("validate against a known-good list" / reject anything
+"not recognized"), which this slice's first implementation took literally
+as an exhaustive Go-slice allowlist. That reading meant adopting any
+vendor release turnip hadn't already hardcoded still required a turnip
+code change and redeploy — recreating, one layer up, exactly the
+release-cadence bottleneck the global design's "Tool Binaries via
+Per-Tool initContainers" section (line 33) explicitly rejected bundled
+binaries and version managers to avoid. User-flagged in review: "we're
+not baking the binaries in our image, but we're limiting it in our code."
+
+**Alternative considered**: verify the requested tag actually exists in
+the vendor's registry before creating the Job (the most literal reading
+of "recognized"). Rejected because it adds a network dependency and
+latency to the Server's webhook-handling path, plus registry-specific
+auth/API handling per vendor (Docker Hub vs. `ghcr.io` differ) — real
+value, but a bigger change than this fix warrants; a malformed-tag
+failure surfaces clearly enough via the initContainer's `ImagePullBackOff`
+and `Client.Status` (task 20) either way.
+
+**Consequence**: a well-formed but nonexistent version (e.g. a typo'd
+patch number, or a real version the vendor hasn't published yet) is no
+longer caught at webhook time — it's only caught when the initContainer
+fails to pull the image, reported as a normal operation failure rather
+than a same-request PR comment. Traded deliberately: the whole point of
+per-tool vendor images is that turnip has no authoritative list of what
+actually exists to validate against without asking the registry.
 
 The Job's Pod spec: one initContainer per Requirement 8.1
 (`command: ["sh", "-c", "cp <binary path> /tools/<tool>"]`, mounting an

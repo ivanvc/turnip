@@ -317,6 +317,57 @@ wiring, then tests (unit, then property).
       and the real `golangci-lint` v2 (see `CLAUDE.md`) all pass — all
       confirmed green
 
+- [x] 22. Stop gating `version` on an exhaustive allowlist
+  - [x] 22.1 Rewrite `internal/jobs/versions.go`'s validation
+    - User-flagged in review, while scoping turnip's first real external
+      adoption (a Helmfile-only consumer pinned to a version nowhere near
+      `toolImages["helmfile"].versions`' pre-1.0 entries): "we're not
+      baking the binaries in our image, but we're limiting it in our
+      code" — `resolveVersion` required `slices.Contains(ti.versions,
+      requestedVersion)`, so adopting any vendor release turnip hadn't
+      already hardcoded still needed a turnip code change and redeploy,
+      contradicting Requirement 8's own user story ("turnip never lags
+      behind a tool's latest release the way a bundled-binary approach
+      would") — see design.md's new "Version validation" section for the
+      full reconciliation and the alternative considered
+    - Replaced the `slices.Contains` membership check with
+      `versionPattern`, a permissive semver-shaped regex
+      (`^[0-9]+\.[0-9]+\.[0-9]+(-[…])?(\+[…])?$`) — any well-formed
+      version is accepted regardless of whether it appears in
+      `toolImage.versions`, which now serves only to pick the default
+      (Requirement 8.5) and as an error-message hint
+    - `UnrecognizedVersionError`'s `Known []string` field renamed to
+      `Examples []string` and its message reworded to make clear these are
+      illustrative, not exhaustive
+    - Amended global-spec-adjacent wording: `docs/configuration.md`'s
+      `config` map section, and this slice's Requirement 8.3/8.4
+      (`requirements.md`) — both previously described a "known-good list"
+      / "recognized" check in a way that implied an allowlist
+    - _Requirements: 8.3, 8.4, 8.5 (reinterpreted — see design.md)_
+
+  - [x] 22.2 Update tests
+    - `versions_test.go`: `TestResolveVersion_UnrecognizedVersion` renamed
+      to `TestResolveVersion_MalformedVersionIsRejected` and its case
+      changed from `"0.0.1-does-not-exist"` (which is actually valid
+      semver with a prerelease tag, so it would have silently started
+      passing under the new logic) to a table of genuinely malformed
+      values (`not-a-version`, `latest`, `v1.9.5`, `1.x`, `1.9`); added
+      `TestResolveVersion_WellFormedVersionNotInExampleListIsAccepted`,
+      the crux test — a version not present in `toolImage.versions` for
+      any tool still resolves successfully
+    - `build_test.go`: added
+      `TestBuildJob_VersionNotInExampleListStillBuilds`, the same
+      assertion at the `BuildJob` level (the actual public entry point)
+    - `TestBuildJob_UnrecognizedVersionReturnsErrorAndNoJob` (pre-existing,
+      used `"not-a-real-version"`) needed no change — already malformed
+      under the new regex too
+    - _Requirements: (test coverage for 22.1)_
+
+  - [x] 22.3 Checkpoint - Full re-verification
+    - `go build ./...`, `go test -race ./...` (all packages, including
+      `internal/jobs`'s existing property tests, unaffected), `gofmt -l .`
+      clean, and the real `golangci-lint` v2 (see `CLAUDE.md`) both pass
+
 ## Notes
 
 - `k8s.io/api`, `k8s.io/apimachinery`, and `k8s.io/client-go` are already
