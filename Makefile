@@ -1,8 +1,15 @@
-.PHONY: build test test-load test-kind lint fmt proto-gen clean
+.PHONY: build docker-build docker-push test test-load test-kind lint fmt proto-gen clean
 
 BIN_DIR := bin
 SERVER_BIN := $(BIN_DIR)/server
 RUNNER_BIN := $(BIN_DIR)/runner
+
+# DOCKER_REGISTRY is a single repo path (not a namespace) -- docker-build/
+# docker-push distinguish server vs. runner by tag prefix, not by repo
+# name, so a non-default registry should follow that same convention.
+# Override per-invocation, e.g. `make docker-push DOCKER_REGISTRY=ghcr.io/ivanvc/turnip`.
+DOCKER_REGISTRY ?= docker.io/ivan/turnip
+TAG ?= $(shell git rev-parse --short=7 HEAD)
 
 build: $(SERVER_BIN) $(RUNNER_BIN)
 
@@ -11,6 +18,14 @@ $(SERVER_BIN):
 
 $(RUNNER_BIN):
 	go build -o $(RUNNER_BIN) ./cmd/runner
+
+docker-build:
+	docker build -f build/server/Dockerfile -t $(DOCKER_REGISTRY):server-$(TAG) .
+	docker build -f build/runner/Dockerfile -t $(DOCKER_REGISTRY):runner-$(TAG) .
+
+docker-push: docker-build
+	docker push $(DOCKER_REGISTRY):server-$(TAG)
+	docker push $(DOCKER_REGISTRY):runner-$(TAG)
 
 test:
 	go test -race ./...
