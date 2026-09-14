@@ -27,12 +27,34 @@ func TestResolveVersion_EmptyFallsBackToDefault(t *testing.T) {
 	}
 }
 
-func TestResolveVersion_UnrecognizedVersion(t *testing.T) {
-	_, err := resolveVersion("terraform", "0.0.1-does-not-exist")
-	require.Error(t, err)
-	var unrecognized *UnrecognizedVersionError
-	require.ErrorAs(t, err, &unrecognized)
-	assert.Equal(t, "terraform", unrecognized.Tool)
+func TestResolveVersion_MalformedVersionIsRejected(t *testing.T) {
+	for _, malformed := range []string{"not-a-version", "latest", "v1.9.5", "1.x", "1.9"} {
+		t.Run(malformed, func(t *testing.T) {
+			_, err := resolveVersion("terraform", malformed)
+			require.Error(t, err)
+			var unrecognized *UnrecognizedVersionError
+			require.ErrorAs(t, err, &unrecognized)
+			assert.Equal(t, "terraform", unrecognized.Tool)
+		})
+	}
+}
+
+// TestResolveVersion_WellFormedVersionNotInExampleListIsAccepted is the
+// crux of the fix: turnip must never require its own code/release change
+// just to adopt a tool version its vendor already published (Requirement
+// 8's user story) — resolveVersion must not gate on membership in
+// toolImage.versions, only on looking like a real version.
+func TestResolveVersion_WellFormedVersionNotInExampleListIsAccepted(t *testing.T) {
+	for tool, ti := range toolImages {
+		t.Run(tool, func(t *testing.T) {
+			const notInList = "9.9.9"
+			require.NotContains(t, ti.versions, notInList)
+
+			version, err := resolveVersion(tool, notInList)
+			require.NoError(t, err)
+			assert.Equal(t, notInList, version)
+		})
+	}
 }
 
 func TestResolveVersion_UnrecognizedTool(t *testing.T) {

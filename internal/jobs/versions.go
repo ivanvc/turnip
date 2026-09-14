@@ -2,8 +2,16 @@ package jobs
 
 import (
 	"fmt"
-	"slices"
+	"regexp"
 )
+
+// versionPattern is a permissive semver-shaped check ("1.9.5",
+// "0.170.1", "1.7.4-rc1") — not a vendor-specific grammar. It exists to
+// reject obviously-wrong input (typos, a floating tag like "latest",
+// stray whitespace) with a fast, clear error, not to enumerate every
+// version a vendor has ever published. See toolImage.versions below for
+// why this replaced an exhaustive allowlist.
+var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
 
 // toolImage describes how to provision one IaC tool's CLI binary onto a
 // Runner Job via an initContainer.
@@ -14,9 +22,18 @@ type toolImage struct {
 	// binaryPath is where the tool's CLI binary lives inside that vendor
 	// image, to be copied onto the shared volume.
 	binaryPath string
-	// versions is the known-good list for this tool, in preference
-	// order; the first entry is the documented default used when a
-	// Project's config specifies no version (Requirement 8.5).
+	// versions are known-good example versions for this tool, in
+	// preference order; the first entry is the documented default used
+	// when a Project's config specifies no version (Requirement 8.5).
+	// This is NOT an exhaustive allowlist: Requirement 8's own user story
+	// is that turnip must never lag behind a tool's latest release the
+	// way a bundled-binary approach would, so resolveVersion accepts any
+	// explicit version matching versionPattern, whether or not it
+	// appears here — gating on membership in this list would just
+	// recreate that same bottleneck one layer up (turnip-side code
+	// changes still gating adoption of a real vendor release), which
+	// defeats the vendor-image initContainer design entirely. See
+	// grpc-runner/design.md's "Version validation" section.
 	//
 	// Reproduced from the global design's "Tool Binary Provisioning"
 	// section; re-verify by pulling and inspecting each vendor image at
@@ -52,21 +69,35 @@ func (e *UnrecognizedToolError) Error() string {
 	return fmt.Sprintf("jobs: unrecognized tool %q", e.Tool)
 }
 
-// UnrecognizedVersionError reports a version not in the given tool's
-// known-good list (Requirement 8.4).
+// UnrecognizedVersionError reports a version that isn't syntactically a
+// plausible version for the given tool (Requirement 8.4). It is not a
+// report of "not in our list" — turnip keeps no exhaustive per-tool
+// version list; see toolImage.versions.
 type UnrecognizedVersionError struct {
 	Tool, Version string
-	Known         []string
+	// Examples are known-good example versions for this tool, included
+	// in the error message purely as a hint of the expected shape — not
+	// the set of values that would have been accepted.
+	Examples []string
 }
 
 func (e *UnrecognizedVersionError) Error() string {
-	return fmt.Sprintf("jobs: unrecognized %s version %q (known versions: %v)", e.Tool, e.Version, e.Known)
+	return fmt.Sprintf(
+		"jobs: %q doesn't look like a valid %s version (expected roughly semver, e.g. %v)",
+		e.Version, e.Tool, e.Examples,
+	)
 }
 
-// resolveVersion returns the version to provision for tool: requestedVersion
-// itself if it's in that tool's known-good list, the tool's documented
-// default if requestedVersion is empty, or an error identifying the
-// unrecognized tool or version otherwise (Requirement 8.3-8.5).
+// resolveVersion returns the version to provision for tool: the tool's
+// documented default if requestedVersion is empty, requestedVersion
+// itself if it's syntactically a plausible version for that tool, or an
+// error identifying the unrecognized tool or malformed version otherwise
+// (Requirement 8.3-8.5). It deliberately does not require
+// requestedVersion to match any specific enumerated version — turnip has
+// no fixed set of "supported" versions to gate on, only vendor images it
+// asks for by tag; if a vendor doesn't actually publish that tag, the Job
+// fails when its initContainer can't pull the image, surfaced as a normal
+// operation failure rather than caught here.
 func resolveVersion(tool, requestedVersion string) (string, error) {
 	ti, ok := toolImages[tool]
 	if !ok {
@@ -77,9 +108,9 @@ func resolveVersion(tool, requestedVersion string) (string, error) {
 		return ti.versions[0], nil
 	}
 
-	if slices.Contains(ti.versions, requestedVersion) {
-		return requestedVersion, nil
+	if !versionPattern.MatchString(requestedVersion) {
+		return "", &UnrecognizedVersionError{Tool: tool, Version: requestedVersion, Examples: ti.versions}
 	}
 
-	return "", &UnrecognizedVersionError{Tool: tool, Version: requestedVersion, Known: ti.versions}
+	return requestedVersion, nil
 }

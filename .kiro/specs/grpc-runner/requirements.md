@@ -278,10 +278,15 @@ tool's latest release the way a bundled-binary approach would.
 2. THE Runner's main container SHALL be able to invoke the tool binary
    from that shared volume without any additional configuration
 3. WHERE a Project's config specifies a `version`, THE Job builder SHALL
-   validate it against a known-good list for that Project's tool before
-   creating the Job
-4. IF a specified `version` is not recognized for that tool, THEN THE Job
-   builder SHALL return an error and SHALL NOT create the Job
+   validate that it is syntactically a plausible version for that
+   Project's tool before creating the Job — not membership in an
+   enumerated allowlist, which would reintroduce turnip's own
+   release/rebuild cadence as a bottleneck to adopting a tool's latest
+   release, defeating this requirement's own user story (see
+   grpc-runner/design.md's "Version validation" section)
+4. IF a specified `version` is not syntactically plausible for that tool,
+   THEN THE Job builder SHALL return an error and SHALL NOT create the
+   Job
 5. IF a Project's config specifies no `version`, THEN THE Job builder
    SHALL use a documented default version for that Project's tool
 

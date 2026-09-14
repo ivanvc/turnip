@@ -140,3 +140,20 @@ func TestBuildJob_ExplicitVersionSelectsMatchingImage(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, job.Spec.Template.Spec.InitContainers[0].Image, wantVersion)
 }
+
+// TestBuildJob_VersionNotInExampleListStillBuilds is the fix for a real
+// gap: a Project must be able to request any well-formed version its
+// tool's vendor actually publishes, not just one of turnip's own
+// hardcoded examples — otherwise adopting a new release still requires a
+// turnip code change, exactly the bundled-binary bottleneck Requirement
+// 8's initContainer design exists to avoid.
+func TestBuildJob_VersionNotInExampleListStillBuilds(t *testing.T) {
+	project := testProject("terraform")
+	const notInList = "9.9.9"
+	require.NotContains(t, toolImages["terraform"].versions, notInList)
+	project.Config = map[string]string{"version": notInList}
+
+	job, err := BuildJob(project, testParams())
+	require.NoError(t, err)
+	assert.Contains(t, job.Spec.Template.Spec.InitContainers[0].Image, notInList)
+}
