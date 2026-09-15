@@ -212,6 +212,13 @@ merge without leaving the PR.
 4. THE package SHALL NOT decide when a check run transitions between
    `queued`/`in_progress`/`completed` — the caller (Slice 6) supplies the
    desired `CheckRunOptions` for each call
+5. WHERE a call supplies none of title, summary or detail text, THE
+   package SHALL omit the check run's `output` object entirely; WHERE a
+   call supplies any of them, THE package SHALL always send both `title`
+   and `summary`, deriving them from the check run's own name when the
+   caller left them unset — GitHub's `output` is optional but not
+   partially populatable, and rejects the whole call with
+   `422 Invalid request: "summary", "title" weren't supplied`
 
 ### Requirement 7: Consolidated PR Comment Formatting and Posting
 

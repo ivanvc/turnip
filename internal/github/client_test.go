@@ -128,6 +128,49 @@ func TestClient_CreateCheckRun(t *testing.T) {
 	assert.Equal(t, "in_progress", gotBody["status"])
 }
 
+// The four tests below pin GitHub's all-or-nothing `output` contract:
+// the object may be omitted, but if present it must carry both `title`
+// and `summary`. Violating it fails the whole request with
+// `422 ... "summary", "title" weren't supplied`, which is what every
+// check run turnip created used to hit.
+func TestToCheckRunOutput_OmittedWhenNothingToReport(t *testing.T) {
+	// execute.go's creation call: name/headSHA/status only.
+	assert.Nil(t, toCheckRunOutput(CheckRunOptions{Name: "turnip/web/diff", HeadSHA: "abc123", Status: "in_progress"}))
+}
+
+func TestToCheckRunOutput_TextOnlyStillSuppliesRequiredFields(t *testing.T) {
+	// sweep.go's timeout update and execute.go's job-failure update.
+	out := toCheckRunOutput(CheckRunOptions{Name: "turnip/web/diff", Status: "completed", Conclusion: "failure", Text: "boom"})
+	require.NotNil(t, out)
+	assert.Equal(t, "turnip/web/diff", out.GetTitle(), "falls back to the check run's name")
+	assert.NotEmpty(t, out.GetSummary())
+	assert.Equal(t, "boom", out.GetText())
+}
+
+func TestToCheckRunOutput_SummaryWithoutTitleGetsATitle(t *testing.T) {
+	// result.go's final-result update: summary and text, no title.
+	out := toCheckRunOutput(CheckRunOptions{Name: "turnip/web/diff", Status: "completed", Summary: "1 to change", Text: "diff output"})
+	require.NotNil(t, out)
+	assert.Equal(t, "turnip/web/diff", out.GetTitle())
+	assert.Equal(t, "1 to change", out.GetSummary())
+}
+
+func TestClient_CreateCheckRun_OmitsEmptyOutputObject(t *testing.T) {
+	client, mux := newTestClient(t)
+
+	var gotBody map[string]any
+	mux.HandleFunc("/repos/owner/repo/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		writeJSON(t, w, map[string]int64{"id": 99})
+	})
+
+	_, err := client.CreateCheckRun(t.Context(), "owner", "repo", CheckRunOptions{
+		Name: "turnip/web/diff", HeadSHA: "abc123", Status: "in_progress",
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, gotBody, "output", `an "output": {} with no title/summary is a 422`)
+}
+
 func TestClient_UpdateCheckRun(t *testing.T) {
 	client, mux := newTestClient(t)
 

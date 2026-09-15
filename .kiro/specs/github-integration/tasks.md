@@ -250,6 +250,35 @@ package doc update, then tests (unit, then property).
   design.md's Testing Strategy. Integration testing against real GitHub
   belongs to the global roadmap's Slice 11.
 
+- [x] 22. Fix the check run `output` object: never send it partially populated (2026-09 amendment)
+  - Found in a real deployment, not in tests: every `CreateCheckRun` call
+    failed with `422 Invalid request: "summary", "title" weren't
+    supplied`, so a PR got its result comment but no check run at all.
+    The failure was invisible because server-orchestration's Decision 3
+    treats check-run errors as soft (logged, operation proceeds)
+  - Cause: `toCheckRunOutput` always returned a non-nil
+    `*gh.CheckRunOutput` built from `strPtr` on each field. GitHub's
+    contract is all-or-nothing — `output` is optional, but when present
+    both `title` and `summary` are required — so a caller that set none
+    of them produced `"output": {}`, and one that set only `Text` or only
+    `Summary` produced an object missing a required field
+  - All four call sites were affected, creation simply failed first:
+    `execute.go`'s create (no output fields) and job-failure update
+    (`Text` only), `sweep.go`'s timeout update (`Text` only), and
+    `result.go`'s final-result update (`Summary`+`Text`, no `Title`)
+  - Fixed at the seam rather than in each caller, so no future caller can
+    emit an invalid payload: return `nil` when title, summary and text are
+    all empty; otherwise fill `title` from the check run's own name and
+    `summary` from the title when unset
+  - _Requirements: 6.2, 6.5_
+
+  - [x] 22.1 Tests
+    - `client_test.go`: three direct `toCheckRunOutput` cases, one per
+      real call-site shape (nothing to report, text-only, summary-without-
+      title), plus an end-to-end assertion that a creation request carries
+      no `output` key at all when there is nothing to report
+    - _Requirements: (regression coverage for 22)_
+
 ## Task Dependency Graph
 
 ```json

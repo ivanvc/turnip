@@ -173,12 +173,39 @@ func toUpdateCheckRunOptions(opts CheckRunOptions) gh.UpdateCheckRunOptions {
 	}
 }
 
+// toCheckRunOutput builds the check run's optional `output` object.
+//
+// GitHub's contract is all-or-nothing: `output` may be omitted entirely,
+// but when it is present both `title` and `summary` are required. Sending
+// an output object built only from the fields a caller happened to set —
+// an empty one, or one carrying just `text` — is rejected outright with
+// `422 Invalid request: "summary", "title" weren't supplied`, which took
+// down every check run turnip tried to create. So: omit `output` when
+// there is nothing to report, and otherwise always supply both required
+// fields, falling back to the check run's own name rather than emitting
+// a null.
 func toCheckRunOutput(opts CheckRunOptions) *gh.CheckRunOutput {
+	if opts.Title == "" && opts.Summary == "" && opts.Text == "" {
+		return nil
+	}
+
+	title := firstNonEmpty(opts.Title, opts.Name, "turnip")
+	summary := firstNonEmpty(opts.Summary, title)
+
 	return &gh.CheckRunOutput{
-		Title:   strPtr(opts.Title),
-		Summary: strPtr(opts.Summary),
+		Title:   &title,
+		Summary: &summary,
 		Text:    strPtr(opts.Text),
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func strPtr(s string) *string {
