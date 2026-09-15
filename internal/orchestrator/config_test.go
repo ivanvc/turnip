@@ -69,6 +69,35 @@ func TestConfigFromEnv_RunnerImageRoundTrip(t *testing.T) {
 	assert.Equal(t, "ghcr.io/ivanvc/turnip-runner:v1.2.3", cfg.RunnerImage)
 }
 
+func TestConfigFromEnv_RunnerServiceAccountRoundTrip(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_SERVICE_ACCOUNT": "turnip-runner"}))
+	require.NoError(t, err)
+	assert.Equal(t, "turnip-runner", cfg.RunnerServiceAccount)
+}
+
+func TestConfigFromEnv_RunnerServiceAccountOptional(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(nil))
+	require.NoError(t, err)
+	assert.Empty(t, cfg.RunnerServiceAccount, "unset must not be a missing-variable error")
+}
+
+func TestConfigFromEnv_ServiceAccountFromConfigDefaultsFalse(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(nil))
+	require.NoError(t, err)
+	assert.False(t, cfg.AllowServiceAccountFromConfig)
+}
+
+func TestConfigFromEnv_ServiceAccountFromConfigParsesTrue(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG": "true"}))
+	require.NoError(t, err)
+	assert.True(t, cfg.AllowServiceAccountFromConfig)
+}
+
+func TestConfigFromEnv_ServiceAccountFromConfigInvalidValue(t *testing.T) {
+	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG": "not-a-bool"}))
+	assert.Error(t, err)
+}
+
 func TestConfigFromEnv_MissingRunnerImage(t *testing.T) {
 	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_IMAGE": ""}))
 	require.Error(t, err)

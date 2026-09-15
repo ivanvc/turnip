@@ -109,6 +109,24 @@ func TestBuildJob_SharedVolumeMountedByBothContainers(t *testing.T) {
 	assert.Contains(t, job.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: toolsVolumeName, MountPath: toolsMountPath})
 }
 
+func TestBuildJob_ServiceAccountFromParams(t *testing.T) {
+	params := testParams()
+	params.ServiceAccount = "turnip-runner"
+
+	job, err := BuildJob(testProject("helmfile"), params)
+	require.NoError(t, err)
+	assert.Equal(t, "turnip-runner", job.Spec.Template.Spec.ServiceAccountName)
+}
+
+func TestBuildJob_EmptyServiceAccountLeavesPodOnNamespaceDefault(t *testing.T) {
+	params := testParams()
+	params.ServiceAccount = ""
+
+	job, err := BuildJob(testProject("helmfile"), params)
+	require.NoError(t, err)
+	assert.Empty(t, job.Spec.Template.Spec.ServiceAccountName)
+}
+
 func TestBuildJob_RunnerImageFromParams(t *testing.T) {
 	params := testParams()
 	params.RunnerImage = "ghcr.io/ivanvc/turnip-runner:v1.2.3"

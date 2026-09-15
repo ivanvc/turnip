@@ -60,6 +60,14 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	if !ok {
 		return rejectedResult(t, fmt.Sprintf("tool %q is not supported", t.Project.Tool))
 	}
+
+	// Resolved before any Lock is acquired: a refused ServiceAccount must
+	// not leave a Lock held for an Operation that never runs.
+	serviceAccount, err := resolveServiceAccount(t.Project, o.runnerServiceAccount, o.allowServiceAccountFromConfig)
+	if err != nil {
+		return rejectedResult(t, err.Error())
+	}
+
 	isPlan := t.Operation == p.GetPlanOperation()
 	isApply := t.Operation == p.GetApplyOperation()
 	key := projectKey(repo.Owner, repo.Name, t.Project.Name)
@@ -158,16 +166,17 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	}
 
 	job, err := jobs.BuildJob(t.Project, jobs.OperationParams{
-		OperationID: operationID,
-		Operation:   t.Operation,
-		RepoURL:     repo.URL,
-		CommitSHA:   pr.HeadSHA,
-		BaseRef:     pr.BaseRef,
-		GitHubToken: token,
-		ServerAddr:  o.runnerServerAddr,
-		ExtraArgs:   t.ExtraArgs,
-		PlanData:    planData,
-		RunnerImage: o.runnerImage,
+		OperationID:    operationID,
+		Operation:      t.Operation,
+		RepoURL:        repo.URL,
+		CommitSHA:      pr.HeadSHA,
+		BaseRef:        pr.BaseRef,
+		GitHubToken:    token,
+		ServerAddr:     o.runnerServerAddr,
+		ExtraArgs:      t.ExtraArgs,
+		PlanData:       planData,
+		RunnerImage:    o.runnerImage,
+		ServiceAccount: serviceAccount,
 	})
 	if err != nil {
 		o.deleteRecord(ctx, operationID)

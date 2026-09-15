@@ -247,6 +247,48 @@ worked in parallel.
     sides
   - _Requirements: (wiring for grpc-runner's Requirement 5.3)_
 
+- [x] 22. Runner Pod ServiceAccount, Server-configured with an opt-in turnip.yaml override
+  - [x] 22.1 Add the two Server settings
+    - Driven by a real deployment failure: a Runner executing `helmfile
+      diff` against a repository whose environment values come from S3
+      failed with "no EC2 IMDS role found" — the Pod ran as the
+      namespace's `default` ServiceAccount, so it had no AWS identity
+      (and no cluster RBAC either)
+    - `Config.RunnerServiceAccount` from `TURNIP_RUNNER_SERVICE_ACCOUNT`
+      (optional; empty keeps the previous behavior of setting nothing)
+      and `Config.AllowServiceAccountFromConfig` from
+      `TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG` (optional bool,
+      default false, parsed like `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS`)
+    - Both threaded through `New` into `Orchestrator`, and set in
+      `cmd/server/main.go`
+    - _Requirements: 7.10, 7.11_
+
+  - [x] 22.2 Resolve and apply the ServiceAccount
+    - New `serviceaccount.go`: `resolveServiceAccount(project, default,
+      allowFromConfig)` plus `ServiceAccountNotPermittedError`, whose
+      message names the Project, the requested account, and the env var
+      that would permit it
+    - `executeOne` resolves *before* `AcquireLock`, so a refusal can't
+      strand a Lock, and passes the result as
+      `jobs.OperationParams.ServiceAccount`
+    - `internal/jobs.BuildJob` sets `ServiceAccountName` on the Pod spec;
+      empty stays unset so existing deployments behave as before
+    - See design.md's Decision 5 for why the override is gated and why a
+      boolean was chosen over an allow-list
+    - _Requirements: 7.10, 7.11_
+
+  - [x] 22.3 Tests and docs
+    - `serviceaccount_test.go`: default used when unset, refusal when the
+      gate is off, honored when on, empty-default stays empty
+    - `execute_test.go`: the Job carries the Server default; a refused
+      request creates no Job; an allowed request reaches the Pod spec
+    - `build_test.go`: `ServiceAccountName` set from params, and left
+      empty when unset
+    - `config_test.go`: both new variables, including the invalid-bool case
+    - `docs/configuration.md`: the `serviceAccount` config key and both
+      env vars; `deploy/base` ships the gate explicitly as `false`
+    - _Requirements: (test coverage and documentation for 22.1-22.2)_
+
 ## Notes
 
 - No new third-party dependencies (design.md's "Dependencies" section);

@@ -72,6 +72,8 @@ func run(cfg orchestrator.Config) error {
 		cfg.MinimizeOutdatedPlanComments,
 		cfg.RunnerServerAddr,
 		cfg.RunnerImage,
+		cfg.RunnerServiceAccount,
+		cfg.AllowServiceAccountFromConfig,
 	)
 
 	pingRedis := func(ctx context.Context) error { return redisClient.Ping(ctx).Err() }

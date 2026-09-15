@@ -106,6 +106,43 @@ full-history rescan (pagination, marker matching) to cover a failure mode
 that's both rare and low-severity when it happens isn't worth the added
 surface area; see "Edge Cases."
 
+### Decision 5: the Runner's ServiceAccount is Server configuration, with an opt-in escape hatch
+
+A Runner Pod needs an identity: cloud providers map a ServiceAccount to
+an IAM role (EKS Pod Identity/IRSA), and in-cluster API calls
+authenticate as it. Before this, `BuildJob` set no `serviceAccountName`
+at all, so every Runner ran as its namespace's `default` account — which
+normally has neither cloud credentials nor RBAC permissions.
+
+The name comes from the Server's `TURNIP_RUNNER_SERVICE_ACCOUNT`. A
+Project may request a different one via `config.serviceAccount` in
+turnip.yaml, but **only** when the Server sets
+`TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG=true` (default false).
+Refusal is loud: the Target is rejected with a comment naming the Project
+and the requested account, and no Job is created.
+
+The gate is not decoration. turnip reads turnip.yaml from the *pull
+request's own head commit* (`configfetch.go`), and a plan requires only
+collaborator access, not write access (`target.go`). Without the gate,
+anyone who can open a PR could name any ServiceAccount in the Runner
+namespace and borrow its permissions. This mirrors Woodpecker CI's
+`WOODPECKER_BACKEND_K8S_SERVICE_ACCOUNT_NAME_ALLOW_FROM_STEP`, which is
+default-false for exactly this reason.
+
+*Alternative considered*: a comma-separated allow-list of permitted
+ServiceAccount names (the shape of `WOODPECKER_PLUGINS_PRIVILEGED`).
+Rejected for now as more configuration surface than the single boolean
+buys: an operator running one trusted repository gains nothing from it,
+and one running many untrusted ones should leave the override off
+entirely. The boolean can become a list later without changing
+turnip.yaml's side of the contract.
+
+*Residual risk, deliberately accepted*: even with the override off, a PR
+can change the IaC code itself and have a plan execute it (helmfile
+templates can shell out). Whatever ServiceAccount is attached should
+therefore carry only the permissions a plan genuinely needs. Atlantis
+has the same exposure; this is inherent to running plans on PR content.
+
 ## Package Layout
 
 ```

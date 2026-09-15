@@ -53,8 +53,14 @@ type Orchestrator struct {
 	minimizeOutdatedPlanComments bool
 	runnerServerAddr             string
 	runnerImage                  string
-	startTimeout                 time.Duration
-	sweepInterval                time.Duration
+	// runnerServiceAccount/allowServiceAccountFromConfig come from
+	// Config.RunnerServiceAccount and
+	// Config.AllowServiceAccountFromConfig; serviceaccount.go turns them
+	// plus a Project into the Pod's ServiceAccountName.
+	runnerServiceAccount          string
+	allowServiceAccountFromConfig bool
+	startTimeout                  time.Duration
+	sweepInterval                 time.Duration
 }
 
 // New constructs an Orchestrator. runnerServerAddr is the address a
@@ -70,6 +76,8 @@ func New(
 	minimizeOutdatedPlanComments bool,
 	runnerServerAddr string,
 	runnerImage string,
+	runnerServiceAccount string,
+	allowServiceAccountFromConfig bool,
 ) *Orchestrator {
 	return &Orchestrator{
 		installationClient:           func(id int64) github.GitHubClient { return appAuth.InstallationClient(id) },
@@ -81,7 +89,11 @@ func New(
 		minimizeOutdatedPlanComments: minimizeOutdatedPlanComments,
 		runnerServerAddr:             runnerServerAddr,
 		runnerImage:                  runnerImage,
-		startTimeout:                 defaultStartTimeout,
-		sweepInterval:                defaultSweepInterval,
+
+		runnerServiceAccount:          runnerServiceAccount,
+		allowServiceAccountFromConfig: allowServiceAccountFromConfig,
+
+		startTimeout:  defaultStartTimeout,
+		sweepInterval: defaultSweepInterval,
 	}
 }

@@ -298,6 +298,56 @@ func TestExecuteOne_JobCarriesPullRequestBaseRef(t *testing.T) {
 	assert.Equal(t, testPR.BaseRef, env["TURNIP_BASE_REF"])
 }
 
+func TestExecuteOne_JobCarriesServerDefaultServiceAccount(t *testing.T) {
+	locks := &fakeLockManager{}
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
+	o, _ := testOrchestrator(t, locks, jobsClient)
+	o.runnerServiceAccount = "turnip-runner"
+	client := &fakeExecuteClient{}
+
+	o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+
+	job := jobsClient.lastCreatedJob()
+	require.NotNil(t, job)
+	assert.Equal(t, "turnip-runner", job.Spec.Template.Spec.ServiceAccountName)
+}
+
+func TestExecuteOne_ProjectServiceAccountRefusedWhenNotAllowed(t *testing.T) {
+	locks := &fakeLockManager{}
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
+	o, _ := testOrchestrator(t, locks, jobsClient)
+	o.runnerServiceAccount = "turnip-runner"
+	o.allowServiceAccountFromConfig = false
+	client := &fakeExecuteClient{}
+
+	target := testHelmfileTarget()
+	target.Project.Config = map[string]string{"serviceAccount": "atlantis"}
+
+	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Output, "atlantis")
+	assert.Equal(t, 0, jobsClient.createCount(), "a refused ServiceAccount must not create a Job")
+}
+
+func TestExecuteOne_ProjectServiceAccountUsedWhenAllowed(t *testing.T) {
+	locks := &fakeLockManager{}
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
+	o, _ := testOrchestrator(t, locks, jobsClient)
+	o.runnerServiceAccount = "turnip-runner"
+	o.allowServiceAccountFromConfig = true
+	client := &fakeExecuteClient{}
+
+	target := testHelmfileTarget()
+	target.Project.Config = map[string]string{"serviceAccount": "turnip-runner-cicd2"}
+
+	o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+
+	job := jobsClient.lastCreatedJob()
+	require.NotNil(t, job)
+	assert.Equal(t, "turnip-runner-cicd2", job.Spec.Template.Spec.ServiceAccountName)
+}
+
 func TestExecuteTargets_RunsConcurrentlyAndWaitsForAll(t *testing.T) {
 	locks := &fakeLockManager{}
 	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}

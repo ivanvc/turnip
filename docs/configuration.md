@@ -53,6 +53,16 @@ every problem in one pass, not one-at-a-time.
   ahead of time.
 - **`environment`** (Helmfile only): passed through as helmfile's own
   `--environment` flag.
+- **`serviceAccount`**: the Kubernetes ServiceAccount this Project's
+  Runner Pod runs as — the identity EKS Pod Identity/IRSA maps to an IAM
+  role, and the one in-cluster API calls authenticate with. **Only
+  honored when the Server sets
+  `TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG=true`**; otherwise the
+  operation is refused with a comment on the PR and no Runner Job is
+  created. The gate exists because turnip reads `turnip.yaml` from the
+  pull request's own head commit, and a plan needs only collaborator
+  access — without it, anyone able to open a PR could pick any
+  ServiceAccount in the Runner namespace and use its permissions.
 
 Anything else in `config` is opaque to turnip itself — a plugin only
 reads the keys it understands.
@@ -86,6 +96,8 @@ than one restart-and-discover-the-next-one at a time.
 | `TURNIP_RUNNER_SERVER_ADDR` | yes | address a Runner Pod dials to reach this Server — a Service DNS name, not the bind address above |
 | `TURNIP_RUNNER_IMAGE` | yes | the Runner container image a deployed Server creates Jobs with |
 | `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` | no (default `false`) | collapse an older plan comment on the same PR once a newer one supersedes it |
+| `TURNIP_RUNNER_SERVICE_ACCOUNT` | no (default unset) | ServiceAccount every Runner Pod runs as — how a Runner gets cloud credentials (EKS Pod Identity/IRSA) and in-cluster API permissions. Unset leaves Pods on the namespace's `default` ServiceAccount, which normally has neither |
+| `TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG` | no (default `false`) | allow a Project's `config.serviceAccount` to override the above. Off by default: `turnip.yaml` is read from the PR's own head commit, so enabling this lets any PR author choose which ServiceAccount their Runner uses |
 
 In `deploy/base`, the two credential-shaped values
 (`TURNIP_GITHUB_WEBHOOK_SECRET`, `TURNIP_GITHUB_PRIVATE_KEY`) come from a

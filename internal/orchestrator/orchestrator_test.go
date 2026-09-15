@@ -23,12 +23,14 @@ func TestNew_ConstructsOrchestratorWithDefaults(t *testing.T) {
 	appAuth, err := github.NewAppAuth(1, []byte(testPEMKey))
 	require.NoError(t, err)
 
-	o := New(appAuth, (lock.LockManager)(nil), nil, NewPluginRegistry(), client, true, "turnip-server:9090", "ghcr.io/ivanvc/turnip-runner:test")
+	o := New(appAuth, (lock.LockManager)(nil), nil, NewPluginRegistry(), client, true, "turnip-server:9090", "ghcr.io/ivanvc/turnip-runner:test", "turnip-runner", false)
 	require.NotNil(t, o)
 	assert.Equal(t, defaultStartTimeout, o.startTimeout)
 	assert.Equal(t, defaultSweepInterval, o.sweepInterval)
 	assert.True(t, o.minimizeOutdatedPlanComments)
 	assert.Equal(t, "turnip-server:9090", o.runnerServerAddr)
+	assert.Equal(t, "turnip-runner", o.runnerServiceAccount)
+	assert.False(t, o.allowServiceAccountFromConfig)
 	require.NotNil(t, o.installationClient)
 }
 

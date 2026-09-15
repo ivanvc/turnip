@@ -444,6 +444,17 @@ the Job — so that horizontal scaling doesn't break correctness.
    action — this is what makes a Runner's retried final-result delivery
    (grpc-runner's Requirement 4.4-4.5) idempotent on the Server side, an
    item grpc-runner's requirements doc explicitly left for this slice
+10. THE Server SHALL resolve the Kubernetes ServiceAccount each Target's
+    Runner Job Pod runs as — from its own `TURNIP_RUNNER_SERVICE_ACCOUNT`
+    configuration — and SHALL do so before acquiring any Lock for that
+    Target, so a refusal never leaves a Lock held for an Operation that
+    never runs
+11. WHERE a Project sets `config.serviceAccount` in turnip.yaml, THE
+    Server SHALL honor it only IF its own
+    `TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG` is true; otherwise
+    THE Server SHALL reject that Target with a comment naming the Project
+    and the requested ServiceAccount, and SHALL NOT create a Runner Job
+    for it
 
 ### Requirement 8: Runner Job Start Timeout and Diagnosis
 

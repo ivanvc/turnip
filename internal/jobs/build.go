@@ -45,6 +45,13 @@ type OperationParams struct {
 	// RunnerImage is the Runner container's image, sourced from the
 	// Server's own TURNIP_RUNNER_IMAGE config.
 	RunnerImage string
+	// ServiceAccount is the Kubernetes ServiceAccount the Runner Pod runs
+	// as — the identity cloud providers map to an IAM role (EKS Pod
+	// Identity/IRSA) and that in-cluster API calls authenticate with.
+	// Empty leaves it unset, so the namespace's default ServiceAccount
+	// applies. The Server resolves this value (including whether a
+	// Project may choose it at all) before calling BuildJob.
+	ServiceAccount string
 }
 
 // BuildJob constructs the Kubernetes Job that runs one Operation for one
@@ -115,7 +122,8 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 			TTLSecondsAfterFinished: jobTTLSecondsAfterFinished,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyNever,
+					ServiceAccountName: op.ServiceAccount,
+					RestartPolicy:      corev1.RestartPolicyNever,
 					InitContainers: []corev1.Container{
 						{
 							Name:         "provision-" + project.Tool,

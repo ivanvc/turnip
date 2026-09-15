@@ -27,6 +27,16 @@ type Config struct {
 	// RunnerImage is the Runner Job's container image, threaded into
 	// internal/jobs.OperationParams.RunnerImage (Decision 3).
 	RunnerImage string
+	// RunnerServiceAccount is the ServiceAccount every Runner Job's Pod
+	// runs as unless a Project overrides it (and that override is
+	// permitted). Optional: empty leaves Pods on the namespace's default
+	// ServiceAccount, which is what turnip did before this setting existed.
+	RunnerServiceAccount string
+	// AllowServiceAccountFromConfig gates whether a Project's
+	// `config.serviceAccount` in turnip.yaml may override
+	// RunnerServiceAccount. Default false — see
+	// serviceaccount.go's resolveServiceAccount for why.
+	AllowServiceAccountFromConfig bool
 }
 
 // MissingEnvVarsError names every required environment variable that was
@@ -53,6 +63,8 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 		GRPCAddr:            env("TURNIP_GRPC_ADDR"),
 		RunnerServerAddr:    env("TURNIP_RUNNER_SERVER_ADDR"),
 		RunnerImage:         env("TURNIP_RUNNER_IMAGE"),
+
+		RunnerServiceAccount: env("TURNIP_RUNNER_SERVICE_ACCOUNT"),
 	}
 
 	var missing []string
@@ -107,6 +119,14 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("orchestrator: parsing TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS: %w", err)
 		}
 		cfg.MinimizeOutdatedPlanComments = enabled
+	}
+
+	if raw := env("TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG"); raw != "" {
+		allowed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("orchestrator: parsing TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG: %w", err)
+		}
+		cfg.AllowServiceAccountFromConfig = allowed
 	}
 
 	return cfg, nil

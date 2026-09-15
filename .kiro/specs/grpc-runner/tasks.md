@@ -367,6 +367,20 @@ wiring, then tests (unit, then property).
       `internal/jobs`'s existing property tests, unaffected), `gofmt -l .`
       clean, and the real `golangci-lint` v2 (see `CLAUDE.md`) both pass
 
+- [x] 23. Add `OperationParams.ServiceAccount` to the Job builder (server-orchestration amendment)
+  - `BuildJob` set no `serviceAccountName`, so every Runner Pod ran as its
+    namespace's `default` ServiceAccount — no cloud identity (EKS Pod
+    Identity/IRSA) and no cluster RBAC, which surfaced as a Runner failing
+    to read its repository's S3-backed values with "no EC2 IMDS role found"
+  - Added `OperationParams.ServiceAccount`, set as `ServiceAccountName` on
+    the Pod spec; empty leaves it unset, preserving previous behavior
+  - Resolution — including whether a Project's own turnip.yaml may choose
+    the account — belongs to the Server, not this package: see
+    `server-orchestration/tasks.md` task 22 and that slice's design.md
+    Decision 5. Recorded here per task 20/21's precedent for cross-slice
+    changes noted on both sides
+  - _Requirements: (wiring for server-orchestration's Requirement 7.10-7.11)_
+
 ## Notes
 
 - `k8s.io/api`, `k8s.io/apimachinery`, and `k8s.io/client-go` are already
