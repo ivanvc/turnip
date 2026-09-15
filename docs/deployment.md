@@ -14,8 +14,30 @@ deployment.
    one (`deploy/base/kustomization.yaml` ships no `TURNIP_REDIS_ADDR`
    default at all): the Server is stateless, and its only state lives in
    whichever Redis/Valkey instance you point it at. Bring your own
-   (managed or self-hosted).
-3. **A GitHub App** — installed on whichever repositories should trigger
+   (managed or self-hosted) — but check the constraint below before
+   picking one: **`TURNIP_REDIS_ADDR` is a plain `host:port`, nothing
+   else**. The Server connects with `redis.Options{Addr:
+   cfg.RedisAddr}` (`cmd/server/main.go`) — no password/AUTH field, no
+   TLS. It has to be an unauthenticated, non-TLS-only Redis/Valkey
+   reachable from the cluster: a bare in-cluster `Deployment`+`Service`
+   works (e.g. `TURNIP_REDIS_ADDR=redis.redis-ns.svc.cluster.local:6379`
+   for a Service named `redis` in namespace `redis-ns`); a managed
+   instance (ElastiCache, Memorystore, etc.) works only if you disable
+   its AUTH/in-transit-encryption requirement, or put an unauthenticated
+   proxy in front of it — pointing this at an AUTH- or TLS-required
+   endpoint as-is will fail to connect.
+3. **Public HTTPS ingress for the webhook path** — turnip ships no
+   Ingress, Gateway API resource, or LoadBalancer Service (`deploy/base`
+   has only a plain `ClusterIP` one, `deploy/base/service.yaml`). GitHub
+   needs to reach the Server's `/` path over HTTPS, so you need your own
+   Ingress/Gateway/LoadBalancer (whatever your cluster already uses)
+   routing a real, publicly-resolvable hostname to the `turnip-server`
+   Service's HTTP port (`8080` by default), plus DNS and a TLS
+   certificate for that hostname. See
+   [`docs/configuration.md`](configuration.md#setting-up-the-github-app)'s
+   Webhook URL section for the exact shape this feeds into
+   (`https://<your-hostname>/`).
+4. **A GitHub App** — installed on whichever repositories should trigger
    turnip. You'll need its App ID, its private key (PEM), and a webhook
    secret you choose yourself. See
    [`docs/configuration.md`](configuration.md#setting-up-the-github-app)
@@ -135,6 +157,14 @@ your Redis is actually reachable from the cluster. If neither endpoint
 responds at all, check `kubectl get pods`/`kubectl logs` for the Server
 Pod — a missing `turnip-github-app` Secret (above) fails at startup with
 a clear "missing required environment variable(s)" message.
+
+The port-forward check above only proves the Pod itself works — it says
+nothing about the public ingress from Prerequisites #3. Confirm that
+separately, from outside the cluster: `curl -i https://<your-hostname>/healthz`
+should also return `200`. Once it does, go set the GitHub App's Webhook
+URL to `https://<your-hostname>/` and check **Active**
+(`docs/configuration.md`'s Webhook section) — that's the last piece
+needed for GitHub to actually start delivering events.
 
 ## Optional: the Grafana dashboard
 
