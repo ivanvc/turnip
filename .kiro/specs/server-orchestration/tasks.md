@@ -362,6 +362,30 @@ worked in parallel.
       summary; see github-integration 6.5)
     - _Requirements: (coverage for 25)_
 
+- [x] 26. Render config-error replies as GitHub alerts (2026-09 amendment)
+  - These replies were plain paragraphs, easy to miss in a busy PR
+    thread. GitHub has no `[!ERROR]` type, so severity is ranked across
+    the five it does have, by consequence rather than by "this is an
+    error":
+    - **WARNING** — turnip didn't run and the author can fix it in their
+      own repository: `turnip.yaml` missing (Requirement 1.2) or invalid
+      (1.4). Nothing is left in a bad state
+    - **CAUTION** — not the author's to fix: fetching `turnip.yaml`
+      failed on auth, permissions, or rate limits (1.3), which needs
+      whoever runs turnip. Keeping red for this class is the point; if
+      every failure is red, the one needing an operator stops standing
+      out
+  - Detail blocks (the validation output's code fence, the fetch error's
+    `<details>`) sit *after* the alert, never inside it: GitHub alerts
+    don't render with another element nested in them, degrading to
+    literal "[!WARNING]" text. `assertNothingNestedInsideAlert` in
+    `configfetch_test.go` pins that, since it fails silently in
+    production
+  - Same constraint rules alerts out of the consolidated result comment,
+    whose per-Project output lives inside `<details>` sections — so
+    task 24's check-run note stays plain text deliberately
+  - _Requirements: 1.2, 1.3, 1.4 (presentation only; behavior unchanged)_
+
 ## Notes
 
 - No new third-party dependencies (design.md's "Dependencies" section);

@@ -243,3 +243,46 @@ func TestRunWith_ReportFailureReturnsNonZero(t *testing.T) {
 
 	assert.Equal(t, 1, exitCode)
 }
+
+// echoWorkingDirPlugin reports its own WorkingDir through both a streamed
+// log line and the final Output. That is the only way a test can observe
+// the sandbox directory at all: execute() creates it with os.MkdirTemp,
+// so its name is random and unknowable from outside.
+type echoWorkingDirPlugin struct{ operations []string }
+
+func (p *echoWorkingDirPlugin) Name() string              { return "fake" }
+func (p *echoWorkingDirPlugin) GetOperations() []string   { return p.operations }
+func (p *echoWorkingDirPlugin) GetPlanOperation() string  { return p.operations[0] }
+func (p *echoWorkingDirPlugin) GetApplyOperation() string { return p.operations[0] }
+func (p *echoWorkingDirPlugin) Execute(_ context.Context, _ string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
+	if opts.OnOutput != nil {
+		opts.OnOutput("stdout", "reading "+opts.WorkingDir+"/values.yaml")
+	}
+	return &plugin.ExecuteResult{
+		Output:   `failed to read "` + opts.WorkingDir + `/values.yaml"`,
+		ExitCode: 1,
+	}, nil
+}
+
+func TestRunWith_SandboxPathStrippedFromWhatTheServerSees(t *testing.T) {
+	rep := &fakeReporter{}
+	cfg := testRunConfig()
+	cfg.ProjectDir = "environments/cicd-2"
+	var stdout, stderr safeBuffer
+
+	exitCode := runWith(context.Background(), cfg, rep, fakeSelector(&echoWorkingDirPlugin{operations: []string{"diff"}}), noopClone, &stdout, &stderr)
+	require.Equal(t, 0, exitCode)
+
+	assert.NotContains(t, rep.lastResult.Output, "/tmp/turnip-runner-",
+		"the sandbox path must never reach the Server, and from there the PR comment")
+	assert.Contains(t, rep.lastResult.Output, `"environments/cicd-2/values.yaml"`,
+		"the repository-relative path a reviewer recognizes survives")
+
+	require.Len(t, rep.logLines, 1)
+	assert.Equal(t, "reading environments/cicd-2/values.yaml", rep.logLines[0].line,
+		"streamed log lines are stripped too, not just the final result")
+
+	// The local mirror deliberately keeps the absolute path: `kubectl
+	// logs` is the one place it is still worth having.
+	assert.Contains(t, stdout.String(), "/tmp/turnip-runner-")
+}

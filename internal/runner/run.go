@@ -106,8 +106,14 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, clone cloner, rep
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
+	// strip removes dir from anything headed for the Server: a reviewer
+	// reading the PR comment knows repository-relative paths, not the
+	// random sandbox directory this run happened to use. See
+	// stripSandboxPath.
+	strip := func(s string) string { return stripSandboxPath(dir, s) }
+
 	if err := clone(ctx, dir, cfg.RepoURL, cfg.CommitSHA, cfg.BaseRef, cfg.GitHubToken); err != nil {
-		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: fmt.Sprintf("clone failed: %v", err)}
+		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: strip(fmt.Sprintf("clone failed: %v", err))}
 	}
 
 	// OnOutput fans out to two places for every (stream, line), and the
@@ -121,7 +127,9 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, clone cloner, rep
 		case "stderr":
 			_, _ = fmt.Fprintln(stderr, line)
 		}
-		rep.LogLine(stream, line)
+		// The local mirror above keeps the absolute path; only what
+		// leaves for the Server is stripped.
+		rep.LogLine(stream, strip(line))
 	}
 
 	result, err := p.Execute(ctx, cfg.Operation, plugin.ExecuteOptions{
@@ -132,18 +140,18 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, clone cloner, rep
 		OnOutput:   onOutput,
 	})
 	if err != nil {
-		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: fmt.Sprintf("execute failed: %v", err)}
+		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: strip(fmt.Sprintf("execute failed: %v", err))}
 	}
 
 	opResult := OperationResult{
 		Success:  result.ExitCode == 0,
-		Output:   result.Output,
+		Output:   strip(result.Output),
 		ExitCode: result.ExitCode,
 		Changes:  result.ChangeSummary,
 		PlanData: result.PlanData,
 	}
 	if result.Error != nil {
-		opResult.ErrorMessage = result.Error.Error()
+		opResult.ErrorMessage = strip(result.Error.Error())
 	}
 	return opResult
 }

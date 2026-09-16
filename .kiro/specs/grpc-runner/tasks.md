@@ -381,6 +381,39 @@ wiring, then tests (unit, then property).
     changes noted on both sides
   - _Requirements: (wiring for server-orchestration's Requirement 7.10-7.11)_
 
+- [x] 24. Strip the Runner's sandbox path from reported output (2026-09 amendment)
+  - From a real PR comment: a helmfile error ran ~650 characters on one
+    line inside a fenced code block, which can only scroll sideways. The
+    same `/tmp/turnip-runner-2858245619/` prefix appeared twice — ~60 of
+    those characters — and means nothing to a reviewer, who recognizes
+    `environments/secrets.yaml.gotmpl`, the path in their own repository
+  - Worth being honest about the size of this win: it removes noise and
+    makes paths recognizable, but a ~600-character single line still
+    scrolls. Wrapping (the deferred option below) is what actually fixes
+    the scrolling
+  - `stripSandboxPath(dir, s)` (new `sandboxpath.go`) rewrites the
+    `os.MkdirTemp` directory out of text: the prefix collapses to
+    nothing, leaving repository-relative paths, and a bare mention of the
+    directory becomes `.`
+  - Applied in `execute` to everything bound for the Server — the clone
+    and execute failure messages, `Output`, `ErrorMessage`, and each
+    streamed log line — but deliberately *not* to the local stdout/stderr
+    mirroring, since `kubectl logs` is where the absolute path is still
+    worth having
+  - Presentation only: no change to what runs, or to exit codes
+  - Chosen over the alternatives discussed for the same comment: leaving
+    the error outside a code fence (rejected by the user), splitting the
+    wrap chain on `": "` (would mangle `s3://` URIs), and hard-wrapping
+    at a column limit (deferred — it damages copy-paste and can split
+    URLs mid-token)
+  - _Requirements: 4.2, 5.3 (presentation of reported output)_
+
+  - [x] 24.1 Tests
+    - `sandboxpath_test.go`: the real repeated-prefix error shape, a bare
+      directory mention, an empty dir no-op, unrelated text untouched,
+      and that another Runner's directory is left alone
+    - _Requirements: (coverage for 24)_
+
 ## Notes
 
 - `k8s.io/api`, `k8s.io/apimachinery`, and `k8s.io/client-go` are already
