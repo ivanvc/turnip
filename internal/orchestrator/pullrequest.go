@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -28,6 +29,22 @@ func (o *Orchestrator) HandlePullRequest(ctx context.Context, event *github.Webh
 func (o *Orchestrator) handlePlanTrigger(ctx context.Context, client github.GitHubClient, event *github.WebhookEvent) error {
 	cfg, err := fetchConfig(ctx, client, event.Repository.Owner, event.Repository.Name, event.PullRequest.HeadSHA)
 	if err != nil {
+		// A repository with no turnip.yaml anywhere hasn't opted into
+		// turnip, and this handler runs on every PR open and every push
+		// to one — commenting here would put "turnip.yaml was not found"
+		// on every pull request in the repository. Stay silent; the
+		// Operation is skipped either way.
+		//
+		// This is only true of the *automatic* trigger. An explicit
+		// Trigger Comment still reports the missing file
+		// (HandleIssueComment), because there a human asked turnip to do
+		// something and silence would be the confusing answer. A
+		// turnip.yaml that exists but is invalid also still comments
+		// here: that repository *has* opted in, so its breakage should
+		// be visible rather than silently skipped.
+		if errors.Is(err, ErrConfigMissing) {
+			return nil
+		}
 		_, postErr := client.PostComment(ctx, event.Repository.Owner, event.Repository.Name, event.PullRequest.Number, configErrorComment(err))
 		return postErr
 	}

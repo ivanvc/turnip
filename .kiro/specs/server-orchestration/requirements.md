@@ -174,10 +174,17 @@ instead of a confusing partial failure downstream.
    `.github/`). THE Server SHALL pass whichever location's content is found
    to `config.Parse` before taking any other action for that event
 2. IF `GetFile` returns an error wrapping `github.ErrFileNotFound` for
-   BOTH locations, THEN THE Server SHALL post a comment stating turnip.yaml
-   is missing and SHALL NOT proceed further for that event — no Lock
-   acquisition, Runner Job, or check run (Requirement 1.4 of the global
-   spec)
+   BOTH locations, THEN THE Server SHALL NOT proceed further for that
+   event — no Lock acquisition, Runner Job, or check run (Requirement 1.4
+   of the global spec). WHERE the event is a Trigger Comment, THE Server
+   SHALL post a comment stating turnip.yaml is missing; WHERE the event
+   is an automatic plan (`pull_request` `opened`/`synchronize`), THE
+   Server SHALL post no comment at all — a repository without a
+   turnip.yaml has not opted into turnip, and this handler runs on every
+   PR open and every push to one, so commenting would put "turnip.yaml
+   was not found" on every pull request in that repository. A turnip.yaml
+   that exists but is invalid (1.4) still comments on both paths: that
+   repository has opted in, so its breakage stays visible
 3. IF `GetFile` fails for any other reason (network, auth, rate limit), THEN
    THE Server SHALL log the error, post a comment stating that fetching
    turnip.yaml failed with the underlying error message included inside a

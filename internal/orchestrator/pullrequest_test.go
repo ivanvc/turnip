@@ -177,7 +177,12 @@ func TestHandlePlanTrigger_DotGithubFallback(t *testing.T) {
 	assert.Equal(t, ".github/turnip.yaml", client.getFileCallLog()[1])
 }
 
-func TestHandlePlanTrigger_MissingConfigPostsComment(t *testing.T) {
+// A repository with no turnip.yaml hasn't opted into turnip, and this
+// handler runs on every PR open and every push to one — commenting would
+// put "turnip.yaml was not found" on every pull request in the
+// repository. An explicit Trigger Comment still reports it; see
+// comment.go.
+func TestHandlePlanTrigger_MissingConfigPostsNothing(t *testing.T) {
 	o, _ := testPullRequestOrchestrator(t)
 	client := &fakePRClient{files: map[string][]byte{}}
 
@@ -187,8 +192,29 @@ func TestHandlePlanTrigger_MissingConfigPostsComment(t *testing.T) {
 	}
 	require.NoError(t, o.handlePlanTrigger(context.Background(), client, event))
 
+	time.Sleep(50 * time.Millisecond) // nothing should be posted, even async
+	assert.Empty(t, client.postedComments())
+	assert.Equal(t, []string{"turnip.yaml", ".github/turnip.yaml"}, client.getFileCallLog(),
+		"both locations are still checked before giving up")
+}
+
+// An invalid turnip.yaml is the opposite case: that repository *has*
+// opted in, so breaking its config must stay visible rather than being
+// silently skipped on every push.
+func TestHandlePlanTrigger_InvalidConfigStillPostsComment(t *testing.T) {
+	o, _ := testPullRequestOrchestrator(t)
+	client := &fakePRClient{files: map[string][]byte{
+		"turnip.yaml": []byte("version: 1\nprojects:\n  - name: broken\n"), // no directory/tool
+	}}
+
+	event := &github.WebhookEvent{
+		Repository:  github.Repository{Owner: "owner", Name: "repo"},
+		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc"},
+	}
+	require.NoError(t, o.handlePlanTrigger(context.Background(), client, event))
+
 	require.Len(t, client.postedComments(), 1)
-	assert.Contains(t, client.postedComments()[0], "not found")
+	assert.Contains(t, client.postedComments()[0], "invalid")
 }
 
 func TestHandlePRClosed_ReleasesOnlyLocksHeldByThisPR(t *testing.T) {

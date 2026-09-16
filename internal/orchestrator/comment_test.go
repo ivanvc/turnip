@@ -105,6 +105,24 @@ func TestHandleIssueComment_NoTriggerIsSilentNoop(t *testing.T) {
 	assert.Empty(t, client.posted)
 }
 
+// The mirror of TestHandlePlanTrigger_MissingConfigPostsNothing: an
+// automatic plan stays silent when a repository has no turnip.yaml, but
+// an explicit Trigger Command must still say so — here a human asked
+// turnip to do something, so silence would be the confusing answer.
+func TestHandleIssueComment_MissingConfigStillPostsComment(t *testing.T) {
+	o := testCommentOrchestrator(t, &fakeLockManager{})
+	client := &fakeCommentEventClient{
+		permission: "write",
+		files:      map[string][]byte{},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc"},
+	}
+
+	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip diff", "alice")))
+
+	require.Len(t, client.postedComments(), 1)
+	assert.Contains(t, client.postedComments()[0], "not found")
+}
+
 func TestHandleIssueComment_NonCollaboratorRejectedBeforeAnyCommand(t *testing.T) {
 	o := testCommentOrchestrator(t, &fakeLockManager{})
 	client := &fakeCommentEventClient{permission: ""}

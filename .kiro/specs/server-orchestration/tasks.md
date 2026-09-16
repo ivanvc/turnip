@@ -289,6 +289,26 @@ worked in parallel.
       env vars; `deploy/base` ships the gate explicitly as `false`
     - _Requirements: (test coverage and documentation for 22.1-22.2)_
 
+- [x] 23. Automatic plans stay silent when a repository has no turnip.yaml (2026-09 amendment)
+  - Reported from a real deployment: every pull request in a repository
+    that isn't using turnip got a "turnip.yaml was not found in this
+    repository" comment, on open and again on every push, because
+    `handlePlanTrigger` posted `configErrorComment` for any `fetchConfig`
+    failure — including `ErrConfigMissing`
+  - `handlePlanTrigger` now returns silently on `ErrConfigMissing`. Two
+    cases deliberately still comment: an explicit Trigger Comment
+    (`HandleIssueComment`, unchanged — a human asked, so silence would be
+    the confusing answer), and a turnip.yaml that exists but fails to
+    parse or validate (that repository has opted in, so its breakage
+    should stay visible rather than being silently skipped)
+  - _Requirements: 1.2 (amended)_
+
+  - [x] 23.1 Tests
+    - `pullrequest_test.go`: a missing turnip.yaml on `opened`/
+      `synchronize` posts no comment and creates no Job; an invalid one
+      still comments
+    - _Requirements: (regression coverage for 23)_
+
 ## Notes
 
 - No new third-party dependencies (design.md's "Dependencies" section);
