@@ -1,6 +1,27 @@
 package github
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/ivanvc/turnip/internal/config"
+)
+
+// knownTools are the names ParseTriggers accepts after the leading "/":
+// the IaC tools, plus "turnip" itself for "every Project regardless of
+// tool". Sourced from internal/config so the tool vocabulary has one
+// definition.
+//
+// A line starting with any other "/word" belongs to someone else — a
+// different bot's command (`/jira`, `/lgtm`), a file path pasted at the
+// start of a line — and is skipped silently. Treating those as triggers
+// made every such comment run the whole authorize-and-fetch-config flow
+// and reply to people who never addressed turnip at all.
+var knownTools = map[string]bool{
+	"turnip":             true,
+	config.ToolTerraform: true,
+	config.ToolPulumi:    true,
+	config.ToolHelmfile:  true,
+}
 
 // ParseTriggers scans body line by line, extracting one TriggerCommand per
 // well-formed trigger line — not stopping at the first match, so a single
@@ -17,6 +38,11 @@ func ParseTriggers(body string) ([]*TriggerCommand, error) {
 			continue
 		}
 		if len(tokens[0]) < 2 || tokens[0][0] != '/' {
+			continue
+		}
+		// Not addressed to turnip: not a trigger, and not malformed
+		// either — reporting it would be just as noisy as acting on it.
+		if !knownTools[tokens[0][1:]] {
 			continue
 		}
 

@@ -76,10 +76,13 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 			Name:       checkRunName(rec.Project.Name, rec.Operation),
 			Status:     "completed",
 			Conclusion: "failure",
+			Title:      "timed out",
+			Summary:    "The Runner never reported back within the start timeout.",
 			Text:       pr.Output,
 		})
 		if err != nil {
 			slog.ErrorContext(ctx, "updating check run for timed-out operation", "operation_id", operationID, "error", err)
+			pr = appendCheckRunNote(pr, err)
 		}
 	}
 

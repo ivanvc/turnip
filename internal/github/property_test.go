@@ -1,11 +1,14 @@
 package github
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
+
+	"github.com/ivanvc/turnip/internal/config"
 )
 
 // tokenPattern generates safe, non-whitespace tokens with no "-" characters
@@ -17,10 +20,26 @@ func genToken(t *rapid.T, label string) string {
 	return rapid.StringMatching(tokenPattern).Draw(t, label)
 }
 
+// knownToolNames mirrors parser.go's knownTools. Trigger-line generators
+// draw from these rather than from arbitrary tokens: a line naming any
+// other tool is deliberately not a trigger at all (Requirement 4.2a), so
+// an arbitrary token can no longer stand in for "some tool name".
+var knownToolNames = []string{"turnip", config.ToolTerraform, config.ToolPulumi, config.ToolHelmfile}
+
+func genKnownTool(t *rapid.T, label string) string {
+	return rapid.SampledFrom(knownToolNames).Draw(t, label)
+}
+
+func genUnknownTool(t *rapid.T, label string) string {
+	return rapid.StringMatching(tokenPattern).
+		Filter(func(s string) bool { return !slices.Contains(knownToolNames, s) }).
+		Draw(t, label)
+}
+
 // Feature: multi-iac-automation-platform, Property 7: Comment Trigger Pattern Recognition
 func TestProperty_CommentTriggerPatternRecognition(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		tool := genToken(t, "tool")
+		tool := genKnownTool(t, "tool")
 		operation := genToken(t, "operation")
 		extraArgs := rapid.SliceOfN(rapid.StringMatching(tokenPattern), 0, 5).Draw(t, "extraArgs")
 
@@ -114,13 +133,13 @@ func TestProperty_MultiLineTriggerOrderingAndPartialFailureIsolation(t *testing.
 
 		lines := make([]triggerLine, 0, n+m)
 		for range n {
-			tool := genToken(t, "tool")
+			tool := genKnownTool(t, "tool")
 			op := genToken(t, "op")
 			proj := genToken(t, "proj")
 			lines = append(lines, triggerLine{text: "/" + tool + " " + op + " " + proj, wellFormed: true, project: proj})
 		}
 		for range m {
-			tool := genToken(t, "badtool")
+			tool := genKnownTool(t, "badtool")
 			lines = append(lines, triggerLine{text: "/" + tool})
 		}
 
@@ -156,5 +175,21 @@ func TestProperty_MultiLineTriggerOrderingAndPartialFailureIsolation(t *testing.
 		var malformed MalformedTriggerErrors
 		require.ErrorAs(t, err, &malformed)
 		require.Len(t, malformed, m)
+	})
+}
+
+// Property (slice-local, Requirement 4.2a): a line naming a tool turnip
+// doesn't know is not a trigger — neither a TriggerCommand nor a
+// malformed-line error. This is the property the "turnip replies to other
+// bots' slash commands" bug violated.
+func TestProperty_UnknownToolIsNeverATrigger(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		tool := genUnknownTool(t, "tool")
+		operation := genToken(t, "operation")
+		project := genToken(t, "project")
+
+		got, err := ParseTriggers("/" + tool + " " + operation + " " + project)
+		require.ErrorIs(t, err, ErrNoTrigger)
+		require.Nil(t, got)
 	})
 }

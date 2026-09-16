@@ -50,7 +50,7 @@ func (o *Orchestrator) executeTargets(ctx context.Context, client github.GitHubC
 // (Requirements 6, 7, 9), blocking until the Operation is finalized (a
 // genuine result or a sweep-detected timeout) and returning its
 // ProjectResult.
-func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, installationID int64, t Target) github.ProjectResult {
+func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, installationID int64, t Target) (result github.ProjectResult) {
 	start := time.Now()
 	defer func() {
 		metrics.ObserveOperationDuration(t.Project.Tool, t.Operation, time.Since(start))
@@ -106,17 +106,31 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		}
 	}
 
-	checkRunID, err := client.CreateCheckRun(ctx, repo.Owner, repo.Name, github.CheckRunOptions{
+	// checkRunErr is deliberately its own variable, not the shared err:
+	// the deferred closure below reads it after every later statement has
+	// run, and `token, err := ...` / `job, err := ...` reassign err in
+	// this same scope — so closing over err would report whatever the
+	// last operation left behind (nil, on the success path) instead of
+	// this failure.
+	checkRunID, checkRunErr := client.CreateCheckRun(ctx, repo.Owner, repo.Name, github.CheckRunOptions{
 		Name:    checkRunName(t.Project.Name, t.Operation),
 		HeadSHA: pr.HeadSHA,
 		Status:  "in_progress",
+		Title:   "in progress",
+		Summary: fmt.Sprintf("Running `%s` for Project `%s`.", t.Operation, t.Project.Name),
 	})
-	if err != nil {
-		// Soft failure (Decision 3): logged and ignored, the Operation
-		// still runs. checkRunID stays 0, so later UpdateCheckRun calls
-		// for this Target are skipped.
-		slog.ErrorContext(ctx, "creating check run", "owner", repo.Owner, "repo", repo.Name, "pr_number", pr.Number, "project", t.Project.Name, "error", err)
+	if checkRunErr != nil {
+		// Soft failure (Decision 3): the Operation still runs.
+		// checkRunID stays 0, so later UpdateCheckRun calls for this
+		// Target are skipped.
+		slog.ErrorContext(ctx, "creating check run", "owner", repo.Owner, "repo", repo.Name, "pr_number", pr.Number, "project", t.Project.Name, "error", checkRunErr)
 	}
+	// ...but it is not silent. Whatever this function ends up returning —
+	// a rejection below, or the Runner's own result — carries a note
+	// saying the check run is missing and why. Without it the PR shows a
+	// result comment and simply no check run, with the reason reachable
+	// only from the Server's log.
+	defer func() { result = appendCheckRunNote(result, checkRunErr) }()
 
 	operationID := uuid.NewString()
 	rec := &OperationRecord{
@@ -189,7 +203,9 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		if checkRunID != 0 {
 			_ = client.UpdateCheckRun(ctx, repo.Owner, repo.Name, checkRunID, github.CheckRunOptions{
 				Name: checkRunName(t.Project.Name, t.Operation), Status: "completed", Conclusion: "failure",
-				Text: fmt.Sprintf("creating Runner Job: %v", err),
+				Title:   "failure",
+				Summary: "The Runner Job could not be created, so this operation never ran.",
+				Text:    fmt.Sprintf("creating Runner Job: %v", err),
 			})
 		}
 		return rejectedResult(t, fmt.Sprintf("creating job: %v", err))
@@ -217,6 +233,23 @@ func (o *Orchestrator) deleteRecord(ctx context.Context, operationID string) {
 	if err := o.records.Delete(ctx, operationID); err != nil {
 		slog.ErrorContext(ctx, "deleting operation record", "operation_id", operationID, "error", err)
 	}
+}
+
+// appendCheckRunNote adds a short note to a result's Output when this
+// Target's check run couldn't be created or updated. A check run that
+// never appeared is otherwise invisible on the pull request: the result
+// comment says nothing about it, and the underlying GitHub error reaches
+// only the Server log (Requirement 9.5).
+func appendCheckRunNote(result github.ProjectResult, err error) github.ProjectResult {
+	if err == nil {
+		return result
+	}
+	result.Output += fmt.Sprintf(
+		"\n\nNote: this Project's GitHub check run could not be recorded (%v). "+
+			"The operation itself is unaffected — only its entry in the PR's checks tab is missing.",
+		err,
+	)
+	return result
 }
 
 func rejectedResult(t Target, reason string) github.ProjectResult {

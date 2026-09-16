@@ -54,8 +54,13 @@ below) — nothing about it changes how either of those two behaves.
 Every failure branch in this slice's requirements resolves to one of two
 shapes, and it's worth naming them once instead of re-deriving the
 distinction in every requirement: a **soft failure** (check run creation
-fails, per Requirement 9.5) is logged and ignored — the user's requested
-operation still runs. A **hard failure** (config missing, lock conflict,
+or update fails, per Requirement 9.5) is logged and *noted*, never
+silently ignored — the user's requested operation still runs, and the
+result comment carries a line naming what couldn't be recorded and why
+(`appendCheckRunNote`). Soft means "doesn't stop the operation", not
+"invisible to the user": a PR showing a result comment and no check run,
+with the reason only in the Server's log, is a worse outcome than the
+failure itself. A **hard failure** (config missing, lock conflict,
 `BuildJob` rejects a version, `jobs.Client.Create` errors) always produces
 a comment and always stops that Target before a Runner Job exists for it.
 Nothing in this slice has a third shape; keeping to these two is what

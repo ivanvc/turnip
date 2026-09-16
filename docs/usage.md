@@ -55,6 +55,12 @@ order (one finishes before the next starts), and a malformed line (e.g.
 `/turnip` with nothing after it) is reported back without blocking the
 other, well-formed lines in the same comment.
 
+Only `/turnip`, `/terraform`, `/pulumi` and `/helmfile` are turnip's.
+A line starting with anything else — another bot's command like `/jira`,
+a `/cc`, or a file path pasted at the start of a line — is ignored
+completely: no operation, and no reply saying it was ignored. Turnip
+stays silent on comments that aren't addressed to it.
+
 ### Releasing a lock manually
 
 ```

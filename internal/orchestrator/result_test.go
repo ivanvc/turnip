@@ -154,3 +154,52 @@ func TestHandleResult_DeletesRecordAfterFinalizing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, rec)
 }
+
+// The check run's name is its stable identity — required status checks
+// and branch protection match on it — so an Operation's outcome is
+// carried by the title and summary, which is what the checks tab renders
+// beneath the name.
+func TestCheckRunResultTitle(t *testing.T) {
+	assert.Equal(t, "success", checkRunResultTitle(true))
+	assert.Equal(t, "failure", checkRunResultTitle(false))
+}
+
+func TestCheckRunResultSummary(t *testing.T) {
+	assert.Equal(t, "add: 1, change: 2, destroy: 0", checkRunResultSummary(true, "add: 1, change: 2, destroy: 0"))
+	assert.Equal(t, "No changes.", checkRunResultSummary(true, ""))
+	assert.Contains(t, checkRunResultSummary(false, "add: 0, change: 2, destroy: 0"), "failed")
+	assert.Contains(t, checkRunResultSummary(false, "add: 0, change: 2, destroy: 0"), "change: 2")
+	assert.Contains(t, checkRunResultSummary(false, ""), "failed")
+	assert.NotEmpty(t, checkRunResultSummary(false, ""), "summary is required by GitHub whenever output is sent")
+}
+
+// The checks tab renders the title (and the start of the summary) under
+// the check run's name, so that is where an Operation's outcome belongs.
+// The name itself must not vary: required status checks match on it.
+func TestHandleResult_SuccessCheckRunCarriesOutcomeInTitleAndSummary(t *testing.T) {
+	o, client := testResultOrchestrator(t, &fakeLockManager{})
+	createTestRecord(t, o, "op-1", "diff", false)
+
+	require.NoError(t, o.HandleResult(context.Background(), "op-1", rpc.OperationResult{
+		Success: true,
+		Changes: rpc.ChangeSummary{Change: 2},
+	}))
+
+	assert.Equal(t, "success", client.updatedCheckRun.Title)
+	assert.Contains(t, client.updatedCheckRun.Summary, "change: 2")
+	assert.Contains(t, client.updatedCheckRun.Name, "diff", "the name stays the stable identity")
+}
+
+func TestHandleResult_FailureCheckRunTitleSaysFailure(t *testing.T) {
+	o, client := testResultOrchestrator(t, &fakeLockManager{})
+	createTestRecord(t, o, "op-2", "diff", false)
+
+	require.NoError(t, o.HandleResult(context.Background(), "op-2", rpc.OperationResult{
+		Success: false,
+		Output:  "helmfile diff exited 1",
+	}))
+
+	assert.Equal(t, "failure", client.updatedCheckRun.Title)
+	assert.Contains(t, client.updatedCheckRun.Summary, "failed")
+	assert.Contains(t, client.updatedCheckRun.Text, "helmfile diff exited 1")
+}

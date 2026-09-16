@@ -77,16 +77,35 @@ type fakeExecuteClient struct {
 	createCheckRunErr    error
 	generateTokenErr     error
 	updateCheckRunCalled int
+	// createdCheckRun/updatedCheckRun capture the last options each call
+	// received, so tests can assert what the checks tab would show —
+	// notably Title/Summary, which is where an Operation's outcome is
+	// carried (the Name stays stable for required status checks).
+	//
+	// executeTargets runs one goroutine per Target against a single
+	// client, so these writes need the mutex. Tests read the fields
+	// directly without locking, which is safe: executeTargets waits on
+	// its WaitGroup before returning, ordering every write before any
+	// read a test performs afterwards.
+	mu              sync.Mutex
+	createdCheckRun github.CheckRunOptions
+	updatedCheckRun github.CheckRunOptions
 }
 
 func (f *fakeExecuteClient) CreateCheckRun(ctx context.Context, owner, repo string, opts github.CheckRunOptions) (int64, error) {
+	f.mu.Lock()
+	f.createdCheckRun = opts
+	f.mu.Unlock()
 	if f.createCheckRunErr != nil {
 		return 0, f.createCheckRunErr
 	}
 	return 555, nil
 }
 func (f *fakeExecuteClient) UpdateCheckRun(ctx context.Context, owner, repo string, checkRunID int64, opts github.CheckRunOptions) error {
+	f.mu.Lock()
 	f.updateCheckRunCalled++
+	f.updatedCheckRun = opts
+	f.mu.Unlock()
 	return nil
 }
 func (f *fakeExecuteClient) GenerateInstallationToken(ctx context.Context) (string, error) {
@@ -298,6 +317,35 @@ func TestExecuteOne_JobCarriesPullRequestBaseRef(t *testing.T) {
 	assert.Equal(t, testPR.BaseRef, env["TURNIP_BASE_REF"])
 }
 
+// A check run that can't be created is invisible on the PR otherwise:
+// the comment arrives, no check run appears, and the reason lives only in
+// the Server log. The operation must still run — only the note is new.
+func TestExecuteOne_CheckRunCreationFailureIsNotedInResult(t *testing.T) {
+	locks := &fakeLockManager{}
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true, Output: "diff output"}}
+	o, _ := testOrchestrator(t, locks, jobsClient)
+	client := &fakeExecuteClient{createCheckRunErr: errors.New(`422 "summary", "title" weren't supplied`)}
+
+	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+
+	assert.True(t, result.Success, "a failed check run must not fail the operation")
+	assert.Contains(t, result.Output, "diff output", "the Runner's own output is kept")
+	assert.Contains(t, result.Output, "check run could not be recorded")
+	assert.Contains(t, result.Output, "422", "the underlying GitHub error is included")
+	assert.Equal(t, 1, jobsClient.createCount(), "the Runner Job still runs")
+}
+
+func TestExecuteOne_SucceedingCheckRunAddsNoNote(t *testing.T) {
+	locks := &fakeLockManager{}
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true, Output: "diff output"}}
+	o, _ := testOrchestrator(t, locks, jobsClient)
+	client := &fakeExecuteClient{}
+
+	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+
+	assert.Equal(t, "diff output", result.Output)
+}
+
 func TestExecuteOne_JobCarriesServerDefaultServiceAccount(t *testing.T) {
 	locks := &fakeLockManager{}
 	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
@@ -359,4 +407,17 @@ func TestExecuteTargets_RunsConcurrentlyAndWaitsForAll(t *testing.T) {
 
 	results := o.executeTargets(context.Background(), client, testRepo, testPR, 1, targets)
 	assert.Len(t, results, 2)
+}
+
+func TestExecuteOne_CheckRunCreatedWithInProgressTitle(t *testing.T) {
+	locks := &fakeLockManager{}
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
+	o, _ := testOrchestrator(t, locks, jobsClient)
+	client := &fakeExecuteClient{}
+
+	o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+
+	assert.Equal(t, "in progress", client.createdCheckRun.Title)
+	assert.NotEmpty(t, client.createdCheckRun.Summary, "GitHub rejects check-run output without a summary")
+	assert.Equal(t, testPR.HeadSHA, client.createdCheckRun.HeadSHA)
 }

@@ -105,6 +105,31 @@ func TestHandleIssueComment_NoTriggerIsSilentNoop(t *testing.T) {
 	assert.Empty(t, client.posted)
 }
 
+// The flooding case, end to end: a repository being onboarded has no
+// turnip.yaml yet, and someone comments a slash command meant for another
+// bot. turnip must post nothing at all — not a config error, not a
+// permission error, not a "that looked malformed" note. Reviewing a PR is
+// impossible if every such comment draws a reply.
+func TestHandleIssueComment_OtherBotsCommandPostsNothingWithoutConfig(t *testing.T) {
+	o := testCommentOrchestrator(t, &fakeLockManager{})
+
+	for _, body := range []string{
+		"/jira create ATO-1",
+		"/lgtm",
+		"/cc @teammate",
+		"looks good to me",
+	} {
+		client := &fakeCommentEventClient{
+			permission: "write",
+			files:      map[string][]byte{}, // no turnip.yaml anywhere
+			pr:         &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		}
+
+		require.NoError(t, callHandleIssueComment(o, client, commentEvent(body, "alice")))
+		assert.Emptyf(t, client.postedComments(), "comment %q is not addressed to turnip", body)
+	}
+}
+
 // The mirror of TestHandlePlanTrigger_MissingConfigPostsNothing: an
 // automatic plan stays silent when a repository has no turnip.yaml, but
 // an explicit Trigger Command must still say so — here a human asked

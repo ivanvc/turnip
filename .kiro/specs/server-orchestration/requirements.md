@@ -539,13 +539,36 @@ without leaving the PR's checks tab.
    SHALL call `UpdateCheckRun` with `Status: "completed"`,
    `Conclusion: "failure"`, including `ErrorMessage`/`Output` in `Text`
    (Requirement 9.3 of the global spec)
+3a. THE Server SHALL carry each check run's outcome in its `Title` and
+   `Summary` — never by varying its `Name`, which is the check run's
+   stable identity and what a repository's required status checks and
+   branch protection rules match on; a name varying per run would
+   register as a separate check each time and never satisfy a rule
+   configured against the original. Every check-run call SHALL therefore
+   supply both fields: `in progress` at creation (9.1), `success`/
+   `failure` at result time (9.2/9.3), `failure` when the Runner Job
+   could not be created (Requirement 7.6), and `timed out` from the
+   sweep (Requirement 8). This also satisfies github-integration's
+   Requirement 6.5, which requires both fields whenever any check-run
+   output is sent at all
 4. THE Server SHALL create one check run per Target — never share one check
    run across multiple Projects (Requirement 9.5 of the global spec)
-5. IF `CreateCheckRun` itself fails, THE Server SHALL log the error and
-   proceed with Runner Job creation regardless — check-run reporting is a
-   secondary status surface, not a precondition for running the operation
-   the user asked for (mirrors the global design's Error Handling section:
-   "falling back to comment-only status reporting")
+5. IF `CreateCheckRun` or a later `UpdateCheckRun` for a Target fails,
+   THE Server SHALL log the error and proceed regardless — check-run
+   reporting is a secondary status surface, not a precondition for
+   running the operation the user asked for (mirrors the global design's
+   Error Handling section: "falling back to comment-only status
+   reporting") — AND THE Server SHALL append a note naming the underlying
+   error to that Target's `ProjectResult.Output`, so the consolidated
+   comment (Requirement 10) states that the check run is missing and why.
+
+   **Amended 2026-09**: the original criterion stopped at "log the error
+   and proceed". In practice a real 422 from `CreateCheckRun` (see
+   github-integration's task 22) produced a PR with a result comment and
+   no check run at all, with the reason reachable only by reading the
+   Server's log — the information existed and was discarded. "Falling
+   back to comment-only status reporting" is only honest if the comment
+   says the fallback happened.
 
 ### Requirement 10: Consolidated PR Comment Orchestration
 

@@ -279,6 +279,34 @@ package doc update, then tests (unit, then property).
       no `output` key at all when there is nothing to report
     - _Requirements: (regression coverage for 22)_
 
+- [x] 23. Only treat known tool names as triggers (2026-09 amendment)
+  - Reported from a real deployment, and noisier than task 22's bug: PR
+    comments that never mentioned turnip got replies from it. Any line
+    starting with `/word` became a `TriggerCommand`, so another bot's
+    command (jaws runs jira-bot), a `/lgtm`, or a pasted path sent
+    `HandleIssueComment` past its `ErrNoTrigger` early return into
+    collaborator authorization and `fetchConfig` — which, in a repository
+    without turnip.yaml, replied "turnip.yaml was not found" to a comment
+    addressed to somebody else
+  - `ParseTriggers` now skips any line whose tool name isn't `turnip` or
+    one of `internal/config`'s tool constants. Skipped, not reported as
+    malformed: a "that line looked like a trigger" reply would be exactly
+    as unwanted as acting on it
+  - `internal/github` gains an import of `internal/config` (no cycle:
+    `config` is a leaf and imports nothing from here). This contradicted
+    requirements 4.2/4.3 as originally written, so both are amended in
+    place with the reasoning rather than silently diverged from
+  - _Requirements: 4.2, 4.2a, 4.3 (amended)_
+
+  - [x] 23.1 Tests
+    - `parser_test.go`: `TestParseTriggers_UnrecognizedToolStillParses`
+      asserted the old behavior and is replaced by
+      `TestParseTriggers_CommandForAnotherBotIsNotATrigger` (a table of
+      real-world lines: `/jira`, `/deploy`, `/lgtm`, `/cc`, a pasted
+      path), plus coverage that all four known tools still parse and that
+      an unknown line alongside a real trigger doesn't disturb it
+    - _Requirements: (regression coverage for 23)_
+
 ## Task Dependency Graph
 
 ```json

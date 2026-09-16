@@ -309,6 +309,59 @@ worked in parallel.
       still comments
     - _Requirements: (regression coverage for 23)_
 
+- [x] 24. Surface check-run failures in the PR comment (2026-09 amendment)
+  - Follow-up to github-integration's task 22: that fixed the 422 that
+    broke every check run, but the deployment only revealed it because
+    someone read the Server log. The PR itself showed a result comment
+    and no check run, with no hint one was attempted
+  - `appendCheckRunNote(result, err)` (execute.go) appends a line naming
+    the underlying GitHub error to a Target's `ProjectResult.Output`,
+    which the consolidated comment already renders — chosen over a new
+    `ProjectResult` field so `BuildConsolidatedComment`'s size-sensitive
+    splitting (`splitDetailSection`/`packSections`/`maxCommentLength`)
+    stays untouched, and following `result.go`'s existing precedent of
+    appending "Lock released — …" to the same field
+  - Applied at all three sites that touch a check run: creation
+    (`executeOne`, via a named return plus one `defer`, so every return
+    path after the creation attempt carries the note rather than six
+    call sites each remembering), the result-time update (`result.go`),
+    and the sweep's timeout update (`sweep.go`)
+  - Requirement 9.5 and design.md's Decision 3 both said "logged and
+    ignored"; both are amended in place with the reasoning
+  - _Requirements: 9.5 (amended)_
+
+  - [x] 24.1 Tests
+    - `execute_test.go`: a failing `CreateCheckRun` still runs the Job,
+      keeps the Runner's own output, and adds a note containing the
+      GitHub error; a succeeding one adds nothing
+    - _Requirements: (regression coverage for 24)_
+
+- [x] 25. Carry each check run's outcome in its title and summary (2026-09 amendment)
+  - Follow-up to task 24: that surfaced check-run *reporting* failures in
+    the PR comment. This makes the check run itself say what happened in
+    the checks tab, where previously the only signal was the conclusion
+    icon — the title merely repeated the name (github-integration's task
+    22 defaults `Title` to the check run's name when a caller leaves it
+    unset), so the tab showed `turnip/cicd-2/diff` twice and nothing else
+  - Deliberately *not* in the name: the name is the check run's stable
+    identity, matched by required status checks and branch protection. A
+    name varying with the outcome would register as a separate check per
+    run and never satisfy a rule configured against the original
+  - All four call sites now supply both fields: `in progress` at creation
+    (`execute.go`), `failure` + "the Runner Job could not be created"
+    when `jobs.Client.Create` fails (`execute.go`), `success`/`failure`
+    plus the change counts at result time (`result.go`, via the pure
+    `checkRunResultTitle`/`checkRunResultSummary` helpers), and
+    `timed out` from the sweep (`sweep.go`)
+  - _Requirements: 9.1, 9.2, 9.3, 9.3a (new)_
+
+  - [x] 25.1 Tests
+    - `result_test.go`: the two helpers directly — success with and
+      without changes, failure with and without changes, and that a
+      failure summary is never empty (GitHub rejects output without a
+      summary; see github-integration 6.5)
+    - _Requirements: (coverage for 25)_
+
 ## Notes
 
 - No new third-party dependencies (design.md's "Dependencies" section);

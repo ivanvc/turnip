@@ -58,9 +58,14 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 
 	if rec.CheckRunID != 0 {
 		opts := github.CheckRunOptions{
-			Name:    checkRunName(rec.Project.Name, rec.Operation),
-			Status:  "completed",
-			Summary: changeSummaryText(result.Changes),
+			Name:   checkRunName(rec.Project.Name, rec.Operation),
+			Status: "completed",
+			// The name is the check run's stable identity (required
+			// status checks and branch protection match on it), so the
+			// outcome goes in the title and summary — which is what the
+			// checks tab renders under the name.
+			Title:   checkRunResultTitle(result.Success),
+			Summary: checkRunResultSummary(result.Success, changeSummaryText(result.Changes)),
 			Text:    result.Output,
 		}
 		if result.Success {
@@ -70,6 +75,11 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 		}
 		if err := client.UpdateCheckRun(ctx, rec.Owner, rec.Repo, rec.CheckRunID, opts); err != nil {
 			slog.ErrorContext(ctx, "updating check run", "operation_id", operationID, "error", err)
+			// Surfaced in the comment, not just logged: this result is
+			// what reaches the PR, and a check run stuck at "in progress"
+			// with no explanation is worse than a noted failure
+			// (Requirement 9.5).
+			pr = appendCheckRunNote(pr, err)
 		}
 	}
 
@@ -105,6 +115,31 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 	}
 
 	return nil
+}
+
+// checkRunResultTitle and checkRunResultSummary render an Operation's
+// outcome for the checks tab. GitHub shows a check run's title (and the
+// first part of its summary) directly beneath the name, and the name
+// itself must stay stable — it is what required status checks match on —
+// so these two fields are where the outcome belongs.
+func checkRunResultTitle(success bool) string {
+	if success {
+		return "success"
+	}
+	return "failure"
+}
+
+func checkRunResultSummary(success bool, changes string) string {
+	switch {
+	case success && changes != "":
+		return changes
+	case success:
+		return "No changes."
+	case changes != "":
+		return "The operation failed. " + changes
+	default:
+		return "The operation failed — see the output below."
+	}
 }
 
 func changeSummaryText(c rpc.ChangeSummary) string {

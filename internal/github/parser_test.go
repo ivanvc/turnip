@@ -75,11 +75,39 @@ func TestParseTriggers_MissingOperationReturnsMalformed(t *testing.T) {
 	assert.Equal(t, "/turnip", malformed[0].Content)
 }
 
-func TestParseTriggers_UnrecognizedToolStillParses(t *testing.T) {
-	got, err := ParseTriggers("/deploy plan")
+// A slash command addressed to some other bot — or a pasted path, or a
+// convention like /lgtm — is not turnip's business. Treating these as
+// triggers made turnip authorize the author, fetch turnip.yaml, and reply
+// to people who never addressed it.
+func TestParseTriggers_CommandForAnotherBotIsNotATrigger(t *testing.T) {
+	for _, body := range []string{
+		"/jira create ATO-1",
+		"/deploy plan",
+		"/lgtm",
+		"/cc @teammate",
+		"/etc/hosts is the file I meant",
+	} {
+		got, err := ParseTriggers(body)
+		require.ErrorIs(t, err, ErrNoTrigger, "body: %q", body)
+		assert.Nil(t, got, "body: %q", body)
+	}
+}
+
+func TestParseTriggers_EveryKnownToolIsRecognized(t *testing.T) {
+	for _, tool := range []string{"turnip", "terraform", "pulumi", "helmfile"} {
+		got, err := ParseTriggers("/" + tool + " diff")
+		require.NoError(t, err, "tool: %s", tool)
+		require.Len(t, got, 1)
+		assert.Equal(t, tool, got[0].Tool)
+	}
+}
+
+func TestParseTriggers_UnknownToolAlongsideRealTriggerIsIgnored(t *testing.T) {
+	got, err := ParseTriggers("/jira comment something\n/turnip diff web")
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	assert.Equal(t, &TriggerCommand{Tool: "deploy", Operation: "plan"}, got[0])
+	assert.Equal(t, "turnip", got[0].Tool)
+	assert.Equal(t, []string{"web"}, got[0].Projects)
 }
 
 func TestParseTriggers_MultipleWellFormedLinesBatchIntoOneComment(t *testing.T) {

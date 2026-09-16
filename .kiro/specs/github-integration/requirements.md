@@ -142,14 +142,32 @@ of posting one comment per action the way Atlantis requires.
    stopping at the first match — a comment containing
    `/turnip plan project-1` on one line and `/turnip plan project-2` on
    another SHALL produce two `TriggerCommand`s, one per line, in the same
-   comment; `<tool name>` is whatever a Plugin calls itself (Requirement
-   3.1 of the global spec — "terraform", "pulumi", "helmfile" today,
-   whatever a future Plugin adds later), never a fixed set this package
-   hardcodes
+   comment; `<tool name>` is `"turnip"` or one of `internal/config`'s
+   supported tool constants (`terraform`, `pulumi`, `helmfile`)
+2a. IF a line begins with `/` followed by any other word, THEN
+   `ParseTriggers` SHALL skip that line entirely — neither a
+   `TriggerCommand` nor a malformed-line error. Such lines are other
+   bots' commands (`/jira`, `/lgtm`), `/cc` conventions, or pasted paths,
+   and are not addressed to turnip.
+
+   **Amended 2026-09** (originally: `<tool name>` is "whatever a Plugin
+   calls itself … never a fixed set this package hardcodes", with 4.3
+   forbidding validation against a known-tool list). That wording made
+   turnip treat *every* leading-slash line as its own: it authorized the
+   comment's author, fetched turnip.yaml, and replied — so in a
+   repository sharing its PRs with any other slash-command bot, turnip
+   answered comments nobody addressed to it. The original rationale (the
+   Plugin registry lives in a package this one can't import) still holds,
+   but `internal/config` is a leaf package this one *can* import, and
+   `config.Parse` already rejects any tool outside those same constants
+   — so the vocabulary was never genuinely open-ended. A future Plugin
+   adds its name to `internal/config` either way.
 3. `ParseTriggers` SHALL populate each resulting `TriggerCommand`'s `Tool`
-   and `Operation` from its line's first two tokens, without validating
-   either against a known tool or operation list (that validation needs
-   the Plugin registry, which this package does not depend on)
+   and `Operation` from its line's first two tokens, validating only that
+   `Tool` is one of the names in 4.2 — never that `Operation` is valid for
+   that tool, which needs the Plugin registry this package does not
+   depend on (an unrecognized operation is Slice 6's rejection to report,
+   per server-orchestration's Requirement 4.5)
 4. WHERE one or more project-name tokens appear between a line's operation
    and an optional `--` delimiter, `ParseTriggers` SHALL populate that
    line's `TriggerCommand.Projects` with them; an absent `--` and no
