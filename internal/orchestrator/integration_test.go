@@ -36,7 +36,7 @@ type grpcDrivingJobCreator struct {
 }
 
 func (g *grpcDrivingJobCreator) Create(ctx context.Context, job *batchv1.Job) (*batchv1.Job, error) {
-	operationID := job.Labels["turnip.io/operation-id"]
+	operationID := job.Labels[jobs.OperationIDLabel]
 	job.Name = "turnip-runner-" + operationID
 
 	go func() {

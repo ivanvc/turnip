@@ -117,7 +117,7 @@ func (f *fakeExecuteClient) GenerateInstallationToken(ctx context.Context) (stri
 
 // fakeJobCreator publishes a scripted result to the operation-done
 // channel as soon as Create is called, extracting the operation ID from
-// the Job's labels (jobs.BuildJob always sets turnip.io/operation-id).
+// the Job's labels (jobs.BuildJob always sets jobs.OperationIDLabel).
 // Waits for the subscriber to actually be listening first (Pub/Sub has
 // no replay) — this only matters because the fake has near-zero latency;
 // a real Runner's round trip makes this ordering a non-issue in practice.
@@ -156,7 +156,7 @@ func (f *fakeJobCreator) Create(ctx context.Context, job *batchv1.Job) (*batchv1
 	if f.createErr != nil {
 		return nil, f.createErr
 	}
-	operationID := job.Labels["turnip.io/operation-id"]
+	operationID := job.Labels[jobs.OperationIDLabel]
 	job.Name = "turnip-runner-" + operationID
 	go func() {
 		// assert, not require: this runs on a non-test goroutine, and

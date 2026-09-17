@@ -414,6 +414,30 @@ wiring, then tests (unit, then property).
       and that another Runner's directory is left alone
     - _Requirements: (coverage for 24)_
 
+- [x] 25. Rename the Job label prefix to a domain turnip owns (2026-09 amendment)
+  - `BuildJob` labelled every Runner Job with `turnip.io/operation-id` and
+    `turnip.io/project`. Kubernetes doesn't verify prefix ownership, so this
+    worked, but the convention is to name a domain you control and
+    `turnip.io` is not one. Recorded in `roadmap.md`'s Backlog until now,
+    and settled deliberately while the cost is still two literals: nothing
+    selects on these keys (the only label selector in the codebase is
+    `internal/jobs/status.go`'s `batch.kubernetes.io/job-name`, Kubernetes'
+    own built-in label), no `deploy/` manifest or dashboard references
+    them, and Job lookups go by name — so there is no in-flight-Job
+    migration to stage across a rollout. That stops being true the moment
+    anyone builds a selector or dashboard on them
+  - Both keys move to the `turnip.ivan.vc/` prefix, and are now exported as
+    `jobs.OperationIDLabel`/`jobs.ProjectLabel` rather than written as
+    string literals. The duplication across a package boundary is what made
+    this rename a five-file edit instead of a one-line one; the next prefix
+    change is a single edit
+  - `internal/orchestrator`'s `execute_test.go` and `integration_test.go`
+    now read those constants instead of their own copies of the literal;
+    `server-orchestration`'s `requirements.md` and `design.md` mentions
+    updated to match what ships; the Backlog entry removed from
+    `roadmap.md`
+  - _Requirements: (maintenance amendment, no behavioral change)_
+
 ## Notes
 
 - `k8s.io/api`, `k8s.io/apimachinery`, and `k8s.io/client-go` are already

@@ -55,7 +55,7 @@ implementable as written and need to be resolved as part of this slice:
   instances' sweeps overlap. Once claimed, rather than reporting a bare
   "timed out" with no further explanation, THE Server queries the
   Kubernetes API for that Operation's Job/Pod status (`jobs.BuildJob`
-  already labels every Job with `turnip.io/operation-id`, so the
+  already labels every Job with `turnip.ivan.vc/operation-id`, so the
   correlation key already exists) to surface the actual cause — e.g. an
   image pull failure, a scheduling failure, or a Pod still `Pending` —
   giving the reported failure real diagnostic content instead of silence
@@ -495,7 +495,8 @@ failure message tells me something more useful than "timed out."
 4. FOR an Operation claimed by 8.3, THE Server SHALL query the Kubernetes
    API — via a status-query method this slice adds to `jobs.Client`
    (Requirement 7.1), looked up by the Operation Record's Job name or the
-   `turnip.io/operation-id` label `jobs.BuildJob` already sets — for that
+   `turnip.ivan.vc/operation-id` label `jobs.BuildJob` already sets — for
+   that
    Job's Pod status, and SHALL include what it finds (e.g. an image-pull
    failure, a scheduling failure, a Pod still `Pending`, or no Job/Pod
    found at all) in the reported failure's detail text, rather than a bare

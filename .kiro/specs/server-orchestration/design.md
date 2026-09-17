@@ -43,7 +43,8 @@ both believe they own the same Operation Record's outcome.
 
 Requirement 8.4 needs Job/Pod status. `internal/jobs` (Slice 5) already
 wraps a `kubernetes.Interface` and already has the exact label
-(`turnip.io/operation-id`) and Job-name convention needed to look one up;
+(`turnip.ivan.vc/operation-id`) and Job-name convention needed to look one
+up;
 building a second client wrapper elsewhere would duplicate that wiring for
 no benefit. `Client.Status` is a new method alongside the existing
 `Create`/`Delete` (see "`internal/jobs/status.go` (Slice 5 amendment)"
