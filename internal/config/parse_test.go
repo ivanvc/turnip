@@ -9,7 +9,7 @@ import (
 
 func TestParse_ValidRoundTrip(t *testing.T) {
 	data := []byte(`
-version: 1
+schemaVersion: v1alpha1
 projects:
   - name: vpc
     directory: infra/vpc
@@ -22,7 +22,7 @@ projects:
 
 	c, err := Parse(data)
 	require.NoError(t, err)
-	assert.Equal(t, 1, c.Version)
+	assert.Equal(t, SupportedSchemaVersion, c.SchemaVersion)
 	require.Len(t, c.Projects, 1)
 
 	p := c.Projects[0]
@@ -45,7 +45,7 @@ func TestParse_MalformedYAML(t *testing.T) {
 }
 
 func TestParse_NameDefaultsToDirectory(t *testing.T) {
-	data := []byte("version: 1\nprojects:\n  - directory: infra/vpc\n    tool: terraform\n")
+	data := []byte("schemaVersion: v1alpha1\nprojects:\n  - directory: infra/vpc\n    tool: terraform\n")
 
 	c, err := Parse(data)
 	require.NoError(t, err)
@@ -53,7 +53,7 @@ func TestParse_NameDefaultsToDirectory(t *testing.T) {
 }
 
 func TestParse_ExplicitNameNotOverridden(t *testing.T) {
-	data := []byte("version: 1\nprojects:\n  - name: vpc\n    directory: infra/vpc\n    tool: terraform\n")
+	data := []byte("schemaVersion: v1alpha1\nprojects:\n  - name: vpc\n    directory: infra/vpc\n    tool: terraform\n")
 
 	c, err := Parse(data)
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestParse_ExplicitNameNotOverridden(t *testing.T) {
 
 func TestParse_DefaultedNamesStillDetectDuplicates(t *testing.T) {
 	data := []byte(`
-version: 1
+schemaVersion: v1alpha1
 projects:
   - directory: infra/vpc
     tool: terraform
@@ -86,7 +86,9 @@ projects:
 }
 
 func TestParse_TypeMismatch(t *testing.T) {
-	data := []byte("version: notanumber\n")
+	// A scalar where a sequence belongs: the mismatch must come from a
+	// typed field, and every scalar is a valid schemaVersion.
+	data := []byte("schemaVersion: v1alpha1\nprojects: notalist\n")
 
 	c, err := Parse(data)
 	require.Nil(t, c)
@@ -97,17 +99,51 @@ func TestParse_TypeMismatch(t *testing.T) {
 }
 
 func TestParse_EmptyProjects(t *testing.T) {
-	data := []byte("version: 1\n")
+	data := []byte("schemaVersion: v1alpha1\n")
 
 	c, err := Parse(data)
 	require.NoError(t, err)
 	assert.Nil(t, c.Projects)
 }
 
-func TestParse_VersionNotRejected(t *testing.T) {
-	data := []byte("version: 2\nprojects: []\n")
+func TestParse_UnsupportedSchemaVersionRejected(t *testing.T) {
+	data := []byte("schemaVersion: v0\nprojects: []\n")
 
-	c, err := Parse(data)
-	require.NoError(t, err)
-	assert.Equal(t, 2, c.Version)
+	_, err := Parse(data)
+	require.Error(t, err)
+
+	var errs ValidationErrors
+	require.ErrorAs(t, err, &errs)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "schemaVersion", errs[0].Field)
+	assert.Contains(t, errs[0].Message, SupportedSchemaVersion, "the error names the version that is supported")
+}
+
+func TestParse_MissingSchemaVersionRejected(t *testing.T) {
+	data := []byte("projects: []\n")
+
+	_, err := Parse(data)
+	require.Error(t, err)
+
+	var errs ValidationErrors
+	require.ErrorAs(t, err, &errs)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "schemaVersion", errs[0].Field)
+}
+
+// The previous schema is not detected by name: turnip carries no
+// compatibility machinery for it (design.md, Decision 4), so the old key
+// is ignored like any other unknown field and the file fails on the
+// absent schemaVersion.
+func TestParse_LegacyVersionFieldFailsOnMissingSchemaVersion(t *testing.T) {
+	data := []byte("version: 1\nprojects: []\n")
+
+	_, err := Parse(data)
+	require.Error(t, err)
+
+	var errs ValidationErrors
+	require.ErrorAs(t, err, &errs)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "schemaVersion", errs[0].Field)
+	assert.Contains(t, errs[0].Message, "required")
 }

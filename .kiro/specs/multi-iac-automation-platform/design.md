@@ -332,7 +332,7 @@ message ChangeSummary {
 ### Configuration Structure (turnip.yaml)
 
 ```yaml
-version: 1
+schemaVersion: v1alpha1
 projects:
   - name: terraform-vpc
     directory: infrastructure/vpc

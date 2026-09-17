@@ -40,13 +40,13 @@ func TestClient_GetFile(t *testing.T) {
 
 	mux.HandleFunc("/repos/owner/repo/contents/turnip.yaml", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "main", r.URL.Query().Get("ref"))
-		content := base64.StdEncoding.EncodeToString([]byte("version: 1\n"))
+		content := base64.StdEncoding.EncodeToString([]byte("schemaVersion: v1alpha1\n"))
 		writeJSON(t, w, map[string]string{"type": "file", "encoding": "base64", "content": content})
 	})
 
 	got, err := client.GetFile(t.Context(), "owner", "repo", "turnip.yaml", "main")
 	require.NoError(t, err)
-	assert.Equal(t, "version: 1\n", string(got))
+	assert.Equal(t, "schemaVersion: v1alpha1\n", string(got))
 }
 
 func TestClient_GetFile_NotFound(t *testing.T) {

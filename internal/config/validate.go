@@ -2,14 +2,36 @@ package config
 
 import (
 	"fmt"
+	"maps"
+	"slices"
+	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 )
+
+// configFileRef is the ProjectRef used for problems that belong to the
+// file as a whole rather than to any one project.
+const configFileRef = "turnip.yaml"
 
 // validate checks a parsed Config against Requirement 2's rules,
 // accumulating every violation found rather than stopping at the first one.
 func validate(c *Config) error {
 	var errs ValidationErrors
+
+	switch {
+	case c.SchemaVersion == "":
+		errs = append(errs, &ValidationError{
+			ProjectRef: configFileRef,
+			Field:      "schemaVersion",
+			Message:    fmt.Sprintf("required; set schemaVersion: %s", SupportedSchemaVersion),
+		})
+	case c.SchemaVersion != SupportedSchemaVersion:
+		errs = append(errs, &ValidationError{
+			ProjectRef: configFileRef,
+			Field:      "schemaVersion",
+			Message:    fmt.Sprintf("unsupported version %q; this turnip supports %q", c.SchemaVersion, SupportedSchemaVersion),
+		})
+	}
 
 	seenNames := make(map[string]bool, len(c.Projects))
 

@@ -77,7 +77,7 @@ func (f *fakePRClient) getFileCallLog() []string {
 }
 
 const validTurnipYAML = `
-version: 1
+schemaVersion: v1alpha1
 projects:
   - name: helm-a
     directory: a
@@ -204,7 +204,7 @@ func TestHandlePlanTrigger_MissingConfigPostsNothing(t *testing.T) {
 func TestHandlePlanTrigger_InvalidConfigStillPostsComment(t *testing.T) {
 	o, _ := testPullRequestOrchestrator(t)
 	client := &fakePRClient{files: map[string][]byte{
-		"turnip.yaml": []byte("version: 1\nprojects:\n  - name: broken\n"), // no directory/tool
+		"turnip.yaml": []byte("schemaVersion: v1alpha1\nprojects:\n  - name: broken\n"), // no directory/tool
 	}}
 
 	event := &github.WebhookEvent{

@@ -23,12 +23,12 @@ func TestParse_MissingRequiredFields(t *testing.T) {
 	}{
 		{
 			name:  "missing directory",
-			yaml:  "version: 1\nprojects:\n  - name: vpc\n    tool: terraform\n",
+			yaml:  "schemaVersion: v1alpha1\nprojects:\n  - name: vpc\n    tool: terraform\n",
 			field: "directory",
 		},
 		{
 			name:  "missing tool",
-			yaml:  "version: 1\nprojects:\n  - name: vpc\n    directory: infra/vpc\n",
+			yaml:  "schemaVersion: v1alpha1\nprojects:\n  - name: vpc\n    directory: infra/vpc\n",
 			field: "tool",
 		},
 	}
@@ -51,7 +51,7 @@ func TestParse_MissingRequiredFields(t *testing.T) {
 }
 
 func TestParse_MissingNameAndDirectoryRefersToProjectByIndex(t *testing.T) {
-	data := []byte("version: 1\nprojects:\n  - tool: terraform\n")
+	data := []byte("schemaVersion: v1alpha1\nprojects:\n  - tool: terraform\n")
 
 	_, err := Parse(data)
 	require.Error(t, err)
@@ -67,7 +67,7 @@ func TestParse_MissingNameAndDirectoryRefersToProjectByIndex(t *testing.T) {
 }
 
 func TestParse_UnsupportedTool(t *testing.T) {
-	data := []byte("version: 1\nprojects:\n  - name: vpc\n    directory: infra/vpc\n    tool: cloudformation\n")
+	data := []byte("schemaVersion: v1alpha1\nprojects:\n  - name: vpc\n    directory: infra/vpc\n    tool: cloudformation\n")
 
 	_, err := Parse(data)
 	require.Error(t, err)
@@ -82,7 +82,7 @@ func TestParse_UnsupportedTool(t *testing.T) {
 
 func TestParse_DuplicateProjectNames(t *testing.T) {
 	data := []byte(`
-version: 1
+schemaVersion: v1alpha1
 projects:
   - name: vpc
     directory: infra/vpc-a
@@ -107,7 +107,7 @@ projects:
 
 func TestParse_MultipleSimultaneousViolations(t *testing.T) {
 	data := []byte(`
-version: 1
+schemaVersion: v1alpha1
 projects:
   - directory: infra/a
   - name: b
@@ -126,7 +126,7 @@ projects:
 
 func TestParse_InvalidGlobPattern(t *testing.T) {
 	data := []byte(`
-version: 1
+schemaVersion: v1alpha1
 projects:
   - name: vpc
     directory: infra/vpc

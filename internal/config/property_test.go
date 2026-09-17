@@ -43,8 +43,10 @@ func genProjects(t *rapid.T) []Project {
 // Feature: multi-iac-automation-platform, Property 1: Configuration Round-Trip
 func TestProperty_ConfigurationRoundTrip(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		version := rapid.IntRange(1, 100).Draw(t, "version")
-		original := &Config{Version: version, Projects: genProjects(t)}
+		// No version is drawn: exactly one schema version is legal, so
+		// there is nothing to vary. What this property exercises is the
+		// projects round-tripping through YAML.
+		original := &Config{SchemaVersion: SupportedSchemaVersion, Projects: genProjects(t)}
 
 		data, err := yaml.Marshal(original)
 		require.NoError(t, err)
@@ -60,7 +62,7 @@ func TestProperty_ConfigurationRoundTrip(t *testing.T) {
 func TestProperty_ToolValidationRejectsInvalidTools(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		tool := genIdentifier(t, "tool")
-		data := []byte("version: 1\nprojects:\n  - name: p\n    directory: d\n    tool: " + tool + "\n")
+		data := []byte("schemaVersion: v1alpha1\nprojects:\n  - name: p\n    directory: d\n    tool: " + tool + "\n")
 
 		_, err := Parse(data)
 

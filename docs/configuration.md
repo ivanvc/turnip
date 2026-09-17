@@ -12,7 +12,7 @@ Committed to the repository root (or `.github/turnip.yaml` — checked only
 if the root file is missing, never both merged):
 
 ```yaml
-version: 1
+schemaVersion: v1alpha1
 projects:
   - name: web            # optional — defaults to `directory` if omitted
     directory: infra/web
@@ -25,7 +25,7 @@ projects:
 
 | Field | Required | Notes |
 |---|---|---|
-| `version` (top-level) | — | parsed, not currently validated against anything |
+| `schemaVersion` (top-level) | **yes** | the version of this file's schema — must be `v1alpha1`; see below |
 | `projects[].name` | no | defaults to `directory`; must be unique across the file once defaulted |
 | `projects[].directory` | **yes** | the tool's working directory, relative to the repo root |
 | `projects[].tool` | **yes** | one of `terraform`, `pulumi`, `helmfile` — see "Tool support" below |
@@ -35,6 +35,29 @@ projects:
 Every violation across the whole file is reported together (a typo in
 project 3 doesn't hide a missing `directory` in project 1) — you'll see
 every problem in one pass, not one-at-a-time.
+
+### `schemaVersion`
+
+Required, and exactly one value is accepted today: `v1alpha1`. A file
+missing it, or carrying anything else, is rejected naming both what it
+found and what this turnip supports.
+
+"Version" means three unrelated things around turnip, so to be explicit
+about which one this is:
+
+| | What it versions |
+|---|---|
+| `schemaVersion` (top-level) | the shape of `turnip.yaml` itself — this field |
+| `config.version` (per project) | which release of `terraform`/`helmfile`/`pulumi` the Runner provisions |
+| turnip's own release | the Server and Runner images you deploy |
+
+The `alpha` suffix is load-bearing, not decoration. Before turnip 1.0 the
+schema is expected to break, and advancing within alpha (`v1alpha2`,
+`v1alpha3`, …) costs no turnip release and promises nobody a migration
+window. It graduates to `v1` at turnip 1.0, at which point the schema
+version and the project's major version coincide. There is no
+compatibility shim in the meantime: a file on an older schema is
+rejected outright, never silently upgraded.
 
 ### `config` map — recognized keys
 

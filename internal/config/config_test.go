@@ -9,7 +9,7 @@ import (
 
 func TestParse_ConfigMapRoundTrips(t *testing.T) {
 	data := []byte(`
-version: 1
+schemaVersion: v1alpha1
 projects:
   - name: vpc
     directory: infra/vpc
@@ -32,7 +32,7 @@ projects:
 
 func TestParse_ConfigMapAbsentIsNil(t *testing.T) {
 	data := []byte(`
-version: 1
+schemaVersion: v1alpha1
 projects:
   - name: vpc
     directory: infra/vpc
