@@ -283,7 +283,7 @@ package doc update, then tests (unit, then property).
   - Reported from a real deployment, and noisier than task 22's bug: PR
     comments that never mentioned turnip got replies from it. Any line
     starting with `/word` became a `TriggerCommand`, so another bot's
-    command (jaws runs jira-bot), a `/lgtm`, or a pasted path sent
+    command, a `/lgtm`, or a pasted path sent
     `HandleIssueComment` past its `ErrNoTrigger` early return into
     collaborator authorization and `fetchConfig` — which, in a repository
     without turnip.yaml, replied "turnip.yaml was not found" to a comment
