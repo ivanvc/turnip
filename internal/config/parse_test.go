@@ -85,6 +85,36 @@ projects:
 	assert.True(t, found, "no duplicate-name ValidationError found in %v", verrs)
 }
 
+func TestParse_ProjectEnvSurvivesRoundTrip(t *testing.T) {
+	data := []byte(`
+schemaVersion: v1alpha1
+projects:
+  - name: web
+    directory: infra/web
+    tool: helmfile
+    env:
+      AWS_PROFILE: web-deployer
+      HELM_DIFF_COLOR: "true"
+`)
+
+	c, err := Parse(data)
+	require.NoError(t, err)
+	require.Len(t, c.Projects, 1)
+	assert.Equal(t, map[string]string{
+		"AWS_PROFILE":     "web-deployer",
+		"HELM_DIFF_COLOR": "true",
+	}, c.Projects[0].Env)
+}
+
+func TestParse_ProjectEnvIsOptional(t *testing.T) {
+	data := []byte("schemaVersion: v1alpha1\nprojects:\n  - directory: infra/web\n    tool: helmfile\n")
+
+	c, err := Parse(data)
+	require.NoError(t, err)
+	require.Len(t, c.Projects, 1)
+	assert.Nil(t, c.Projects[0].Env, "an absent env stays nil rather than becoming an empty map")
+}
+
 func TestParse_TypeMismatch(t *testing.T) {
 	// A scalar where a sequence belongs: the mismatch must come from a
 	// typed field, and every scalar is a valid schemaVersion.

@@ -30,6 +30,14 @@ type Config struct {
 	// (see run.go) rather than the Job spec trying to override PATH
 	// directly, which can't compose with the image's own PATH.
 	ToolsDir string
+
+	// WorkspaceDir is the directory the repository is cloned into — a
+	// volume mount point owned by the Pod, so it is used as-is and never
+	// removed. Unlike ToolsDir it is optional: an empty value means
+	// "create a temporary directory and remove it afterwards", which is
+	// what the Runner's own tests exercise and what any caller outside a
+	// turnip-built Job gets.
+	WorkspaceDir string
 }
 
 // MissingEnvVarsError names every required environment variable that was
@@ -79,6 +87,10 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 	if len(missing) > 0 {
 		return Config{}, &MissingEnvVarsError{Names: missing}
 	}
+
+	// Optional, so it is read outside the required loop above: an unset
+	// value is the documented temporary-directory fallback, not an error.
+	cfg.WorkspaceDir = env("TURNIP_WORKSPACE_DIR")
 
 	if raw := env("TURNIP_TOOL_CONFIG"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &cfg.ToolConfig); err != nil {

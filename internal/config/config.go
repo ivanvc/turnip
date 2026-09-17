@@ -28,7 +28,18 @@ type Project struct {
 	Tool         string            `yaml:"tool"`
 	WhenModified []string          `yaml:"whenModified"`
 	Config       map[string]string `yaml:"config"`
+	// Env is handed to the IaC tool's process and never interpreted by
+	// turnip — unlike Config, whose keys a Plugin reads. Names are
+	// restricted (see validate.go) because the Runner reads its own
+	// configuration from TURNIP_* and finds its tool binary through PATH.
+	Env map[string]string `yaml:"env,omitempty"`
 }
+
+// reservedEnvPrefix is the namespace the Runner reads its own
+// configuration from; a Project setting anything here could redirect the
+// Runner's server address, operation, or GitHub token. Enforced in
+// validate.go.
+const reservedEnvPrefix = "TURNIP_"
 
 // Supported IaC tool values for Project.Tool.
 const (

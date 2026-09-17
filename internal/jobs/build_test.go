@@ -54,7 +54,7 @@ func TestBuildJob_OneInitContainerWithVendorImageAndCopyCommand(t *testing.T) {
 			assert.Contains(t, initContainers[0].Image, ti.image[:len(ti.image)-2]) // template minus "%s"
 			require.Len(t, initContainers[0].Command, 3)
 			assert.Contains(t, initContainers[0].Command[2], ti.binaryPath)
-			assert.Contains(t, initContainers[0].Command[2], "/tools/"+tool)
+			assert.Contains(t, initContainers[0].Command[2], toolsMountPath+"/"+tool)
 		})
 	}
 }
@@ -83,7 +83,17 @@ func TestBuildJob_MainContainerHasAllEnvironmentVariables(t *testing.T) {
 	assert.JSONEq(t, `["--quiet"]`, env["TURNIP_EXTRA_ARGS"])
 	assert.NotEmpty(t, env["TURNIP_PLAN_DATA"])
 	assert.Equal(t, toolsMountPath, env["TURNIP_TOOLS_DIR"])
+	assert.Equal(t, workspaceMountPath, env["TURNIP_WORKSPACE_DIR"])
 	assert.NotContains(t, env, "PATH", "PATH must be composed by the Runner at startup, not overridden by the Job spec")
+}
+
+// The literal paths are pinned, not just compared to their own
+// constants: committed configuration in a consumer repository may
+// reference the workspace path, so changing it is a breaking change that
+// should fail here rather than silently in someone's helmfile.
+func TestBuildJob_MountPathsLiveUnderTurnipRoot(t *testing.T) {
+	assert.Equal(t, "/turnip/tools", toolsMountPath)
+	assert.Equal(t, "/turnip/src", workspaceMountPath)
 }
 
 func TestBuildJob_RestartPolicyAndTTL(t *testing.T) {
@@ -97,16 +107,76 @@ func TestBuildJob_RestartPolicyAndTTL(t *testing.T) {
 	assert.Equal(t, int32(0), *job.Spec.BackoffLimit)
 }
 
-func TestBuildJob_SharedVolumeMountedByBothContainers(t *testing.T) {
+func TestBuildJob_ToolsAndWorkspaceVolumes(t *testing.T) {
 	job, err := BuildJob(testProject("helmfile"), testParams())
 	require.NoError(t, err)
+	spec := job.Spec.Template.Spec
 
-	require.Len(t, job.Spec.Template.Spec.Volumes, 1)
-	assert.Equal(t, toolsVolumeName, job.Spec.Template.Spec.Volumes[0].Name)
-	require.NotNil(t, job.Spec.Template.Spec.Volumes[0].EmptyDir)
+	require.Len(t, spec.Volumes, 2)
+	assert.Equal(t, toolsVolumeName, spec.Volumes[0].Name)
+	require.NotNil(t, spec.Volumes[0].EmptyDir)
+	assert.Equal(t, workspaceVolumeName, spec.Volumes[1].Name)
+	require.NotNil(t, spec.Volumes[1].EmptyDir)
 
-	assert.Contains(t, job.Spec.Template.Spec.InitContainers[0].VolumeMounts, corev1.VolumeMount{Name: toolsVolumeName, MountPath: toolsMountPath})
-	assert.Contains(t, job.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: toolsVolumeName, MountPath: toolsMountPath})
+	toolsMount := corev1.VolumeMount{Name: toolsVolumeName, MountPath: toolsMountPath}
+	workspaceMount := corev1.VolumeMount{Name: workspaceVolumeName, MountPath: workspaceMountPath}
+
+	// The initContainer copies one binary; the repository is none of its
+	// business, so it mounts tools alone — asserted as an exact list, since
+	// "contains tools" would pass even if the workspace leaked into it.
+	assert.Equal(t, []corev1.VolumeMount{toolsMount}, spec.InitContainers[0].VolumeMounts)
+	assert.ElementsMatch(t, []corev1.VolumeMount{toolsMount, workspaceMount}, spec.Containers[0].VolumeMounts)
+}
+
+// A Project's env reaches the tool as ordinary Job-spec variables
+// (Decision 3): no transport, no Runner-side parsing.
+func TestBuildJob_ProjectEnvOnRunnerContainer(t *testing.T) {
+	project := testProject("helmfile")
+	project.Env = map[string]string{"AWS_PROFILE": "prod", "HELM_EXPERIMENTAL": "true"}
+
+	job, err := BuildJob(project, testParams())
+	require.NoError(t, err)
+
+	env := envMap(job.Spec.Template.Spec.Containers[0])
+	assert.Equal(t, "prod", env["AWS_PROFILE"])
+	assert.Equal(t, "true", env["HELM_EXPERIMENTAL"])
+}
+
+// Kubernetes expands $(VAR) inside env values against the variables
+// declared earlier in the same list, which would silently rewrite a value
+// the Project meant literally. Doubling every $ is the documented escape,
+// and an escaped reference is left alone whether or not the name exists.
+func TestBuildJob_ProjectEnvValuesAreEscapedAgainstExpansion(t *testing.T) {
+	project := testProject("helmfile")
+	project.Env = map[string]string{
+		"EXPANDABLE": "$(TURNIP_TOOL) and $HOME",
+		"PLAIN":      "no dollars here",
+	}
+
+	job, err := BuildJob(project, testParams())
+	require.NoError(t, err)
+
+	env := envMap(job.Spec.Template.Spec.Containers[0])
+	assert.Equal(t, "$$(TURNIP_TOOL) and $$HOME", env["EXPANDABLE"])
+	assert.Equal(t, "no dollars here", env["PLAIN"], "a value with no $ is byte-identical")
+}
+
+// Map iteration order is random; a Job spec that reorders between builds
+// is noise in every diff of it.
+func TestBuildJob_ProjectEnvInSortedKeyOrder(t *testing.T) {
+	project := testProject("helmfile")
+	project.Env = map[string]string{"CHARLIE": "3", "ALPHA": "1", "BRAVO": "2"}
+
+	job, err := BuildJob(project, testParams())
+	require.NoError(t, err)
+
+	var got []string
+	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
+		if _, ok := project.Env[e.Name]; ok {
+			got = append(got, e.Name)
+		}
+	}
+	assert.Equal(t, []string{"ALPHA", "BRAVO", "CHARLIE"}, got)
 }
 
 func TestBuildJob_ServiceAccountFromParams(t *testing.T) {

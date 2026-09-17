@@ -124,6 +124,51 @@ projects:
 	assert.GreaterOrEqual(t, len(verrs), 3, "want at least 3 violations (missing tool, missing name, duplicate name, bad tool): %v", verrs)
 }
 
+// The Runner reads its own configuration out of TURNIP_* and finds its
+// tool binary through PATH, so a Project setting either would be
+// reconfiguring the Runner rather than the tool it runs.
+func TestParse_ReservedEnvNamesRejectedTogether(t *testing.T) {
+	data := []byte(`
+schemaVersion: v1alpha1
+projects:
+  - name: web
+    directory: infra/web
+    tool: helmfile
+    env:
+      TURNIP_SERVER_ADDR: elsewhere
+      PATH: /nowhere
+      AWS_PROFILE: untouched
+`)
+
+	_, err := Parse(data)
+	require.Error(t, err)
+	verrs := asValidationErrors(t, err)
+	require.Len(t, verrs, 2, "both reserved names reported, and the legal one left alone: %v", verrs)
+
+	assert.ElementsMatch(t,
+		[]string{`env["PATH"]`, `env["TURNIP_SERVER_ADDR"]`},
+		[]string{verrs[0].Field, verrs[1].Field})
+}
+
+// The prefix is what's reserved, not a fixed list of known variables —
+// a name turnip doesn't use today is still rejected.
+func TestParse_UnknownTurnipPrefixedEnvNameStillRejected(t *testing.T) {
+	data := []byte("schemaVersion: v1alpha1\nprojects:\n  - directory: d\n    tool: helmfile\n    env:\n      TURNIP_NOT_A_REAL_VARIABLE: x\n")
+
+	_, err := Parse(data)
+	require.Error(t, err)
+	verrs := asValidationErrors(t, err)
+	require.Len(t, verrs, 1)
+	assert.Contains(t, verrs[0].Message, "reserved")
+}
+
+func TestParse_OrdinaryEnvNamesAccepted(t *testing.T) {
+	data := []byte("schemaVersion: v1alpha1\nprojects:\n  - directory: d\n    tool: helmfile\n    env:\n      AWS_PROFILE: prod\n      PATHOLOGICAL: not-PATH\n")
+
+	_, err := Parse(data)
+	require.NoError(t, err, "only PATH exactly is reserved, not names that merely start with it")
+}
+
 func TestParse_InvalidGlobPattern(t *testing.T) {
 	data := []byte(`
 schemaVersion: v1alpha1

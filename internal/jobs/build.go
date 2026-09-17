@@ -4,6 +4,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -14,11 +17,23 @@ import (
 )
 
 const (
+	// Everything turnip puts in the Runner Pod lives under a single
+	// /turnip root, so a path in a Pod is recognizable at a glance and
+	// nothing collides with the tool image's own filesystem.
+	//
 	// toolsVolumeName/toolsMountPath are the shared emptyDir volume an
 	// initContainer copies a tool binary onto, and the main container
 	// reads it from (Requirement 8.1/8.2).
 	toolsVolumeName = "tools"
-	toolsMountPath  = "/tools"
+	toolsMountPath  = "/turnip/tools"
+
+	// workspaceVolumeName/workspaceMountPath are the emptyDir the Runner
+	// clones the repository into. Unlike tools it is mounted on the
+	// Runner container only — the initContainer copies a binary and has
+	// no business seeing the repository. The path is fixed rather than
+	// randomly named because committed configuration may reference it.
+	workspaceVolumeName = "workspace"
+	workspaceMountPath  = "/turnip/src"
 
 	// jobTTLSeconds bounds how long Kubernetes keeps a finished Job (and
 	// its Pod) around (Requirement 7.4/9.1) — matching the reporter's
@@ -97,17 +112,40 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		// there is no way to express "prepend to whatever PATH already
 		// is" from the Job spec alone.
 		{Name: "TURNIP_TOOLS_DIR", Value: toolsMountPath},
+		// TURNIP_WORKSPACE_DIR is the mounted workspace volume. The Runner
+		// clones into it as-is and never removes it; absent the variable
+		// it falls back to a temporary directory of its own.
+		{Name: "TURNIP_WORKSPACE_DIR", Value: workspaceMountPath},
+	}
+
+	// A Project's own environment rides the Job spec rather than a
+	// transport of its own, so the Runner needs no code for it — the
+	// variables are simply present in the process it spawns. They come
+	// last so a Project can never shadow one of turnip's.
+	//
+	// Kubernetes expands $(VAR) in env values against the variables
+	// declared earlier in this same list, which would silently rewrite a
+	// value that happens to contain $(...). Doubling every $ is the
+	// documented escape, and an escaped reference is left alone whether
+	// or not the name it mentions exists. Sorted so the spec is
+	// deterministic and diffable.
+	for _, name := range slices.Sorted(maps.Keys(project.Env)) {
+		env = append(env, corev1.EnvVar{
+			Name:  name,
+			Value: strings.ReplaceAll(project.Env[name], "$", "$$"),
+		})
 	}
 
 	toolsVolumeMount := corev1.VolumeMount{Name: toolsVolumeName, MountPath: toolsMountPath}
+	workspaceVolumeMount := corev1.VolumeMount{Name: workspaceVolumeName, MountPath: workspaceMountPath}
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "turnip-runner-",
 			Labels: map[string]string{
 				"app.kubernetes.io/name": "turnip-runner",
-				"turnip.io/operation-id": op.OperationID,
-				"turnip.io/project":      project.Name,
+				OperationIDLabel:         op.OperationID,
+				ProjectLabel:             project.Name,
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -137,12 +175,18 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 							Name:         "runner",
 							Image:        op.RunnerImage,
 							Env:          env,
-							VolumeMounts: []corev1.VolumeMount{toolsVolumeMount},
+							VolumeMounts: []corev1.VolumeMount{toolsVolumeMount, workspaceVolumeMount},
 						},
 					},
 					Volumes: []corev1.Volume{
 						{
 							Name: toolsVolumeName,
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
+						},
+						{
+							Name: workspaceVolumeName,
 							VolumeSource: corev1.VolumeSource{
 								EmptyDir: &corev1.EmptyDirVolumeSource{},
 							},

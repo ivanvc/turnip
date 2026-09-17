@@ -121,6 +121,33 @@ func TestPathWithToolsDir_EmptyToolsDirLeavesPathUntouched(t *testing.T) {
 	assert.Equal(t, "/usr/bin:/bin", pathWithToolsDir("", "/usr/bin:/bin"))
 }
 
+// A configured workspace is a volume mount point the Pod owns. Using it
+// as-is is the point; removing it would empty a mount whose lifecycle
+// belongs to Kubernetes, not to turnip.
+func TestResolveWorkspace_GivenDirectoryIsUsedAndLeftInPlace(t *testing.T) {
+	dir := t.TempDir()
+
+	got, cleanup, err := resolveWorkspace(dir)
+	require.NoError(t, err)
+	assert.Equal(t, dir, got)
+
+	cleanup()
+	assert.DirExists(t, dir, "a mounted workspace is not turnip's to delete")
+}
+
+// The fallback keeps a Runner working outside a turnip-built Job — a
+// test, or a hand-run binary — exactly as it behaved before the
+// workspace volume existed.
+func TestResolveWorkspace_NoDirectoryCreatesATemporaryOneAndRemovesIt(t *testing.T) {
+	got, cleanup, err := resolveWorkspace("")
+	require.NoError(t, err)
+	require.NotEmpty(t, got)
+	assert.DirExists(t, got)
+
+	cleanup()
+	assert.NoDirExists(t, got, "a directory turnip created is turnip's to clean up")
+}
+
 func TestRunWith_OnOutputWritesToMatchingLocalStreamInOrder(t *testing.T) {
 	p := &fakePlugin{
 		operations: []string{"diff"},
@@ -246,8 +273,9 @@ func TestRunWith_ReportFailureReturnsNonZero(t *testing.T) {
 
 // echoWorkingDirPlugin reports its own WorkingDir through both a streamed
 // log line and the final Output. That is the only way a test can observe
-// the sandbox directory at all: execute() creates it with os.MkdirTemp,
-// so its name is random and unknowable from outside.
+// the workspace at all: testRunConfig sets no WorkspaceDir, so execute()
+// takes the temporary-directory fallback and its name is random and
+// unknowable from outside.
 type echoWorkingDirPlugin struct{ operations []string }
 
 func (p *echoWorkingDirPlugin) Name() string              { return "fake" }
@@ -264,7 +292,7 @@ func (p *echoWorkingDirPlugin) Execute(_ context.Context, _ string, opts plugin.
 	}, nil
 }
 
-func TestRunWith_SandboxPathStrippedFromWhatTheServerSees(t *testing.T) {
+func TestRunWith_WorkspacePathStrippedFromWhatTheServerSees(t *testing.T) {
 	rep := &fakeReporter{}
 	cfg := testRunConfig()
 	cfg.ProjectDir = "environments/cicd-2"
@@ -274,7 +302,7 @@ func TestRunWith_SandboxPathStrippedFromWhatTheServerSees(t *testing.T) {
 	require.Equal(t, 0, exitCode)
 
 	assert.NotContains(t, rep.lastResult.Output, "/tmp/turnip-runner-",
-		"the sandbox path must never reach the Server, and from there the PR comment")
+		"the workspace path must never reach the Server, and from there the PR comment")
 	assert.Contains(t, rep.lastResult.Output, `"environments/cicd-2/values.yaml"`,
 		"the repository-relative path a reviewer recognizes survives")
 

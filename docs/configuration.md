@@ -31,6 +31,7 @@ projects:
 | `projects[].tool` | **yes** | one of `terraform`, `pulumi`, `helmfile` — see "Tool support" below |
 | `projects[].whenModified` | no | a list of glob patterns (full `**` support — [doublestar](https://github.com/bmatcuk/doublestar) syntax); a PR whose changed files match none of a project's patterns never triggers it |
 | `projects[].config` | no | a free-form string map, tool-specific — see below |
+| `projects[].env` | no | environment variables for the tool's process — see below |
 
 Every violation across the whole file is reported together (a typo in
 project 3 doesn't hide a missing `directory` in project 1) — you'll see
@@ -89,6 +90,63 @@ rejected outright, never silently upgraded.
 
 Anything else in `config` is opaque to turnip itself — a plugin only
 reads the keys it understands.
+
+### `env` map
+
+Environment variables for the IaC tool's process. Where `config` is
+tool-specific and read by turnip's plugins, `env` is never interpreted by
+turnip at all — the variables are simply present in the environment the
+tool runs in, which is what makes it the place for anything the tool's
+own ecosystem reads:
+
+```yaml
+projects:
+  - name: web
+    directory: infra/web
+    tool: helmfile
+    env:
+      AWS_PROFILE: web-deployer
+```
+
+Two kinds of names are rejected, with every offending name in the file
+reported together rather than one per attempt:
+
+- **anything beginning with `TURNIP_`** — the Runner reads its own
+  configuration out of that namespace, so a Project setting one would be
+  reconfiguring the Runner rather than the tool.
+- **`PATH`** — the Runner composes it at startup so the provisioned tool
+  binary is found first; replacing it wholesale would hide the very
+  binary the operation needs.
+
+Values reach the tool byte-for-byte, including values containing `$(…)`
+— turnip escapes them on the way through, since Kubernetes would
+otherwise expand `$(VAR)` inside an environment value before the tool
+ever saw it.
+
+One thing worth being deliberate about: `turnip.yaml` is read from the
+pull request's own head commit, so `env` is something a PR author can
+change. That is the same trust boundary the tool's own committed
+configuration already sits on — a `.tf` or helmfile in the branch can
+redirect a backend or a role just as readily — but if that boundary
+matters to you, it's the Server-side `TURNIP_RUNNER_SERVICE_ACCOUNT`
+settings below, not `env`, that decide what credentials the Runner holds
+in the first place.
+
+### Where the Runner puts things
+
+Everything turnip creates inside a Runner Pod lives under `/turnip`:
+
+| Path | Contents |
+|---|---|
+| `/turnip/src` | the repository, cloned at the pull request's head commit; a project's `directory` is relative to this |
+| `/turnip/tools` | the provisioned IaC tool binary, prepended to the Runner's `PATH` |
+
+`/turnip/src` is a fixed path rather than a per-run temporary directory
+specifically so committed configuration may reference it — an absolute
+path in a helmfile or a `.tfvars` resolves the same way on every run.
+It's the one of the two worth naming directly; `/turnip/tools` is
+reachable through `PATH`, and hard-coding it just pins something turnip
+may move.
 
 ### Tool support
 

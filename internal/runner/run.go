@@ -95,22 +95,45 @@ func runWith(ctx context.Context, cfg Config, rep resultReporter, selectPlugin p
 	return 0
 }
 
+// resolveWorkspace returns the directory to clone into, together with a
+// cleanup to run once the Operation finishes.
+//
+// A configured directory is a volume mount point the Pod owns: it is used
+// as-is and never removed. Removing it would empty a mount turnip doesn't
+// own the lifecycle of, and there is nothing to reclaim anyway — the Pod
+// and its emptyDir are torn down together.
+//
+// An empty directory means nothing provided one — a test, or a Runner run
+// by hand outside a turnip-built Job — so a temporary directory is
+// created and removed afterwards, exactly as every Runner behaved before
+// the workspace volume existed.
+func resolveWorkspace(dir string) (string, func(), error) {
+	if dir != "" {
+		return dir, func() {}, nil
+	}
+
+	tmp, err := os.MkdirTemp("", "turnip-runner-")
+	if err != nil {
+		return "", func() {}, err
+	}
+	return tmp, func() { _ = os.RemoveAll(tmp) }, nil
+}
+
 // execute clones the repository and dispatches to p, translating the
 // outcome — including a clone or dispatch failure (Requirement 5.3) — into
 // an OperationResult to report, rather than ever crashing without a
 // reported outcome.
 func execute(ctx context.Context, cfg Config, p plugin.Plugin, clone cloner, rep resultReporter, stdout, stderr io.Writer) OperationResult {
-	dir, err := os.MkdirTemp("", "turnip-runner-")
+	dir, cleanup, err := resolveWorkspace(cfg.WorkspaceDir)
 	if err != nil {
 		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: fmt.Sprintf("create workdir: %v", err)}
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer cleanup()
 
 	// strip removes dir from anything headed for the Server: a reviewer
 	// reading the PR comment knows repository-relative paths, not the
-	// random sandbox directory this run happened to use. See
-	// stripSandboxPath.
-	strip := func(s string) string { return stripSandboxPath(dir, s) }
+	// directory turnip cloned into. See stripWorkspacePath.
+	strip := func(s string) string { return stripWorkspacePath(dir, s) }
 
 	if err := clone(ctx, dir, cfg.RepoURL, cfg.CommitSHA, cfg.BaseRef, cfg.GitHubToken); err != nil {
 		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: strip(fmt.Sprintf("clone failed: %v", err))}

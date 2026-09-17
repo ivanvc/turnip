@@ -24,6 +24,17 @@ func genProject(t *rapid.T) Project {
 		Tool:         rapid.SampledFrom([]string{ToolTerraform, ToolPulumi, ToolHelmfile}).Draw(t, "tool"),
 		WhenModified: rapid.SliceOfN(rapid.StringMatching(identifierPattern), 2, 2).Draw(t, "whenModified"),
 		Config:       rapid.MapOf(rapid.StringMatching(identifierPattern), rapid.StringMatching(identifierPattern)).Draw(t, "config"),
+		// Env names carry a fixed prefix so a draw can never land on a
+		// reserved name ("PATH", or anything under TURNIP_) and fail
+		// validation for a reason this property isn't about. Drawn
+		// non-empty because Env is omitempty: an empty map marshals to
+		// nothing and parses back as nil, which would be a flaw in the
+		// fixture rather than in the round-trip under test.
+		Env: rapid.MapOfN(
+			rapid.StringMatching("E"+identifierPattern),
+			rapid.StringMatching(identifierPattern),
+			1, 3,
+		).Draw(t, "env"),
 	}
 }
 
@@ -72,6 +83,21 @@ func TestProperty_ToolValidationRejectsInvalidTools(t *testing.T) {
 		} else {
 			require.Errorf(t, err, "Parse() with invalid tool %q", tool)
 		}
+	})
+}
+
+// Feature: runner-workspace-environment, Requirement 2.3: every name under
+// the reserved prefix is rejected, whatever follows it — the prefix is
+// what's reserved, not an enumerated list of the variables turnip
+// happens to set today.
+func TestProperty_ReservedEnvPrefixRejectedRegardlessOfSuffix(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		name := reservedEnvPrefix + genIdentifier(t, "suffix")
+		data := []byte("schemaVersion: v1alpha1\nprojects:\n  - name: p\n    directory: d\n    tool: helmfile\n    env:\n      " + name + ": value\n")
+
+		_, err := Parse(data)
+
+		require.Errorf(t, err, "Parse() with reserved env name %q", name)
 	})
 }
 

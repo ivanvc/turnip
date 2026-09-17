@@ -82,6 +82,25 @@ func validate(c *Config) error {
 				})
 			}
 		}
+
+		// Sorted so that a file with several offending names reports them
+		// in a stable order rather than Go's randomized map order.
+		for _, name := range slices.Sorted(maps.Keys(p.Env)) {
+			switch {
+			case strings.HasPrefix(name, reservedEnvPrefix):
+				errs = append(errs, &ValidationError{
+					ProjectRef: ref,
+					Field:      fmt.Sprintf("env[%q]", name),
+					Message:    fmt.Sprintf("names beginning with %q are reserved", reservedEnvPrefix),
+				})
+			case name == "PATH":
+				errs = append(errs, &ValidationError{
+					ProjectRef: ref,
+					Field:      fmt.Sprintf("env[%q]", name),
+					Message:    "PATH is reserved; the tools directory is prepended to it at startup",
+				})
+			}
+		}
 	}
 
 	if len(errs) == 0 {

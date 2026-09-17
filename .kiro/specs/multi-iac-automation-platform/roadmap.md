@@ -20,6 +20,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 9 | Metrics & Health Endpoints | `metrics` | Complete | Slice 6 |
 | 10 | Deployment: Kustomize & Release Images | `deployment-kustomize` | Complete | Slices 6, 9 |
 | 11 | HA Validation & Documentation | `ha-validation` | Complete | Slices 6, 9, 10 |
+| 12 | Runner Workspace & Project Environment | `runner-workspace-environment` | Complete | Slices 1, 5 |
 
 ## Slice Details
 
@@ -218,6 +219,98 @@ concurrency and a real deployment; document the finished platform.
 **Global requirements covered**: 19
 
 ---
+
+### Slice 12: Runner Workspace & Project Environment
+
+**Goal**: Give the Runner a fixed, documented filesystem layout, and let a
+Project declare environment variables for its Operation — so that
+configuration a repository already commits can be referenced by tools
+that have no configuration hook of their own.
+
+**Delivers**:
+- A single `/turnip` namespace: Workspace at `/turnip/src`, Tools
+  directory at `/turnip/tools`, as two separate `emptyDir` volumes so the
+  tool-provisioning initContainer cannot reach the Workspace
+- The Workspace path passed to the Runner by environment variable
+  (mirroring `TURNIP_TOOLS_DIR`), with a temporary-directory fallback so
+  unit tests and local runs are unaffected
+- An `env` map on a Project in `turnip.yaml`, applied to the IaC_Tool
+  subprocess, with `TURNIP_`-prefixed names and `PATH` rejected at parse
+  time
+- An enforced, unambiguous schema version: `schemaVersion: v1alpha1`
+  replacing the current `version: 1`, which is parsed but never validated
+  and reads as a product version turnip doesn't have. Alpha states that
+  the schema will keep breaking pre-1.0; it graduates to `v1` when turnip
+  reaches 1.0, at which point schema and project major coincide
+- Documentation of all three in `docs/configuration.md`
+
+**Not in this slice**: provisioning additional binaries (helm plugins,
+cloud CLIs), remote-cluster authentication, and Azure Workload Identity
+pod labels — the last is in the Backlog below.
+
+**Global requirements covered**: none directly. Extends the shared-volume
+mechanism of global Requirement 14.2a; adjacent to Requirement 18 without
+changing its `config` map.
+
+---
+
+## Backlog (not yet sliced)
+
+Recorded so they aren't rediscovered the hard way. Neither has a spec
+directory, and neither is scheduled.
+
+### Azure Workload Identity needs Runner *pod* labels
+
+turnip selects the Runner pod's ServiceAccount
+(`TURNIP_RUNNER_SERVICE_ACCOUNT`, optionally overridden per Project), and
+for AWS EKS Pod Identity and GCP Workload Identity that is the whole job:
+both attach the identity association to the ServiceAccount object itself,
+which an operator creates and turnip only references by name. GCP even
+allows the target service account to live in another project, so no
+second step is needed there.
+
+Azure differs in one respect: its mutating admission webhook injects
+nothing at all unless the **pod** carries the label
+`azure.workload.identity/use: "true"`. Identity selection itself stays on
+the ServiceAccount (the `azure.workload.identity/client-id` annotation,
+which explicitly supports one ServiceAccount referencing many
+identities), so that part needs nothing from turnip.
+
+The gap is that `internal/jobs.BuildJob` sets labels on the *Job's*
+ObjectMeta and gives the pod template no ObjectMeta at all — so turnip
+sets no pod labels or annotations whatsoever today.
+
+Likely shape: an operator-controlled passthrough (Server configuration,
+not `turnip.yaml`, since nothing here should be PR-editable) applying
+labels and annotations to the pod template. JSON-encoded rather than
+comma-separated: label values can't contain commas, but annotation values
+are arbitrary strings and can — Azure's own
+`azure.workload.identity/skip-containers` is semicolon-separated. A
+reserved prefix should stop an operator silently overwriting the keys
+turnip uses for correlation.
+
+### Expose the workspace path as a variable rather than a literal
+
+Slice 12 fixes the Runner's workspace at `/turnip/src`, which repositories
+may reference from committed configuration. That is fine while turnip has
+no releases and one consumer, and relocating the path is a release-gated
+change.
+
+It stops being fine with several consumers: a version bump reaches the
+operator who changes the image tag, but the breakage lands in other
+teams' repositories, which didn't choose the upgrade. The established fix
+is to make a variable the interface rather than the literal path —
+GitHub documents `GITHUB_WORKSPACE`, GitLab documents `CI_PROJECT_DIR`,
+both precisely so the path underneath can move.
+
+The obstacle is that turnip launches the tool without a shell, so a value
+like `${TURNIP_WORKSPACE_DIR}/...` arrives literally; supporting it means
+expanding a placeholder when applying a Project's `env`. Small, but only
+worth building when a second repository onboards or the path needs to
+move. Woodpecker shows the cost of leaving it too long: having made the
+workspace configurable after plugins had already hardcoded it, it now
+carries a permanent exception — "Plugins will always have the workspace
+base at `/woodpecker`".
 
 ## Notes
 
