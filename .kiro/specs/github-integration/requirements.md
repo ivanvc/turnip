@@ -290,9 +290,14 @@ an unbounded comment thread.
   (HA, Observability & Deployment)
 - GitLab/Bitbucket clients — no numbered requirement in the global spec
   asks for one; the platform's constraints section only names GitHub
-- Rendering Terraform/Pulumi/Helmfile-specific syntax highlighting beyond
-  a generic fenced code block — Requirement 10.5 asks for "markdown code
-  blocks," which this slice provides; tool-aware highlighting (e.g. a
-  `diff` language hint for Terraform's `+`/`-` plan lines) is a formatting
-  nicety Slice 6 can layer on when it builds the actual per-Project detail
-  text this slice's formatter embeds verbatim
+- Rewriting a tool's output text so its `+`/`-`/`~` markers highlight
+  correctly. Requirement 10.5 asks for "markdown code blocks", which this
+  slice provides. Amendment 24 went one step further and tags a
+  *successful* result's fence `diff`, which is enough for helmfile —
+  helm-diff already emits its markers at column 0, where diff
+  highlighting fires. It is **not** enough for Terraform, which indents
+  its markers (`  ~ resource ...`); colouring those means hoisting the
+  marker ahead of the indentation and rewriting `~` to `!`, a per-tool
+  transformation of the output itself. That stays out of scope here and
+  belongs with Slice 7 (Terraform & Pulumi Plugins), which is what will
+  first produce output needing it

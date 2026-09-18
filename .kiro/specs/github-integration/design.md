@@ -428,7 +428,7 @@ Format of a single body:
 <details>
 <summary>vpc (plan) — success</summary>
 
-```
+```diff
 <Output verbatim>
 ```
 
@@ -450,6 +450,31 @@ Each `ProjectResult` becomes one or more `<details>` *pieces* (Requirement
 into the first body until adding the next piece would exceed
 `maxCommentLength`; overflow pieces start a new body, each prefixed with a
 `_(continued N/M)_` line instead of the table (Requirement 7.4).
+
+**A successful result's output is fenced `diff`; a failure's is not.**
+IaC tools emit something close to a unified diff, so tagging the block
+makes GitHub colour added and removed lines — global Requirement 10.5's
+"syntax highlighting", and most of what makes a plan readable at a
+glance. A failure's body is an error message rather than a diff, and diff
+highlighting would colour every line beginning with `-` red for no
+reason, so it keeps a plain fence. Only the *opening* fence carries a
+language — closing fences never do — which is why `truncateBody`'s marker
+needs no matching change, and why `splitDetailSection` absorbs the longer
+fence for free (it sizes pieces by calling `buildDetailSectionPart`
+itself). *Alternative considered*: fencing every block `diff`
+unconditionally, as Atlantis does. *Rejected* — Atlantis renders errors
+from separate templates, so its unconditional fence never reaches an
+error body; turnip has a single renderer, so the branch lives here.
+
+**This is the minimal form, and it suffices only because of helmfile.**
+helm-diff already emits its `+`/`-` markers at column 0, which is where
+diff highlighting fires. Terraform does not: it indents them
+(`  ~ resource ...`), and an indented marker is not highlighted at all.
+Colouring Terraform output correctly means *rewriting the tool's text* —
+Atlantis hoists the marker ahead of its indentation and rewrites `~` to
+`!`, since `~` is not diff syntax. That is a per-tool transformation this
+slice deliberately does not attempt; Slice 7 (Terraform & Pulumi Plugins)
+is where it has to land.
 
 **A single Project's `Output` too large for one body is split across
 multiple pieces, not truncated.** Each piece is a fully self-contained

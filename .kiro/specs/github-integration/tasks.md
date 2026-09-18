@@ -307,6 +307,39 @@ package doc update, then tests (unit, then property).
       an unknown line alongside a real trigger doesn't disturb it
     - _Requirements: (regression coverage for 23)_
 
+- [x] 24. Fence a successful result's output as a diff (2026-09 amendment)
+  - Reported from the pilot after its first end-to-end plan: the output
+    arrived in a language-less fence, so GitHub rendered a diff with no
+    colour at all. Requirement 10.5 already asked for syntax highlighting,
+    and this slice's own Out of Scope section had deferred the language
+    hint to Slice 6 — which never picked it up. `comment.go` is where the
+    fence is written, so it lands here
+  - `fenceFor(success bool)` in `comment.go`: a diff-tagged fence on
+    success, a plain one on failure. An error message is not a diff, and
+    diff highlighting would colour every line beginning with `-` red for
+    no reason. Atlantis avoids this by rendering errors from separate
+    templates, which turnip has no equivalent of — one renderer serves
+    both, so the branch lives in the fence helper
+  - Only the *opening* fence gains a language, so `truncateBody`'s closing
+    marker is unchanged, and `splitDetailSection` absorbs the longer fence
+    automatically because it sizes each piece by calling
+    `buildDetailSectionPart` itself
+  - `comment_test.go`: the two reassembly tests located a piece's output by
+    searching for a bare fence, which silently began matching the
+    *closing* fence once the opening one carried a language — the start
+    index then landed past the end. Replaced with a `fencedContent` helper
+    that reads the opening fence line whatever it carries, so the
+    assertion no longer hard-codes the fence. Added
+    `TestBuildConsolidatedComment_DiffFenceOnSuccessPlainOnFailure` to pin
+    both branches, which nothing previously did
+  - **Minimal by design, and only sufficient for helmfile.** helm-diff
+    emits `+`/`-` at column 0, so no output rewriting is needed today.
+    Terraform indents its markers and will need them hoisted — and `~`
+    rewritten to `!` — before any diff renderer colours them. Deferred to
+    Slice 7 and recorded in this slice's Out of Scope, so whoever
+    implements Terraform meets it rather than rediscovering it
+  - _Requirements: 7.3 (global Requirement 10.5)_
+
 ## Task Dependency Graph
 
 ```json

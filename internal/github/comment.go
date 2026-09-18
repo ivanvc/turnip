@@ -151,7 +151,29 @@ func buildDetailSectionPart(r ProjectResult, chunk string, part, total int) stri
 	if total > 1 {
 		summary += fmt.Sprintf(" (output part %d/%d)", part, total)
 	}
-	return fmt.Sprintf("<details>\n<summary>%s</summary>\n\n```\n%s\n```\n\n</details>", summary, chunk)
+	return fmt.Sprintf("<details>\n<summary>%s</summary>\n\n%s\n%s\n```\n\n</details>", summary, fenceFor(r.Success), chunk)
+}
+
+// fenceFor picks the opening code fence for a Project's output.
+//
+// IaC tools emit something close to a unified diff, so tagging the block
+// `diff` makes GitHub colour added and removed lines — which is most of
+// the value of reading a plan at all (Requirement 10.5's "syntax
+// highlighting"). Atlantis fences plan output the same way.
+//
+// A *failure* gets a plain fence instead. Its body is an error message
+// rather than a diff, and diff highlighting would colour any line starting
+// with "-" as a deletion — turning an unrelated message red for no reason.
+// Atlantis reaches the same split by rendering errors from separate
+// templates; turnip has one renderer, so it branches here.
+//
+// Only the opening fence carries a language; the closing fence never does,
+// which is why truncateBody's marker needs no matching change.
+func fenceFor(success bool) string {
+	if success {
+		return "```diff"
+	}
+	return "```"
 }
 
 func statusEmoji(success bool) string {
