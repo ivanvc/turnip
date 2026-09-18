@@ -173,28 +173,54 @@ decide what credentials the Runner holds in the first place.
 
 Everything turnip creates inside a Runner Pod lives under `/turnip`:
 
-| Path | Contents |
-|---|---|
-| `/turnip/src` | the repository, cloned at the pull request's head commit; a project's `directory` is relative to this |
-| `/turnip/tools` | the provisioned IaC tool binary, prepended to the Runner's `PATH` |
+| Path | Contents | Present when |
+|---|---|---|
+| `/turnip/src` | the repository, cloned at the pull request's head commit; a project's `directory` is relative to this | always |
+| `/turnip/tools` | the provisioned IaC tool binary, prepended to the Runner's `PATH` | copy-out tools only |
+| `/turnip/bin` | turnip's own runner binary, handed to the vendor's image | run-in-image tools only |
 
 `/turnip/src` is a fixed path rather than a per-run temporary directory
 specifically so committed configuration may reference it — an absolute
-path in a helmfile or a `.tfvars` resolves the same way on every run.
-It's the one of the two worth naming directly; `/turnip/tools` is
-reachable through `PATH`, and hard-coding it just pins something turnip
+path in a helmfile or a `.tfvars` resolves the same way on every run. It's
+the one worth naming directly; the other two are turnip's own plumbing and
 may move.
+
+The repository is cloned by an initContainer running turnip's image, not
+by the container that runs your tool — which is what lets that container
+be the tool vendor's own image, needing nothing from it but the tool.
 
 ### Tool support
 
-| Tool | Status | Operations |
-|---|---|---|
-| Helmfile | implemented | `diff` (plan), `apply`, `sync`, `destroy` |
-| Terraform | **not yet implemented** | recognized by the config parser (won't reject your `turnip.yaml`), but no Plugin exists yet to actually run it |
-| Pulumi | **not yet implemented** | same as Terraform |
+| Tool | Status | Provisioned by | Operations |
+|---|---|---|---|
+| Helmfile | implemented | run-in-image | `diff` (plan), `apply`, `sync`, `destroy` |
+| Terraform | **not yet implemented** | copy-out | recognized by the config parser (won't reject your config), but no Plugin exists yet to actually run it |
+| Pulumi | **not yet implemented** | copy-out | same as Terraform |
 
-A `turnip.yaml` project can name `terraform`/`pulumi` today without
-error, but nothing will actually trigger for it until support lands.
+A project can name `terraform`/`pulumi` today without error, but nothing
+will actually trigger for it until support lands.
+
+### How a tool reaches the Runner
+
+Two strategies, chosen per tool by turnip rather than configured:
+
+- **copy-out** — an initContainer copies the tool's binary out of the
+  vendor's image onto a shared volume, and turnip's own image runs it.
+  Correct for a tool that is a single self-contained binary.
+- **run-in-image** — the vendor's image *is* the container that runs, with
+  turnip's runner binary handed to it. The tool gets its own image's
+  `PATH`, environment and `HOME`, so its helper binaries and plugins are
+  simply present.
+
+Helmfile needs the second: it shells out to `helm`, `helmfile diff` needs
+the helm-diff plugin, helm-secrets needs `sops`, and helm finds its plugins
+through an environment its image sets. Copying one binary out produced
+exactly the failure you'd expect — `exec: "helm": executable file not found
+in $PATH`.
+
+The practical consequence: **for a run-in-image tool, its plugins and
+helpers come from the vendor's image.** Needing one the image doesn't
+bundle means choosing an image that has it, not configuring turnip.
 
 ## The Server's own configuration
 

@@ -61,8 +61,6 @@ func fakeSelector(p plugin.Plugin) pluginSelector {
 	return func(tool string) (plugin.Plugin, error) { return p, nil }
 }
 
-func noopClone(context.Context, string, string, string, string, string) error { return nil }
-
 // fakeReporter records every call run.go makes, and can be told to block
 // LogLine for one specific line, signaling entry via entered so a test can
 // synchronize deterministically without polling.
@@ -161,7 +159,7 @@ func TestRunWith_OnOutputWritesToMatchingLocalStreamInOrder(t *testing.T) {
 	rep := &fakeReporter{}
 	var stdout, stderr safeBuffer
 
-	exitCode := runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), noopClone, &stdout, &stderr)
+	exitCode := runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), &stdout, &stderr)
 
 	assert.Equal(t, 0, exitCode)
 	assert.Equal(t, "out1\nout2\n", stdout.String())
@@ -195,7 +193,7 @@ func TestRunWith_LocalWriteNeverWaitsOnReporter(t *testing.T) {
 
 	done := make(chan int, 1)
 	go func() {
-		done <- runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), noopClone, &stdout, &stderr)
+		done <- runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), &stdout, &stderr)
 	}()
 
 	<-entered // LogLine("stdout", "blocking-line") has been entered and is now blocked
@@ -207,58 +205,121 @@ func TestRunWith_LocalWriteNeverWaitsOnReporter(t *testing.T) {
 	assert.Equal(t, "before\nblocking-line\nafter\n", stdout.String())
 }
 
-func TestRunWith_UnrecognizedToolFailsFastBeforeConnectOrClone(t *testing.T) {
+func TestRunWith_UnrecognizedToolFailsFastBeforeConnect(t *testing.T) {
 	rep := &fakeReporter{}
-	cloneCalled := false
-	clone := func(context.Context, string, string, string, string, string) error {
-		cloneCalled = true
-		return nil
-	}
 	selectPlugin := func(tool string) (plugin.Plugin, error) {
 		return nil, errors.New("unrecognized tool")
 	}
 	var stdout, stderr safeBuffer
 
-	exitCode := runWith(context.Background(), testRunConfig(), rep, selectPlugin, clone, &stdout, &stderr)
+	exitCode := runWith(context.Background(), testRunConfig(), rep, selectPlugin, &stdout, &stderr)
 
 	assert.Equal(t, 1, exitCode)
 	assert.Equal(t, 0, rep.connectCalls, "Connect must not be attempted for an unrecognized tool")
-	assert.False(t, cloneCalled, "clone must not be attempted for an unrecognized tool")
 }
 
-func TestRunWith_ConnectFailureFailsFastBeforeClone(t *testing.T) {
+func TestRunWith_ConnectFailureFailsFast(t *testing.T) {
 	rep := &fakeReporter{connectErr: errors.New("no route to server")}
+	p := &fakePlugin{operations: []string{"diff"}}
+	var stdout, stderr safeBuffer
+
+	exitCode := runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), &stdout, &stderr)
+
+	assert.Equal(t, 1, exitCode)
+}
+
+// The clone runs in an initContainer now, so its tests exercise
+// runCloneWith rather than runWith. The exit-code expectation inverts in
+// the move: the Runner returned 0 on a clone failure because *reporting*
+// had succeeded, but an initContainer must exit non-zero so the Job fails
+// and the container that runs the tool never starts.
+func testCloneConfig() Config {
+	cfg := testRunConfig()
+	cfg.WorkspaceDir = "/turnip/src"
+	return cfg
+}
+
+func TestRunCloneWith_SuccessExitsZeroWithoutContactingTheServer(t *testing.T) {
+	rep := &fakeReporter{}
+	var stderr safeBuffer
+
+	clone := func(_ context.Context, dir, _, _, _, _ string) error {
+		assert.Equal(t, "/turnip/src", dir, "the clone lands in the mounted workspace, not a temporary directory")
+		return nil
+	}
+
+	exitCode := runCloneWith(context.Background(), testCloneConfig(), rep, clone, &stderr)
+
+	assert.Equal(t, 0, exitCode)
+	assert.Equal(t, 0, rep.connectCalls, "a successful clone does no gRPC work at all")
+}
+
+func TestRunCloneWith_FailureReportsBeforeExitingNonZero(t *testing.T) {
+	rep := &fakeReporter{}
+	var stderr safeBuffer
+
+	clone := func(context.Context, string, string, string, string, string) error {
+		return errors.New("commit not found")
+	}
+
+	exitCode := runCloneWith(context.Background(), testCloneConfig(), rep, clone, &stderr)
+
+	assert.Equal(t, 1, exitCode, "the Job must fail so the tool container never starts")
+	assert.Equal(t, 1, rep.connectCalls)
+	assert.False(t, rep.lastResult.Success)
+	assert.Contains(t, rep.lastResult.ErrorMessage, "commit not found",
+		"git's own message reaches the pull request, not a later generic timeout")
+}
+
+func TestRunCloneWith_MergeConflictStaysDistinguishable(t *testing.T) {
+	rep := &fakeReporter{}
+	var stderr safeBuffer
+
+	clone := func(context.Context, string, string, string, string, string) error {
+		return &MergeConflictError{Output: "CONFLICT (content): Merge conflict in main.tf"}
+	}
+
+	exitCode := runCloneWith(context.Background(), testCloneConfig(), rep, clone, &stderr)
+
+	assert.Equal(t, 1, exitCode)
+	assert.Contains(t, rep.lastResult.ErrorMessage, "merge conflict")
+	assert.Contains(t, rep.lastResult.ErrorMessage, "main.tf")
+}
+
+// A temporary directory would be removed when this process exits, leaving
+// the container that runs the tool with an empty checkout — so an unset
+// workspace is a configuration error here rather than the fallback it is
+// for the Runner.
+func TestRunCloneWith_MissingWorkspaceDirIsAConfigurationError(t *testing.T) {
+	rep := &fakeReporter{}
+	var stderr safeBuffer
+
 	cloneCalled := false
 	clone := func(context.Context, string, string, string, string, string) error {
 		cloneCalled = true
 		return nil
 	}
-	p := &fakePlugin{operations: []string{"diff"}}
-	var stdout, stderr safeBuffer
 
-	exitCode := runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), clone, &stdout, &stderr)
+	exitCode := runCloneWith(context.Background(), testRunConfig(), rep, clone, &stderr)
 
 	assert.Equal(t, 1, exitCode)
-	assert.False(t, cloneCalled)
+	assert.False(t, cloneCalled, "nothing is cloned when there is nowhere durable to clone into")
+	assert.Contains(t, rep.lastResult.ErrorMessage, "TURNIP_WORKSPACE_DIR")
 }
 
-func TestRunWith_CloneFailureReportsFailureResult(t *testing.T) {
-	rep := &fakeReporter{}
+// Reporting is best-effort: if the Server cannot be reached, the clone
+// failure must still fail the Job rather than being masked.
+func TestRunCloneWith_ReportFailureStillExitsNonZero(t *testing.T) {
+	rep := &fakeReporter{reportErr: errors.New("server unreachable")}
+	var stderr safeBuffer
+
 	clone := func(context.Context, string, string, string, string, string) error {
 		return errors.New("commit not found")
 	}
-	p := &fakePlugin{operations: []string{"diff"}}
-	var stdout, stderr safeBuffer
 
-	exitCode := runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), clone, &stdout, &stderr)
+	exitCode := runCloneWith(context.Background(), testCloneConfig(), rep, clone, &stderr)
 
-	// A clone failure is reported as the Operation's own result (a
-	// successful report of a failure), not a Runner crash — Requirement
-	// 5.3 — so the exit code reflects whether *reporting* succeeded, not
-	// whether the Operation itself did.
-	require.Equal(t, 0, exitCode)
-	assert.False(t, rep.lastResult.Success)
-	assert.Contains(t, rep.lastResult.ErrorMessage, "commit not found")
+	assert.Equal(t, 1, exitCode)
 }
 
 func TestRunWith_ReportFailureReturnsNonZero(t *testing.T) {
@@ -266,7 +327,7 @@ func TestRunWith_ReportFailureReturnsNonZero(t *testing.T) {
 	p := &fakePlugin{operations: []string{"diff"}, result: &plugin.ExecuteResult{ExitCode: 0}}
 	var stdout, stderr safeBuffer
 
-	exitCode := runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), noopClone, &stdout, &stderr)
+	exitCode := runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), &stdout, &stderr)
 
 	assert.Equal(t, 1, exitCode)
 }
@@ -298,7 +359,7 @@ func TestRunWith_WorkspacePathStrippedFromWhatTheServerSees(t *testing.T) {
 	cfg.ProjectDir = "environments/cicd-2"
 	var stdout, stderr safeBuffer
 
-	exitCode := runWith(context.Background(), cfg, rep, fakeSelector(&echoWorkingDirPlugin{operations: []string{"diff"}}), noopClone, &stdout, &stderr)
+	exitCode := runWith(context.Background(), cfg, rep, fakeSelector(&echoWorkingDirPlugin{operations: []string{"diff"}}), &stdout, &stderr)
 	require.Equal(t, 0, exitCode)
 
 	assert.NotContains(t, rep.lastResult.Output, "/tmp/turnip-runner-",

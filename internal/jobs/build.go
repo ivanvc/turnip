@@ -23,15 +23,22 @@ const (
 	//
 	// toolsVolumeName/toolsMountPath are the shared emptyDir volume an
 	// initContainer copies a tool binary onto, and the main container
-	// reads it from (Requirement 8.1/8.2).
+	// reads it from (Requirement 8.1/8.2). Used by copyOut only.
 	toolsVolumeName = "tools"
 	toolsMountPath  = "/turnip/tools"
 
-	// workspaceVolumeName/workspaceMountPath are the emptyDir the Runner
-	// clones the repository into. Unlike tools it is mounted on the
-	// Runner container only — the initContainer copies a binary and has
-	// no business seeing the repository. The path is fixed rather than
-	// randomly named because committed configuration may reference it.
+	// binVolumeName/binMountPath carry turnip's *own* runner binary into a
+	// vendor image under runInImage. Deliberately separate from the tools
+	// volume: what lands here is turnip's binary, not the tool's, and
+	// naming it "tools" would make the Pod lie about what it holds.
+	binVolumeName = "bin"
+	binMountPath  = "/turnip/bin"
+
+	// workspaceVolumeName/workspaceMountPath are the emptyDir the
+	// repository is cloned into, by the clone initContainer. Both that
+	// container and the one running the tool mount it; the path is fixed
+	// rather than randomly named because committed configuration may
+	// reference it.
 	workspaceVolumeName = "workspace"
 	workspaceMountPath  = "/turnip/src"
 
@@ -57,8 +64,12 @@ type OperationParams struct {
 	ServerAddr  string
 	ExtraArgs   []string
 	PlanData    []byte
-	// RunnerImage is the Runner container's image, sourced from the
-	// Server's own TURNIP_RUNNER_IMAGE config.
+	// RunnerImage is turnip's own image, from the Server's
+	// TURNIP_RUNNER_IMAGE config. It serves two roles depending on the
+	// tool's strategy: under copyOut it is the main container's image,
+	// and under runInImage it is the image the runner binary is copied
+	// *out of*, while the vendor's image runs as the main container. One
+	// field rather than two, because a Job never needs two turnip images.
 	RunnerImage string
 	// ServiceAccount is the Kubernetes ServiceAccount the Runner Pod runs
 	// as — the identity cloud providers map to an IAM role (EKS Pod
@@ -73,12 +84,20 @@ type OperationParams struct {
 // Project. It resolves the Project's requested tool version before
 // constructing anything else, returning an error immediately — and building
 // no part of the Job spec — on an unrecognized version (Requirement 8.4).
+//
+// The Job's shape depends on the tool's provisioning strategy: copyOut
+// copies a binary out of the vendor image for turnip's Runner image to
+// execute, while runInImage makes the vendor image the main container and
+// hands it turnip's runner binary instead. Either way the repository is
+// cloned by an initContainer, so the container that runs the tool needs
+// nothing from its image but the tool.
 func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) {
 	version, err := resolveVersion(project.Tool, project.ToolVersion)
 	if err != nil {
 		return nil, err
 	}
 	ti := toolImages[project.Tool]
+	toolImageRef := fmt.Sprintf(ti.image, version)
 
 	toolConfig, err := json.Marshal(project.With)
 	if err != nil {
@@ -89,7 +108,11 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		return nil, fmt.Errorf("jobs: marshal extra args: %w", err)
 	}
 
-	env := []corev1.EnvVar{
+	// baseEnv is what both the clone initContainer and the container
+	// running the tool need. Two things are deliberately absent: the
+	// GitHub token, which only the clone needs, and TURNIP_TOOLS_DIR,
+	// which only means anything under copyOut.
+	baseEnv := []corev1.EnvVar{
 		{Name: "TURNIP_SERVER_ADDR", Value: op.ServerAddr},
 		{Name: "TURNIP_OPERATION_ID", Value: op.OperationID},
 		{Name: "TURNIP_PROJECT_NAME", Value: project.Name},
@@ -99,10 +122,83 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		{Name: "TURNIP_REPO_URL", Value: op.RepoURL},
 		{Name: "TURNIP_COMMIT_SHA", Value: op.CommitSHA},
 		{Name: "TURNIP_BASE_REF", Value: op.BaseRef},
-		{Name: "TURNIP_GITHUB_TOKEN", Value: op.GitHubToken},
 		{Name: "TURNIP_TOOL_CONFIG", Value: string(toolConfig)},
 		{Name: "TURNIP_EXTRA_ARGS", Value: string(extraArgs)},
 		{Name: "TURNIP_PLAN_DATA", Value: base64.StdEncoding.EncodeToString(op.PlanData)},
+		// TURNIP_WORKSPACE_DIR is the mounted workspace volume: where the
+		// clone initContainer writes the repository, and where the tool
+		// then finds it.
+		{Name: "TURNIP_WORKSPACE_DIR", Value: workspaceMountPath},
+	}
+
+	toolsMount := corev1.VolumeMount{Name: toolsVolumeName, MountPath: toolsMountPath}
+	binMount := corev1.VolumeMount{Name: binVolumeName, MountPath: binMountPath}
+	workspaceMount := corev1.VolumeMount{Name: workspaceVolumeName, MountPath: workspaceMountPath}
+
+	// The clone runs in turnip's own image, which has git — so the image
+	// that runs the tool needs nothing but the tool, and can be a vendor
+	// image turnip does not control.
+	//
+	// The token is set here and nowhere else. The tool's process has no
+	// use for a GitHub installation token, and under runInImage that
+	// process runs in a vendor image executing arbitrary tool plugins.
+	cloneContainer := corev1.Container{
+		Name:         "clone",
+		Image:        op.RunnerImage,
+		Args:         []string{"clone"},
+		Env:          append(slices.Clone(baseEnv), corev1.EnvVar{Name: "TURNIP_GITHUB_TOKEN", Value: op.GitHubToken}),
+		VolumeMounts: []corev1.VolumeMount{workspaceMount},
+	}
+
+	var (
+		initContainers []corev1.Container
+		mainImage      string
+		mainCommand    []string
+		mainMounts     []corev1.VolumeMount
+		volumes        []corev1.Volume
+	)
+	mainEnv := slices.Clone(baseEnv)
+
+	switch ti.strategy {
+	case runInImage:
+		initContainers = []corev1.Container{
+			{
+				Name:         "copy-runner",
+				Image:        op.RunnerImage,
+				Command:      []string{"sh", "-c", fmt.Sprintf("cp /runner %s/runner", binMountPath)},
+				VolumeMounts: []corev1.VolumeMount{binMount},
+			},
+			cloneContainer,
+		}
+		mainImage = toolImageRef
+		// Overrides the vendor image's own entrypoint. The runner binary
+		// is statically linked (CGO_ENABLED=0), so it executes in any
+		// image regardless of libc.
+		mainCommand = []string{binMountPath + "/runner"}
+		mainMounts = []corev1.VolumeMount{binMount, workspaceMount}
+		volumes = []corev1.Volume{emptyDirVolume(binVolumeName), emptyDirVolume(workspaceVolumeName)}
+
+		// No TURNIP_TOOLS_DIR: the tool is already on the vendor image's
+		// own PATH. The Runner needs no branch for this — pathWithToolsDir
+		// leaves PATH untouched when the variable is absent.
+
+	default: // copyOut
+		initContainers = []corev1.Container{
+			{
+				// Provisioning runs before the clone so an unpullable tool
+				// version fails before turnip fetches a repository it is
+				// about to throw away.
+				Name:         "provision-" + project.Tool,
+				Image:        toolImageRef,
+				Command:      []string{"sh", "-c", fmt.Sprintf("cp %s %s/%s", ti.binaryPath, toolsMountPath, project.Tool)},
+				VolumeMounts: []corev1.VolumeMount{toolsMount},
+			},
+			cloneContainer,
+		}
+		mainImage = op.RunnerImage
+		mainMounts = []corev1.VolumeMount{toolsMount, workspaceMount}
+		volumes = []corev1.Volume{emptyDirVolume(toolsVolumeName), emptyDirVolume(workspaceVolumeName)}
+
 		// TURNIP_TOOLS_DIR tells the Runner where the initContainer copied
 		// the tool binary, so it can prepend that directory to its own
 		// process's PATH at startup. This can't be done as a static PATH
@@ -111,17 +207,15 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		// same list, never a running container's image-provided PATH, so
 		// there is no way to express "prepend to whatever PATH already
 		// is" from the Job spec alone.
-		{Name: "TURNIP_TOOLS_DIR", Value: toolsMountPath},
-		// TURNIP_WORKSPACE_DIR is the mounted workspace volume. The Runner
-		// clones into it as-is and never removes it; absent the variable
-		// it falls back to a temporary directory of its own.
-		{Name: "TURNIP_WORKSPACE_DIR", Value: workspaceMountPath},
+		mainEnv = append(mainEnv, corev1.EnvVar{Name: "TURNIP_TOOLS_DIR", Value: toolsMountPath})
 	}
 
 	// A Project's own environment rides the Job spec rather than a
 	// transport of its own, so the Runner needs no code for it — the
 	// variables are simply present in the process it spawns. They come
-	// last so a Project can never shadow one of turnip's.
+	// last so a Project can never shadow one of turnip's, and they go on
+	// the container running the tool rather than on the clone, which they
+	// have nothing to do with.
 	//
 	// Kubernetes expands $(VAR) in env values against the variables
 	// declared earlier in this same list, which would silently rewrite a
@@ -130,14 +224,11 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 	// or not the name it mentions exists. Sorted so the spec is
 	// deterministic and diffable.
 	for _, name := range slices.Sorted(maps.Keys(project.Runner.Env)) {
-		env = append(env, corev1.EnvVar{
+		mainEnv = append(mainEnv, corev1.EnvVar{
 			Name:  name,
 			Value: strings.ReplaceAll(project.Runner.Env[name], "$", "$$"),
 		})
 	}
-
-	toolsVolumeMount := corev1.VolumeMount{Name: toolsVolumeName, MountPath: toolsMountPath}
-	workspaceVolumeMount := corev1.VolumeMount{Name: workspaceVolumeName, MountPath: workspaceMountPath}
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -162,40 +253,31 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 				Spec: corev1.PodSpec{
 					ServiceAccountName: op.ServiceAccount,
 					RestartPolicy:      corev1.RestartPolicyNever,
-					InitContainers: []corev1.Container{
-						{
-							Name:         "provision-" + project.Tool,
-							Image:        fmt.Sprintf(ti.image, version),
-							Command:      []string{"sh", "-c", fmt.Sprintf("cp %s %s/%s", ti.binaryPath, toolsMountPath, project.Tool)},
-							VolumeMounts: []corev1.VolumeMount{toolsVolumeMount},
-						},
-					},
+					InitContainers:     initContainers,
 					Containers: []corev1.Container{
 						{
+							// Named "runner" under both strategies, so
+							// `kubectl logs -c runner` works regardless of
+							// which image it happens to be.
 							Name:         "runner",
-							Image:        op.RunnerImage,
-							Env:          env,
-							VolumeMounts: []corev1.VolumeMount{toolsVolumeMount, workspaceVolumeMount},
+							Image:        mainImage,
+							Command:      mainCommand,
+							Env:          mainEnv,
+							VolumeMounts: mainMounts,
 						},
 					},
-					Volumes: []corev1.Volume{
-						{
-							Name: toolsVolumeName,
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-						{
-							Name: workspaceVolumeName,
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-					},
+					Volumes: volumes,
 				},
 			},
 		},
 	}
 
 	return job, nil
+}
+
+func emptyDirVolume(name string) corev1.Volume {
+	return corev1.Volume{
+		Name:         name,
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}
 }

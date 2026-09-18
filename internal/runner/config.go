@@ -71,8 +71,6 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 		{"TURNIP_REPO_URL", &cfg.RepoURL},
 		{"TURNIP_COMMIT_SHA", &cfg.CommitSHA},
 		{"TURNIP_BASE_REF", &cfg.BaseRef},
-		{"TURNIP_GITHUB_TOKEN", &cfg.GitHubToken},
-		{"TURNIP_TOOLS_DIR", &cfg.ToolsDir},
 	}
 
 	var missing []string
@@ -88,8 +86,25 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 		return Config{}, &MissingEnvVarsError{Names: missing}
 	}
 
-	// Optional, so it is read outside the required loop above: an unset
-	// value is the documented temporary-directory fallback, not an error.
+	// The three below are optional because each is set on some containers
+	// and deliberately absent from others — requiring them would make the
+	// Runner refuse to start in exactly the Jobs turnip builds.
+
+	// Set on the clone initContainer and nowhere else: the process that
+	// runs the tool has no use for a GitHub installation token, and under
+	// the run-in-image strategy that process is a vendor image executing
+	// arbitrary tool plugins. Clone also treats an empty token as "no
+	// credential to embed", which is what a public repository needs.
+	cfg.GitHubToken = env("TURNIP_GITHUB_TOKEN")
+
+	// Set only under the copy-out strategy. Under run-in-image the tool is
+	// already on the vendor image's own PATH, and pathWithToolsDir leaves
+	// PATH untouched when this is empty.
+	cfg.ToolsDir = env("TURNIP_TOOLS_DIR")
+
+	// An unset value is the documented temporary-directory fallback for
+	// the Runner — though not for clone mode, which has nowhere durable to
+	// write and rejects it (see runCloneWith).
 	cfg.WorkspaceDir = env("TURNIP_WORKSPACE_DIR")
 
 	if raw := env("TURNIP_TOOL_CONFIG"); raw != "" {

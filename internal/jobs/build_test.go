@@ -3,6 +3,7 @@ package jobs
 import (
 	"testing"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +12,12 @@ import (
 	"github.com/ivanvc/turnip/internal/config"
 )
 
+// testProject builds a Project the way Parse would have left one: Tool is
+// derived from Uses, and applyDefaults runs only inside Parse.
+//
+// Which tool a test picks now decides which Job shape it exercises —
+// helmfile is the run-in-image tool, terraform and pulumi are copy-out —
+// so tests name the tool they mean rather than relying on a default.
 func testProject(tool string) config.Project {
 	return config.Project{
 		Name:      "web",
@@ -44,20 +51,143 @@ func envMap(container corev1.Container) map[string]string {
 	return out
 }
 
-func TestBuildJob_OneInitContainerWithVendorImageAndCopyCommand(t *testing.T) {
-	for tool, ti := range toolImages {
+func mainContainer(t *testing.T, job *batchv1.Job) corev1.Container {
+	t.Helper()
+	require.Len(t, job.Spec.Template.Spec.Containers, 1)
+	return job.Spec.Template.Spec.Containers[0]
+}
+
+// initContainerNamed takes require.TestingT rather than *testing.T so the
+// property tests can use it too — *rapid.T satisfies testify's TestingT,
+// this repo's established convention.
+func initContainerNamed(t require.TestingT, name string, job *batchv1.Job) corev1.Container {
+	for _, c := range job.Spec.Template.Spec.InitContainers {
+		if c.Name == name {
+			return c
+		}
+	}
+	require.Failf(t, "initContainer not found", "no initContainer named %q in %v", name, initContainerNames(job))
+	return corev1.Container{}
+}
+
+func initContainerNames(job *batchv1.Job) []string {
+	names := make([]string, 0, len(job.Spec.Template.Spec.InitContainers))
+	for _, c := range job.Spec.Template.Spec.InitContainers {
+		names = append(names, c.Name)
+	}
+	return names
+}
+
+// Every Job clones in an initContainer running turnip's own image, whatever
+// the tool's strategy — that is what lets the container running the tool
+// need nothing from its image but the tool.
+func TestBuildJob_EveryStrategyClonesInAnInitContainer(t *testing.T) {
+	for tool := range toolImages {
 		t.Run(tool, func(t *testing.T) {
 			job, err := BuildJob(testProject(tool), testParams())
 			require.NoError(t, err)
 
-			initContainers := job.Spec.Template.Spec.InitContainers
-			require.Len(t, initContainers, 1)
-			assert.Contains(t, initContainers[0].Image, ti.image[:len(ti.image)-2]) // template minus "%s"
-			require.Len(t, initContainers[0].Command, 3)
-			assert.Contains(t, initContainers[0].Command[2], ti.binaryPath)
-			assert.Contains(t, initContainers[0].Command[2], toolsMountPath+"/"+tool)
+			clone := initContainerNamed(t, "clone", job)
+			assert.Equal(t, testParams().RunnerImage, clone.Image, "the clone runs in turnip's image, which has git")
+			assert.Equal(t, []string{"clone"}, clone.Args)
+			assert.Equal(t, []corev1.VolumeMount{
+				{Name: workspaceVolumeName, MountPath: workspaceMountPath},
+			}, clone.VolumeMounts, "it writes the workspace and touches nothing else")
 		})
 	}
+}
+
+// The GitHub token is set on the clone container and nowhere else. The
+// tool's process has no use for an installation token, and under
+// run-in-image that process runs in a vendor image executing arbitrary
+// tool plugins.
+func TestBuildJob_GitHubTokenReachesOnlyTheCloneContainer(t *testing.T) {
+	for tool := range toolImages {
+		t.Run(tool, func(t *testing.T) {
+			job, err := BuildJob(testProject(tool), testParams())
+			require.NoError(t, err)
+
+			clone := envMap(initContainerNamed(t, "clone", job))
+			assert.Equal(t, "ghs_token", clone["TURNIP_GITHUB_TOKEN"])
+
+			main := envMap(mainContainer(t, job))
+			assert.NotContains(t, main, "TURNIP_GITHUB_TOKEN",
+				"the tool's process never needs it, and under run-in-image that process is a vendor image")
+		})
+	}
+}
+
+func TestBuildJob_CopyOutShape(t *testing.T) {
+	job, err := BuildJob(testProject("terraform"), testParams())
+	require.NoError(t, err)
+
+	provision := initContainerNamed(t, "provision-terraform", job)
+	assert.Contains(t, provision.Image, "hashicorp/terraform")
+	require.Len(t, provision.Command, 3)
+	assert.Contains(t, provision.Command[2], "/bin/terraform", "copies the vendor's binary")
+	assert.Contains(t, provision.Command[2], toolsMountPath+"/terraform", "onto the shared volume")
+
+	// Provisioning runs before the clone so an unpullable version fails
+	// before turnip fetches a repository it is about to discard.
+	assert.Equal(t, []string{"provision-terraform", "clone"}, initContainerNames(job))
+
+	main := mainContainer(t, job)
+	assert.Equal(t, testParams().RunnerImage, main.Image, "turnip's image executes the copied binary")
+	assert.Empty(t, main.Command, "it keeps its own entrypoint")
+	assert.Equal(t, toolsMountPath, envMap(main)["TURNIP_TOOLS_DIR"])
+	assert.ElementsMatch(t, []corev1.VolumeMount{
+		{Name: toolsVolumeName, MountPath: toolsMountPath},
+		{Name: workspaceVolumeName, MountPath: workspaceMountPath},
+	}, main.VolumeMounts)
+}
+
+func TestBuildJob_RunInImageShape(t *testing.T) {
+	job, err := BuildJob(testProject("helmfile"), testParams())
+	require.NoError(t, err)
+
+	copyRunner := initContainerNamed(t, "copy-runner", job)
+	assert.Equal(t, testParams().RunnerImage, copyRunner.Image)
+	require.Len(t, copyRunner.Command, 3)
+	assert.Contains(t, copyRunner.Command[2], "/runner "+binMountPath+"/runner")
+
+	assert.NotContains(t, initContainerNames(job), "provision-helmfile",
+		"nothing is copied out of the vendor image under this strategy")
+
+	main := mainContainer(t, job)
+	assert.Contains(t, main.Image, "ghcr.io/helmfile/helmfile",
+		"the vendor's own image is the container that runs the tool")
+	assert.Equal(t, []string{binMountPath + "/runner"}, main.Command,
+		"overriding the vendor entrypoint with turnip's statically linked binary")
+	assert.NotContains(t, envMap(main), "TURNIP_TOOLS_DIR",
+		"the tool is already on the vendor image's own PATH")
+	assert.ElementsMatch(t, []corev1.VolumeMount{
+		{Name: binVolumeName, MountPath: binMountPath},
+		{Name: workspaceVolumeName, MountPath: workspaceMountPath},
+	}, main.VolumeMounts)
+}
+
+func TestBuildJob_VolumesPerStrategy(t *testing.T) {
+	copyOutJob, err := BuildJob(testProject("terraform"), testParams())
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{toolsVolumeName, workspaceVolumeName}, volumeNames(copyOutJob))
+
+	runInImageJob, err := BuildJob(testProject("helmfile"), testParams())
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{binVolumeName, workspaceVolumeName}, volumeNames(runInImageJob))
+
+	for _, job := range []*batchv1.Job{copyOutJob, runInImageJob} {
+		for _, v := range job.Spec.Template.Spec.Volumes {
+			assert.NotNil(t, v.EmptyDir, "volume %q", v.Name)
+		}
+	}
+}
+
+func volumeNames(job *batchv1.Job) []string {
+	names := make([]string, 0, len(job.Spec.Template.Spec.Volumes))
+	for _, v := range job.Spec.Template.Spec.Volumes {
+		names = append(names, v.Name)
+	}
+	return names
 }
 
 func TestBuildJob_MainContainerHasAllEnvironmentVariables(t *testing.T) {
@@ -66,9 +196,7 @@ func TestBuildJob_MainContainerHasAllEnvironmentVariables(t *testing.T) {
 
 	job, err := BuildJob(project, params)
 	require.NoError(t, err)
-
-	require.Len(t, job.Spec.Template.Spec.Containers, 1)
-	env := envMap(job.Spec.Template.Spec.Containers[0])
+	env := envMap(mainContainer(t, job))
 
 	assert.Equal(t, params.ServerAddr, env["TURNIP_SERVER_ADDR"])
 	assert.Equal(t, params.OperationID, env["TURNIP_OPERATION_ID"])
@@ -79,21 +207,20 @@ func TestBuildJob_MainContainerHasAllEnvironmentVariables(t *testing.T) {
 	assert.Equal(t, params.RepoURL, env["TURNIP_REPO_URL"])
 	assert.Equal(t, params.CommitSHA, env["TURNIP_COMMIT_SHA"])
 	assert.Equal(t, params.BaseRef, env["TURNIP_BASE_REF"])
-	assert.Equal(t, params.GitHubToken, env["TURNIP_GITHUB_TOKEN"])
 	assert.JSONEq(t, `{"environment":"staging"}`, env["TURNIP_TOOL_CONFIG"])
 	assert.JSONEq(t, `["--quiet"]`, env["TURNIP_EXTRA_ARGS"])
 	assert.NotEmpty(t, env["TURNIP_PLAN_DATA"])
-	assert.Equal(t, toolsMountPath, env["TURNIP_TOOLS_DIR"])
 	assert.Equal(t, workspaceMountPath, env["TURNIP_WORKSPACE_DIR"])
 	assert.NotContains(t, env, "PATH", "PATH must be composed by the Runner at startup, not overridden by the Job spec")
 }
 
-// The literal paths are pinned, not just compared to their own
-// constants: committed configuration in a consumer repository may
-// reference the workspace path, so changing it is a breaking change that
-// should fail here rather than silently in someone's helmfile.
+// The literal paths are pinned, not just compared to their own constants:
+// committed configuration in a consumer repository may reference the
+// workspace path, so changing it is a breaking change that should fail
+// here rather than silently in someone's helmfile.
 func TestBuildJob_MountPathsLiveUnderTurnipRoot(t *testing.T) {
 	assert.Equal(t, "/turnip/tools", toolsMountPath)
+	assert.Equal(t, "/turnip/bin", binMountPath)
 	assert.Equal(t, "/turnip/src", workspaceMountPath)
 }
 
@@ -108,33 +235,11 @@ func TestBuildJob_RestartPolicyAndTTL(t *testing.T) {
 	assert.Equal(t, int32(0), *job.Spec.BackoffLimit)
 }
 
-func TestBuildJob_ToolsAndWorkspaceVolumes(t *testing.T) {
-	job, err := BuildJob(testProject("helmfile"), testParams())
-	require.NoError(t, err)
-	spec := job.Spec.Template.Spec
-
-	require.Len(t, spec.Volumes, 2)
-	assert.Equal(t, toolsVolumeName, spec.Volumes[0].Name)
-	require.NotNil(t, spec.Volumes[0].EmptyDir)
-	assert.Equal(t, workspaceVolumeName, spec.Volumes[1].Name)
-	require.NotNil(t, spec.Volumes[1].EmptyDir)
-
-	toolsMount := corev1.VolumeMount{Name: toolsVolumeName, MountPath: toolsMountPath}
-	workspaceMount := corev1.VolumeMount{Name: workspaceVolumeName, MountPath: workspaceMountPath}
-
-	// The initContainer copies one binary; the repository is none of its
-	// business, so it mounts tools alone — asserted as an exact list, since
-	// "contains tools" would pass even if the workspace leaked into it.
-	assert.Equal(t, []corev1.VolumeMount{toolsMount}, spec.InitContainers[0].VolumeMounts)
-	assert.ElementsMatch(t, []corev1.VolumeMount{toolsMount, workspaceMount}, spec.Containers[0].VolumeMounts)
-}
-
-// The one behavioural change in separating `with` from the map it
-// replaced: TURNIP_TOOL_CONFIG used to carry the whole `config` map,
-// including two keys no Plugin ever read — the tool version, resolved by
-// this package, and the ServiceAccount, resolved by the orchestrator. It
-// now carries `with` alone, and both of those reach the Job spec through
-// their own fields instead.
+// TURNIP_TOOL_CONFIG used to carry the whole `config` map, including two
+// keys no Plugin ever read — the tool version, resolved by this package,
+// and the ServiceAccount, resolved by the orchestrator. It now carries
+// `with` alone, and both of those reach the Job spec through their own
+// fields instead.
 func TestBuildJob_ToolConfigCarriesOnlyWith(t *testing.T) {
 	project := testProject("helmfile")
 	project.ToolVersion = "1.7.4"
@@ -143,19 +248,21 @@ func TestBuildJob_ToolConfigCarriesOnlyWith(t *testing.T) {
 	job, err := BuildJob(project, testParams())
 	require.NoError(t, err)
 
-	env := envMap(job.Spec.Template.Spec.Containers[0])
+	main := mainContainer(t, job)
+	env := envMap(main)
 	assert.JSONEq(t, `{"environment":"staging"}`, env["TURNIP_TOOL_CONFIG"])
 	assert.NotContains(t, env["TURNIP_TOOL_CONFIG"], "version",
 		"the tool version is this package's to resolve, not a Plugin's to read")
 	assert.NotContains(t, env["TURNIP_TOOL_CONFIG"], "serviceAccount",
 		"nor is the Pod's identity")
 
-	assert.Contains(t, job.Spec.Template.Spec.InitContainers[0].Image, "1.7.4",
-		"the pinned version reaches the initContainer's image tag")
+	// Under run-in-image the pinned version selects the *main* container's
+	// image, since that is where the tool lives.
+	assert.Contains(t, main.Image, "1.7.4")
 }
 
-// A Project's env reaches the tool as ordinary Job-spec variables
-// (Decision 3): no transport, no Runner-side parsing.
+// A Project's env reaches the tool as ordinary Job-spec variables: no
+// transport, no Runner-side parsing.
 func TestBuildJob_ProjectEnvOnRunnerContainer(t *testing.T) {
 	project := testProject("helmfile")
 	project.Runner.Env = map[string]string{"AWS_PROFILE": "prod", "HELM_EXPERIMENTAL": "true"}
@@ -163,9 +270,12 @@ func TestBuildJob_ProjectEnvOnRunnerContainer(t *testing.T) {
 	job, err := BuildJob(project, testParams())
 	require.NoError(t, err)
 
-	env := envMap(job.Spec.Template.Spec.Containers[0])
+	env := envMap(mainContainer(t, job))
 	assert.Equal(t, "prod", env["AWS_PROFILE"])
 	assert.Equal(t, "true", env["HELM_EXPERIMENTAL"])
+
+	assert.NotContains(t, envMap(initContainerNamed(t, "clone", job)), "AWS_PROFILE",
+		"a Project's environment configures the tool, not the clone")
 }
 
 // Kubernetes expands $(VAR) inside env values against the variables
@@ -182,7 +292,7 @@ func TestBuildJob_ProjectEnvValuesAreEscapedAgainstExpansion(t *testing.T) {
 	job, err := BuildJob(project, testParams())
 	require.NoError(t, err)
 
-	env := envMap(job.Spec.Template.Spec.Containers[0])
+	env := envMap(mainContainer(t, job))
 	assert.Equal(t, "$$(TURNIP_TOOL) and $$HOME", env["EXPANDABLE"])
 	assert.Equal(t, "no dollars here", env["PLAIN"], "a value with no $ is byte-identical")
 }
@@ -197,7 +307,7 @@ func TestBuildJob_ProjectEnvInSortedKeyOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	var got []string
-	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
+	for _, e := range mainContainer(t, job).Env {
 		if _, ok := project.Runner.Env[e.Name]; ok {
 			got = append(got, e.Name)
 		}
@@ -223,15 +333,23 @@ func TestBuildJob_EmptyServiceAccountLeavesPodOnNamespaceDefault(t *testing.T) {
 	assert.Empty(t, job.Spec.Template.Spec.ServiceAccountName)
 }
 
+// Under copy-out the Runner image is the main container; under
+// run-in-image it is the image the runner binary is copied out of. Both
+// roles are the same parameter.
 func TestBuildJob_RunnerImageFromParams(t *testing.T) {
 	params := testParams()
 	params.RunnerImage = "ghcr.io/ivanvc/turnip-runner:v1.2.3"
 
-	job, err := BuildJob(testProject("helmfile"), params)
+	copyOutJob, err := BuildJob(testProject("terraform"), params)
 	require.NoError(t, err)
+	assert.Equal(t, params.RunnerImage, mainContainer(t, copyOutJob).Image)
 
-	require.Len(t, job.Spec.Template.Spec.Containers, 1)
-	assert.Equal(t, params.RunnerImage, job.Spec.Template.Spec.Containers[0].Image)
+	runInImageJob, err := BuildJob(testProject("helmfile"), params)
+	require.NoError(t, err)
+	assert.Equal(t, params.RunnerImage, initContainerNamed(t, "copy-runner", runInImageJob).Image)
+	assert.Equal(t, params.RunnerImage, initContainerNamed(t, "clone", runInImageJob).Image)
+	assert.NotEqual(t, params.RunnerImage, mainContainer(t, runInImageJob).Image,
+		"the main container is the vendor's image here")
 }
 
 func TestBuildJob_UnrecognizedVersionReturnsErrorAndNoJob(t *testing.T) {
@@ -252,15 +370,14 @@ func TestBuildJob_ExplicitVersionSelectsMatchingImage(t *testing.T) {
 
 	job, err := BuildJob(project, testParams())
 	require.NoError(t, err)
-	assert.Contains(t, job.Spec.Template.Spec.InitContainers[0].Image, wantVersion)
+	assert.Contains(t, initContainerNamed(t, "provision-terraform", job).Image, wantVersion)
 }
 
-// TestBuildJob_VersionNotInExampleListStillBuilds is the fix for a real
-// gap: a Project must be able to request any well-formed version its
-// tool's vendor actually publishes, not just one of turnip's own
-// hardcoded examples — otherwise adopting a new release still requires a
-// turnip code change, exactly the bundled-binary bottleneck Requirement
-// 8's initContainer design exists to avoid.
+// A Project must be able to request any well-formed version its tool's
+// vendor actually publishes, not just one of turnip's own hardcoded
+// examples — otherwise adopting a new release still requires a turnip code
+// change, exactly the bundled-binary bottleneck the initContainer design
+// exists to avoid.
 func TestBuildJob_VersionNotInExampleListStillBuilds(t *testing.T) {
 	project := testProject("terraform")
 	const notInList = "9.9.9"
@@ -269,5 +386,5 @@ func TestBuildJob_VersionNotInExampleListStillBuilds(t *testing.T) {
 
 	job, err := BuildJob(project, testParams())
 	require.NoError(t, err)
-	assert.Contains(t, job.Spec.Template.Spec.InitContainers[0].Image, notInList)
+	assert.Contains(t, initContainerNamed(t, "provision-terraform", job).Image, notInList)
 }

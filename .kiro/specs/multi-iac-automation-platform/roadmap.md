@@ -21,7 +21,9 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 10 | Deployment: Kustomize & Release Images | `deployment-kustomize` | Complete | Slices 6, 9 |
 | 11 | HA Validation & Documentation | `ha-validation` | Complete | Slices 6, 9, 10 |
 | 12 | Runner Workspace & Project Environment | `runner-workspace-environment` | Complete | Slices 1, 5 |
-| 13 | Project Schema v1alpha2 | `project-schema-v1alpha2` | Not Started | Slice 12 |
+| 13 | Project Schema v1alpha2 | `project-schema-v1alpha2` | Complete | Slice 12 |
+| 14 | Per-Tool Provisioning | `tool-provisioning` | Not Started | Slices 2, 12 |
+| 15 | Refuse Fork Pull Requests | `fork-pull-requests` | Not Started | Slice 6 |
 
 ## Slice Details
 
@@ -145,6 +147,18 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 **Delivers**:
 - Terraform plugin: plan, apply, -destroy flag, output parsing, workspace support
 - Pulumi plugin: preview, up, destroy, output parsing, stack support
+- OpenTofu as a supported tool. It is Terraform-compatible, so whatever
+  Plugin runs one runs the other, and a tool nothing can execute yet has
+  nowhere useful to live until this slice — adding it earlier would be
+  scope that delays the Helmfile MVP. Note that OpenTofu considers direct
+  use of its images unsupported as of 1.10 and documents copying the binary
+  out of its `:…-minimal` variant instead, which is what turnip's copy-out
+  provisioning already does
+- Pulumi's provisioning strategy (Slice 14 defers it here): its CLI
+  orchestrates separate language-host binaries and runtime-fetched provider
+  plugins, and a program needs a language runtime chosen by the user's
+  code — so it is unlikely to be a copy-out tool, and deciding that belongs
+  with the work that makes Pulumi actually run
 - Property tests for each plugin
 
 **Global requirements covered**: 11, 12
@@ -295,6 +309,89 @@ replaced — and Requirement 14.2a's cross-reference to it.
 
 ---
 
+### Slice 14: Per-Tool Provisioning
+
+**Goal**: Provision each IaC_Tool the way that tool actually works, rather
+than assuming every tool is a single static binary.
+
+**Delivers**:
+- A Provisioning_Strategy per tool: **copy-out** (an initContainer copies
+  the binary onto a shared volume, as today) or **run-in-image** (the
+  Runner Job's main container *is* the vendor image, with turnip's runner
+  binary supplied to it)
+- Helmfile on run-in-image. It is a runtime, not a binary: it shells out to
+  `helm`, `helmfile diff` needs the helm-diff plugin, helm-secrets needs
+  `sops`, and helm finds its plugins through an environment the vendor
+  image sets and turnip's Runner does not
+- Cloning moved into an initContainer running turnip's own image, so the
+  Runner depends on nothing but its own binary and the tool — which is what
+  lets one Runner serve both strategies
+- Terraform unchanged on copy-out, which remains correct for a tool that
+  genuinely is one static binary
+
+**Why not just copy more files**: it works until the vendor reorganises
+their image. turnip's provisioning table would become a mirror of someone
+else's Dockerfile, re-creating in a new form the bottleneck the
+vendor-image design exists to avoid — adopting a tool release would again
+wait on a turnip change.
+
+**Discovered from the pilot**, which failed with `exec: "helm": executable
+file not found in $PATH` after AWS authentication was working — earlier
+than the helm-plugins problem that had been anticipated as the next
+blocker.
+
+**Not in this slice**: Pulumi's strategy and OpenTofu as a tool, both
+routed to Slice 7; installing helm plugins a vendor image does not bundle;
+cloud CLIs; remote-cluster authentication.
+
+**Traps recorded during research**, none of which bite today but each of
+which would bite silently: `ghcr.io/opentofu/opentofu:*-minimal` is
+`FROM scratch` (no shell, no git, no CA certificates), and
+`pulumi/pulumi:*-nonroot` runs as UID 1000, which would break writes to a
+mounted workspace without an `fsGroup`. Every image turnip uses today runs
+as root with a full userland.
+
+**Global requirements covered**: amends Requirement 14.2a, which specifies
+the copy-one-binary mechanism as though it were the only way a Runner Job
+can obtain its tool.
+
+---
+
+### Slice 15: Refuse Fork Pull Requests
+
+**Goal**: Never run an Operation on code from a repository other than the
+one turnip is installed on.
+
+**What's missing today**: turnip has no concept of a fork — no occurrence
+in production code, and `github.PullRequest` carries `Number`, `HeadSHA`,
+`BaseRef` and `HeadRef` but nothing identifying the head *repository*, so
+there is no field to compare even if a check existed. An automatic plan
+runs on `pull_request`/`opened` with no authorization check by design,
+which means a fork's head commit would be cloned and executed in a Pod
+holding cloud credentials — and the configuration file is read from that
+same commit, so its author also chooses the project list and environment.
+
+**Delivers**: head-repository identity on `PullRequest`, parsed from the
+webhook payload and from `GetPullRequest` for `issue_comment` events, and
+a refusal when it differs from the base repository.
+
+**Applies to both trigger paths.** The collaborator check does not cover
+this: a trusted collaborator commenting `/turnip plan` on a fork PR runs
+untrusted code. The trigger is authorized; the code is not.
+
+**Deliberately not scheduled now**: the only deployment is a single
+private test repository with no forks in play, so this is a real gap
+without being a present risk. Prioritising it over the Helmfile MVP would
+be fixing the wrong thing first.
+
+**Open when this is picked up**: whether a refusal is silent or commented
+(silence gives an attacker no feedback; a comment stops a legitimate fork
+contributor wondering why nothing happened), and whether an operator may
+ever opt in for a genuinely credential-free public project. Neither was
+explored — both are decisions for whoever takes this.
+
+---
+
 ## Backlog (not yet sliced)
 
 Recorded so they aren't rediscovered the hard way. None of these has a
@@ -412,6 +509,30 @@ groups in sequence while keeping projects within a group parallel, and
 decide what an ordered group does when an earlier project fails. Adding
 the key before the behaviour would ship a field that parses and does
 nothing, which is the failure this platform has now been bitten by twice.
+
+### Flaky reporter reconnect test — or a real dropped-log bug
+
+`TestReporter_ReportReconnectsAndResendsFullBufferWithResumedTrue` fails
+intermittently. It asserts that the entire buffered log history is resent
+after a dropped connection, and sometimes observes two lines where three
+were produced.
+
+Confirmed pre-existing rather than introduced by any recent slice: it
+reproduces at `12f77c3` and passes repeatedly against the working tree, so
+it is timing-dependent rather than a regression.
+
+Worth resolving because the two explanations differ in seriousness. If the
+test is racing its own fixture, it is noise that will eventually be
+dismissed as "just the flaky one" and stop being read. If the reporter
+genuinely resends a partial buffer, then log lines are silently lost when a
+Runner reconnects mid-operation — and the pull request would show a plan
+missing lines with nothing to indicate anything went missing, which is the
+worse failure mode because it looks like success.
+
+Reproduce with `go test ./internal/runner/ -run
+TestReporter_ReportReconnectsAndResendsFullBufferWithResumedTrue -count=20`.
+Start by deciding which of the two it is; only then decide whether the fix
+belongs in the reporter or the test.
 
 ## Notes
 

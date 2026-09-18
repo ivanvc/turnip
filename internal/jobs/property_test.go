@@ -63,6 +63,11 @@ func TestProperty_RunnerJobEnvironmentVariables(t *testing.T) {
 }
 
 // Feature: multi-iac-automation-platform, Property 23a: Runner Job Tool Provisioning
+//
+// The resolved version reaches the container that holds the tool, whichever
+// one that is: the vendor initContainer under copy-out, and the main
+// container under run-in-image, where the vendor image *is* the main
+// container.
 func TestProperty_RunnerJobToolProvisioning(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		tool := genTool(t)
@@ -77,14 +82,22 @@ func TestProperty_RunnerJobToolProvisioning(t *testing.T) {
 		job, err := BuildJob(project, genOperationParams(t))
 		require.NoError(t, err)
 
-		initContainers := job.Spec.Template.Spec.InitContainers
-		require.Len(t, initContainers, 1)
-		require.Contains(t, initContainers[0].Image, version)
-		require.Len(t, initContainers[0].VolumeMounts, 1)
-
 		require.Len(t, job.Spec.Template.Spec.Containers, 1)
-		mainMounts := job.Spec.Template.Spec.Containers[0].VolumeMounts
-		require.Contains(t, mainMounts, initContainers[0].VolumeMounts[0])
+		main := job.Spec.Template.Spec.Containers[0]
+
+		// Every Job clones in an initContainer, whatever the strategy.
+		require.Contains(t, initContainerNames(job), "clone")
+
+		if ti.strategy == runInImage {
+			require.Contains(t, main.Image, version)
+			return
+		}
+
+		provision := initContainerNamed(t, "provision-"+tool, job)
+		require.Contains(t, provision.Image, version)
+		require.Len(t, provision.VolumeMounts, 1)
+		require.Contains(t, main.VolumeMounts, provision.VolumeMounts[0],
+			"the main container reads the volume the binary was copied onto")
 	})
 }
 
@@ -100,8 +113,15 @@ func TestProperty_JobCleanupAfterCompletion(t *testing.T) {
 	})
 }
 
-// Feature: multi-iac-automation-platform, Property 27: Token Propagation to Runner
-func TestProperty_TokenPropagationToRunner(t *testing.T) {
+// Feature: multi-iac-automation-platform, Property 27: Token Propagation
+//
+// The token reaches the container that clones, and no other — for every
+// tool and every generated set of parameters. It used to reach the main
+// container, which is where the Runner cloned from; now that cloning
+// happens in an initContainer, the tool's process has no use for it, and
+// under run-in-image that process is a vendor image running arbitrary
+// tool plugins.
+func TestProperty_TokenPropagationToCloneContainer(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		project := genProject(t)
 		params := genOperationParams(t)
@@ -110,7 +130,10 @@ func TestProperty_TokenPropagationToRunner(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, job.Spec.Template.Spec.Containers, 1)
 
-		env := envMap(job.Spec.Template.Spec.Containers[0])
-		require.Equal(t, params.GitHubToken, env["TURNIP_GITHUB_TOKEN"])
+		clone := envMap(initContainerNamed(t, "clone", job))
+		require.Equal(t, params.GitHubToken, clone["TURNIP_GITHUB_TOKEN"])
+
+		main := envMap(job.Spec.Template.Spec.Containers[0])
+		require.NotContains(t, main, "TURNIP_GITHUB_TOKEN")
 	})
 }

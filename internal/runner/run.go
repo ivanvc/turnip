@@ -61,10 +61,69 @@ func Run(ctx context.Context, cfg Config) int {
 	}
 	defer func() { _ = closeConn() }()
 
-	return runWith(ctx, cfg, rep, selectPlugin, Clone, os.Stdout, os.Stderr)
+	return runWith(ctx, cfg, rep, selectPlugin, os.Stdout, os.Stderr)
 }
 
-func runWith(ctx context.Context, cfg Config, rep resultReporter, selectPlugin pluginSelector, clone cloner, stdout, stderr io.Writer) int {
+// RunClone performs one Operation's repository clone and returns the exit
+// code cmd/runner/main.go should use. It runs in an initContainer, before
+// the container that executes the tool exists.
+//
+// A failure is reported to the Server from here rather than left for the
+// Runner to notice, because there is no Runner yet: an initContainer that
+// exits non-zero means the main container never starts, so nothing would
+// ever connect. Without this the failure would surface only when the
+// Server's start-deadline sweep claimed the Operation minutes later, and
+// would say "timed out" rather than whatever git actually said.
+func RunClone(ctx context.Context, cfg Config) int {
+	rep, closeConn, err := NewReporter(cfg.ServerAddr, cfg)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "runner: %v\n", err)
+		return 1
+	}
+	defer func() { _ = closeConn() }()
+
+	return runCloneWith(ctx, cfg, rep, Clone, os.Stderr)
+}
+
+// runCloneWith is RunClone's testable core, mirroring runWith's seam so a
+// test can substitute a fake reporter and cloner.
+func runCloneWith(ctx context.Context, cfg Config, rep resultReporter, clone cloner, stderr io.Writer) int {
+	// Unlike execute's workspace, this one cannot fall back to a
+	// temporary directory: it would be removed when this process exits,
+	// leaving the container that runs the tool with an empty checkout.
+	// An unset workspace is a configuration error here, not a default.
+	if cfg.WorkspaceDir == "" {
+		return reportCloneFailure(ctx, rep, "clone: TURNIP_WORKSPACE_DIR is required when cloning", stderr)
+	}
+
+	if err := clone(ctx, cfg.WorkspaceDir, cfg.RepoURL, cfg.CommitSHA, cfg.BaseRef, cfg.GitHubToken); err != nil {
+		// Same wording and same path-stripping the Runner used when it
+		// owned the clone, so what reaches the pull request is unchanged.
+		message := stripWorkspacePath(cfg.WorkspaceDir, fmt.Sprintf("clone failed: %v", err))
+		return reportCloneFailure(ctx, rep, message, stderr)
+	}
+
+	return 0
+}
+
+// reportCloneFailure delivers the failure as the Operation's own result,
+// then returns a non-zero exit code. Every step is best-effort: if the
+// Server cannot be reached, the start-deadline sweep remains the backstop
+// it already is, so a reporting failure must not mask the clone failure.
+func reportCloneFailure(ctx context.Context, rep resultReporter, message string, stderr io.Writer) int {
+	_, _ = fmt.Fprintf(stderr, "runner: %s\n", message)
+
+	if err := rep.Connect(ctx); err != nil {
+		_, _ = fmt.Fprintf(stderr, "runner: connect to server: %v\n", err)
+		return 1
+	}
+	if err := rep.Report(ctx, OperationResult{Success: false, ExitCode: -1, ErrorMessage: message}); err != nil {
+		_, _ = fmt.Fprintf(stderr, "runner: report result: %v\n", err)
+	}
+	return 1
+}
+
+func runWith(ctx context.Context, cfg Config, rep resultReporter, selectPlugin pluginSelector, stdout, stderr io.Writer) int {
 	p, err := selectPlugin(cfg.Tool)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "runner: %v\n", err)
@@ -80,7 +139,7 @@ func runWith(ctx context.Context, cfg Config, rep resultReporter, selectPlugin p
 		return 1
 	}
 
-	opResult := execute(ctx, cfg, p, clone, rep, stdout, stderr)
+	opResult := execute(ctx, cfg, p, rep, stdout, stderr)
 
 	// Logged unconditionally, in addition to (not instead of) the
 	// real-time mirroring OnOutput already did throughout execution, so a
@@ -119,11 +178,15 @@ func resolveWorkspace(dir string) (string, func(), error) {
 	return tmp, func() { _ = os.RemoveAll(tmp) }, nil
 }
 
-// execute clones the repository and dispatches to p, translating the
-// outcome — including a clone or dispatch failure (Requirement 5.3) — into
-// an OperationResult to report, rather than ever crashing without a
-// reported outcome.
-func execute(ctx context.Context, cfg Config, p plugin.Plugin, clone cloner, rep resultReporter, stdout, stderr io.Writer) OperationResult {
+// execute dispatches to p, translating the outcome — including a dispatch
+// failure (Requirement 5.3) — into an OperationResult to report, rather
+// than ever crashing without a reported outcome.
+//
+// The repository is already present: an initContainer cloned it into the
+// workspace before this container started (see RunClone). What remains
+// here is resolving the path, which still falls back to a temporary
+// directory for tests and hand-runs outside a turnip-built Job.
+func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporter, stdout, stderr io.Writer) OperationResult {
 	dir, cleanup, err := resolveWorkspace(cfg.WorkspaceDir)
 	if err != nil {
 		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: fmt.Sprintf("create workdir: %v", err)}
@@ -134,10 +197,6 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, clone cloner, rep
 	// reading the PR comment knows repository-relative paths, not the
 	// directory turnip cloned into. See stripWorkspacePath.
 	strip := func(s string) string { return stripWorkspacePath(dir, s) }
-
-	if err := clone(ctx, dir, cfg.RepoURL, cfg.CommitSHA, cfg.BaseRef, cfg.GitHubToken); err != nil {
-		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: strip(fmt.Sprintf("clone failed: %v", err))}
-	}
 
 	// OnOutput fans out to two places for every (stream, line), and the
 	// first must never wait on the second (Requirement 4.7): write it to

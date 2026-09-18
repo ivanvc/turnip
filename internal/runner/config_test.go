@@ -67,13 +67,30 @@ func TestConfigFromEnv_OptionalFieldsDefaultEmpty(t *testing.T) {
 func TestConfigFromEnv_MissingVariablesNamedTogether(t *testing.T) {
 	env := fullEnv()
 	delete(env, "TURNIP_SERVER_ADDR")
-	delete(env, "TURNIP_GITHUB_TOKEN")
+	delete(env, "TURNIP_OPERATION_ID")
 
 	_, err := ConfigFromEnv(lookup(env))
 	require.Error(t, err)
 	var missing *MissingEnvVarsError
 	require.ErrorAs(t, err, &missing)
-	assert.ElementsMatch(t, []string{"TURNIP_SERVER_ADDR", "TURNIP_GITHUB_TOKEN"}, missing.Names)
+	assert.ElementsMatch(t, []string{"TURNIP_SERVER_ADDR", "TURNIP_OPERATION_ID"}, missing.Names)
+}
+
+// The environment BuildJob actually sets on the container that runs the
+// tool: no GitHub token (it goes to the clone initContainer alone) and, under
+// the run-in-image strategy, no tools directory either. Requiring either
+// would make the Runner refuse to start in every Job turnip builds — a
+// failure no other test here can see, because they all start from an
+// environment carrying every variable at once.
+func TestConfigFromEnv_ToolContainerEnvironmentIsAccepted(t *testing.T) {
+	env := fullEnv()
+	delete(env, "TURNIP_GITHUB_TOKEN")
+	delete(env, "TURNIP_TOOLS_DIR")
+
+	cfg, err := ConfigFromEnv(lookup(env))
+	require.NoError(t, err)
+	assert.Empty(t, cfg.GitHubToken)
+	assert.Empty(t, cfg.ToolsDir, "run-in-image leaves the tool on the vendor image's own PATH")
 }
 
 func TestConfigFromEnv_InvalidToolConfigJSON(t *testing.T) {

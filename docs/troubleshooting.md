@@ -100,6 +100,14 @@ stdout/stderr attached.
   well-formed version the vendor doesn't actually publish, so the
   initContainer had nothing to pull: check the `@version` in `uses`
   against the tool vendor's own published image tags.
+- **A helper binary or plugin is missing** (e.g. `exec: "helm":
+  executable file not found in $PATH`, or the tool reporting it can't find
+  a plugin): for a run-in-image tool these come from the vendor's image
+  rather than from turnip — see "How a tool reaches the Runner" in
+  `docs/configuration.md`. The fix is an image that bundles what you need,
+  not a turnip setting. Seeing this for Helmfile on a version the vendor's
+  own image ships is a turnip bug worth reporting, since that image
+  contains helm, sops and the standard plugins.
 - **Tool command failed** (e.g. `terraform plan` itself errored): the
   full stdout/stderr is in the PR comment — this is the tool telling you
   something real about your infrastructure code, not a turnip failure.

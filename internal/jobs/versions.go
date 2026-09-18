@@ -6,14 +6,37 @@ import (
 	"github.com/ivanvc/turnip/internal/config"
 )
 
-// toolImage describes how to provision one IaC tool's CLI binary onto a
-// Runner Job via an initContainer.
+// provisioningStrategy is how a Runner Job obtains its IaC tool.
+//
+// It is a per-tool property because tools differ in kind, not just in
+// name: some are a single self-contained binary, and some are a runtime
+// that needs helper executables, plugins and environment the vendor image
+// provides. Applying one strategy to every tool means either copying a
+// vendor's whole filesystem layout — making turnip's table a mirror of
+// someone else's Dockerfile — or refusing to run the tools that aren't
+// binaries.
+type provisioningStrategy int
+
+const (
+	// copyOut copies the tool's binary out of the vendor image onto a
+	// shared volume, and turnip's own Runner image executes it.
+	copyOut provisioningStrategy = iota
+	// runInImage makes the vendor image the Job's main container and
+	// supplies turnip's runner binary to it, so the tool runs with the
+	// image's own PATH, environment and HOME.
+	runInImage
+)
+
+// toolImage describes how to provision one IaC tool onto a Runner Job.
 type toolImage struct {
 	// image is a fmt.Sprintf template with one %s for the resolved
 	// version.
 	image string
+	// strategy is how this tool reaches the process that runs it.
+	strategy provisioningStrategy
 	// binaryPath is where the tool's CLI binary lives inside that vendor
-	// image, to be copied onto the shared volume.
+	// image, to be copied onto the shared volume. Meaningless — and left
+	// empty — under runInImage, where nothing is copied out.
 	binaryPath string
 	// versions are known-good example versions for this tool, in
 	// preference order; the first entry is the documented default used
@@ -38,18 +61,26 @@ type toolImage struct {
 var toolImages = map[string]toolImage{
 	"terraform": {
 		image:      "hashicorp/terraform:%s",
+		strategy:   copyOut,
 		binaryPath: "/bin/terraform",
 		versions:   []string{"1.9.5", "1.9.4", "1.8.5"},
 	},
 	"pulumi": {
 		image:      "pulumi/pulumi-base:%s",
+		strategy:   copyOut,
 		binaryPath: "/pulumi/bin/pulumi",
 		versions:   []string{"3.130.0", "3.129.0", "3.128.0"},
 	},
+	// Helmfile is a runtime, not a binary: it shells out to `helm`,
+	// `helmfile diff` needs the helm-diff plugin, helm-secrets needs
+	// `sops`, and helm locates its plugins through an environment this
+	// image sets. Copying one binary out produced exactly the failure this
+	// strategy exists to remove — `exec: "helm": executable file not found
+	// in $PATH`.
 	"helmfile": {
-		image:      "ghcr.io/helmfile/helmfile:v%s",
-		binaryPath: "/usr/local/bin/helmfile",
-		versions:   []string{"0.170.1", "0.169.2", "0.168.0"},
+		image:    "ghcr.io/helmfile/helmfile:v%s",
+		strategy: runInImage,
+		versions: []string{"0.170.1", "0.169.2", "0.168.0"},
 	},
 }
 
