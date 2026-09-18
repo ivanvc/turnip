@@ -160,7 +160,7 @@ This document specifies requirements for rewriting the multi-IaC automation plat
 #### Acceptance Criteria
 
 1. WHEN plan Operations complete, THE Server SHALL post a single comment with results from all Projects
-2. THE comment SHALL include a summary table showing each Project name, Operation type, and status (success/failure)
+2. THE comment SHALL show each Project's name, Operation type, and status (success/failure) legibly without the reader expanding any collapsed section
 3. THE comment SHALL include collapsible sections with detailed output for each Project
 4. WHEN subsequent plan Operations run on the same PR, THE Server SHALL update the existing comment instead of creating a new one
 5. THE Server SHALL format Terraform/Pulumi/Helmfile output with syntax highlighting using markdown code blocks
@@ -251,7 +251,7 @@ This document specifies requirements for rewriting the multi-IaC automation plat
 
 1. WHEN multiple Projects are triggered, THE Server SHALL execute Operations for all Projects in parallel
 2. THE Server SHALL wait for all Project Operations to complete before posting the consolidated comment
-3. THE consolidated comment SHALL include a summary table with one row per Project showing status and change counts
+3. THE consolidated comment SHALL show each Project's status and change counts, visible without expanding that Project's detail section
 4. THE consolidated comment SHALL include detailed output sections for each Project in collapsible markdown details blocks
 ### Requirement 18: Tool Selection and Tool Configuration in turnip.yaml
 

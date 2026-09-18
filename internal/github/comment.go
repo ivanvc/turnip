@@ -8,8 +8,8 @@ import (
 const maxCommentLength = 65536 // GitHub's documented PR/issue comment cap
 
 // minReserve is a floor on how much of maxCommentLength each detail-section
-// piece assumes is unavailable to it for the summary table (group 0) or
-// continuation header (later groups) — see reserveFor.
+// piece assumes is unavailable to it for the verdict line and footer
+// (group 0) or a continuation header (later groups) — see reserveFor.
 const minReserve = 128
 
 // BuildConsolidatedComment renders results into one or more comment
@@ -18,45 +18,80 @@ const minReserve = 128
 // large for one body is split across multiple <details> pieces — each
 // closing its own code fence before the body ends, and the next piece
 // reopening one — rather than losing content to truncation.
+//
+// There is no summary table. Each Project is one collapsible section
+// whose <summary> carries its status and change counts, and GitHub
+// renders that summary while the section is collapsed — so a reader scans
+// a run without expanding anything, which is the job the table used to do
+// (global Requirements 10.2 and 17.3, amended for this).
 func BuildConsolidatedComment(results []ProjectResult) []string {
 	if len(results) == 0 {
 		return nil
 	}
 
-	table := buildSummaryTable(results)
-	reserve := reserveFor(table)
+	verdict := buildVerdictLine(results)
+	footer := buildFooter(results)
+	reserve := reserveFor(verdict, footer)
 
-	var pieces []string
+	var pieces []section
 	for _, r := range results {
 		pieces = append(pieces, splitDetailSection(r, reserve)...)
 	}
 
-	groups := packSections(table, pieces)
+	groups := packSections(verdict, pieces)
 
 	bodies := make([]string, len(groups))
+	lastGroup := len(groups) - 1
 	for i, group := range groups {
-		var b strings.Builder
-		if i == 0 {
-			b.WriteString(table)
-			b.WriteString("\n\n")
-		} else {
-			fmt.Fprintf(&b, "_(continued %d/%d)_\n\n", i+1, len(groups))
+		header := verdict + "\n\n"
+		if i > 0 {
+			header = fmt.Sprintf("_(continued %d/%d)_\n\n", i+1, len(groups))
 		}
-		b.WriteString(strings.Join(group, "\n\n"))
-		bodies[i] = truncateBody(b.String())
+
+		// The footer describes the run as a whole, so it belongs once, at
+		// the end of the last body a reader reaches.
+		var groupFooter string
+		if i == lastGroup {
+			groupFooter = footer
+		}
+
+		bodies[i] = clampBody(header, group, groupFooter)
 	}
 
 	return bodies
 }
 
+// section is one <details> piece together with everything that produced
+// it.
+//
+// The rendered string alone would be enough for assembly, but not for
+// clamping: when a body must be cut *into* a section, the cut has to
+// rebuild that section from the same builder that emitted it rather than
+// parse its own output. Carrying the inputs is what makes that possible
+// (Decision 6, tier 2).
+type section struct {
+	result ProjectResult
+	chunk  string
+	part   int
+	total  int
+}
+
+func (s section) render() string {
+	return buildDetailSectionPart(s.result, s.chunk, s.part, s.total)
+}
+
 // reserveFor returns how much of maxCommentLength a single detail-section
 // piece must assume is unavailable to it, regardless of which body it
-// eventually lands in. The summary table (group 0's overhead) is
-// virtually always larger than a continuation header (later groups'
-// overhead — a short "_(continued N/M)_" line), so reserving against the
-// table is the conservative choice for every piece, wherever it lands.
-func reserveFor(table string) int {
-	return max(len(table), minReserve)
+// lands in.
+//
+// Both the verdict line (which opens the first body) and the footer
+// (which closes the last) are counted, because a piece does not know
+// which body it ends up in and the two can land on the same one. A
+// continuation header is a short "_(continued N/M)_" line, always smaller
+// than that pair, so reserving against them is the conservative choice
+// everywhere.
+func reserveFor(verdict, footer string) int {
+	return max(len(verdict)+len(footer), minReserve)
 }
 
 // splitDetailSection renders r as one or more self-contained <details>
@@ -64,66 +99,146 @@ func reserveFor(table string) int {
 // own. A piece never depends on another piece within the same comment
 // body to be valid markdown: every piece opens and closes its own code
 // fence and <details> tag.
-func splitDetailSection(r ProjectResult, reserve int) []string {
+func splitDetailSection(r ProjectResult, reserve int) []section {
 	budget := maxCommentLength - reserve
 
 	full := buildDetailSectionPart(r, r.Output, 1, 1)
 	if len(full) <= budget {
-		return []string{full}
+		return []section{{result: r, chunk: r.Output, part: 1, total: 1}}
 	}
 
 	// Estimate one piece's non-Output scaffold size using a pessimistic
 	// (4-digit) part/total placeholder, so the real "part N/M" suffix -
 	// whatever N and M turn out to be - never ends up making a piece a
-	// few bytes larger than budgeted.
+	// few bytes larger than budgeted. Passing equal part/total also means
+	// the estimate includes the next-steps block, which only the final
+	// piece carries.
 	scaffold := len(buildDetailSectionPart(r, "", 9999, 9999))
 	chunkCap := max(budget-scaffold, 1)
 
 	total := (len(r.Output) + chunkCap - 1) / chunkCap // ceil division
 
-	pieces := make([]string, 0, total)
+	pieces := make([]section, 0, total)
 	output := r.Output
 	for part := 1; part <= total; part++ {
 		n := min(chunkCap, len(output))
-		pieces = append(pieces, buildDetailSectionPart(r, output[:n], part, total))
+		pieces = append(pieces, section{result: r, chunk: output[:n], part: part, total: total})
 		output = output[n:]
 	}
 	return pieces
 }
 
-// truncateBody bounds one fully-assembled comment body to maxCommentLength
-// as a last-resort safety net — splitDetailSection already sizes every
-// piece to fit, so this should not normally fire, but a few bytes of
-// per-piece join/header overhead aren't accounted for during packing. The
-// marker closes the code fence and <details> tag it may be cutting
-// through, so the clamped body stays valid markdown, and is appended
-// last so it's never itself clipped by the length check.
-func truncateBody(body string) string {
-	if len(body) <= maxCommentLength {
-		return body
+// chunkOmissionMarker opens a section whose output was cut, inside its
+// fence. It carries no "-" or "+" prefix, so a diff-fenced block renders
+// it as ordinary context rather than colouring it.
+const chunkOmissionMarker = "…(earlier output omitted)\n"
+
+// clampBody assembles one comment body and brings it under
+// maxCommentLength, preferring to drop whole sections over cutting into
+// one.
+//
+// Dropping from the front is safe by construction: every section opens
+// and closes its own fence and <details>, so removing entire sections
+// leaves valid markdown with nothing to repair. Cutting bytes out of a
+// packed body could not promise that — a fragment can begin inside a
+// fence, inside a <details>, or between them.
+//
+// What survives is the *end*, because that is where a reader finds the
+// verdict's supporting detail and any error: Atlantis truncates the same
+// direction for the same reason.
+func clampBody(header string, sections []section, footer string) string {
+	dropped := 0
+	for {
+		body := assembleBody(header, sections, footer, dropped)
+		if len(body) <= maxCommentLength {
+			return body
+		}
+		if len(sections) > 1 {
+			sections = sections[1:]
+			dropped++
+			continue
+		}
+		return cutWithinSection(header, sections[0], footer, dropped)
 	}
-	const marker = "\n```\n\n_(truncated)_\n</details>"
-	keep := max(maxCommentLength-len(marker), 0)
-	return body[:keep] + marker
+}
+
+// assembleBody renders a body from its parts. The omission note is
+// prepended after the drop rather than before it, so the verdict line
+// above still describes the whole run rather than the surviving fragment.
+func assembleBody(header string, sections []section, footer string, dropped int) string {
+	var b strings.Builder
+	b.WriteString(header)
+
+	if dropped > 0 {
+		b.WriteString(omissionNote(dropped))
+		b.WriteString("\n\n")
+	}
+
+	rendered := make([]string, len(sections))
+	for i, s := range sections {
+		rendered[i] = s.render()
+	}
+	b.WriteString(strings.Join(rendered, "\n\n"))
+
+	if footer != "" {
+		b.WriteString("\n\n")
+		b.WriteString(footer)
+	}
+
+	return b.String()
+}
+
+func omissionNote(dropped int) string {
+	if dropped == 1 {
+		return "_(1 earlier section omitted — this comment reached GitHub's size limit)_"
+	}
+	return fmt.Sprintf("_(%d earlier sections omitted — this comment reached GitHub's size limit)_", dropped)
+}
+
+// cutWithinSection is the floor beneath dropping: one section remains and
+// it still does not fit, which splitDetailSection normally prevents but
+// cannot guarantee — it floors its own chunk arithmetic at one byte, so a
+// section whose scaffold alone exceeds the budget produces oversized
+// pieces however it is split.
+//
+// Cutting is acceptable here for the reason it was not acceptable above:
+// exactly one section remains, turnip generated its scaffold, and the
+// section is rebuilt through buildDetailSectionPart rather than patched
+// as text. Nothing is guessed about which elements to reopen.
+func cutWithinSection(header string, s section, footer string, dropped int) string {
+	empty := s
+	empty.chunk = ""
+	overhead := len(assembleBody(header, []section{empty}, footer, dropped))
+
+	room := max(maxCommentLength-overhead-len(chunkOmissionMarker), 0)
+
+	chunk := s.chunk
+	if len(chunk) > room {
+		chunk = chunk[len(chunk)-room:] // keep the end
+	}
+	s.chunk = chunkOmissionMarker + chunk
+
+	return assembleBody(header, []section{s}, footer, dropped)
 }
 
 // packSections greedily groups pieces into comment bodies, keeping each
 // body's total content under maxCommentLength. The first group's budget
-// accounts for the summary table; later groups start fresh (their
+// accounts for the verdict line; later groups start fresh (their
 // continuation header is small enough not to need accounting for here).
-func packSections(table string, pieces []string) [][]string {
-	var groups [][]string
-	var current []string
-	currentLen := len(table)
+func packSections(verdict string, pieces []section) [][]section {
+	var groups [][]section
+	var current []section
+	currentLen := len(verdict)
 
 	for _, piece := range pieces {
-		if len(current) > 0 && currentLen+len(piece) > maxCommentLength {
+		size := len(piece.render())
+		if len(current) > 0 && currentLen+size > maxCommentLength {
 			groups = append(groups, current)
 			current = nil
 			currentLen = 0
 		}
 		current = append(current, piece)
-		currentLen += len(piece)
+		currentLen += size
 	}
 	if len(current) > 0 {
 		groups = append(groups, current)
@@ -132,26 +247,190 @@ func packSections(table string, pieces []string) [][]string {
 	return groups
 }
 
-func buildSummaryTable(results []ProjectResult) string {
-	var b strings.Builder
-	b.WriteString("| Project | Operation | Status |\n")
-	b.WriteString("|---|---|---|\n")
-	for _, r := range results {
-		fmt.Fprintf(&b, "| %s | %s | %s |\n", r.ProjectName, r.Operation, statusEmoji(r.Success))
+// buildVerdictLine opens the comment with the one sentence a reader needs
+// to decide whether to read further.
+//
+// It states the total change and names only the exceptions — Projects
+// that reported no changes, and failures. It deliberately does not also
+// report how many Projects had changes: the total implies it, and the
+// rows below show it.
+func buildVerdictLine(results []ProjectResult) string {
+	if len(results) == 1 {
+		return singleProjectVerdict(results[0])
 	}
-	return b.String()
+
+	var total, changed, noChanges, failed int
+	for _, r := range results {
+		switch {
+		case !r.Success:
+			failed++
+		case r.Changes.Any():
+			changed++
+			total += r.Changes.Total()
+		default:
+			noChanges++
+		}
+	}
+
+	var headline string
+	switch {
+	case failed == len(results):
+		headline = fmt.Sprintf("All %d projects failed", len(results))
+	case changed == 0:
+		headline = fmt.Sprintf("No changes across %d projects", len(results))
+	default:
+		headline = fmt.Sprintf("%s across %d projects", changeCount(total), len(results))
+	}
+
+	var notes []string
+	if changed > 0 && noChanges > 0 {
+		notes = append(notes, fmt.Sprintf("%d with no changes", noChanges))
+	}
+	if failed > 0 && failed != len(results) {
+		notes = append(notes, fmt.Sprintf("%d failed", failed))
+	}
+
+	// The bold runs to the end of the headline's own sentence. With notes
+	// the headline is a clause and the sentence continues past the bold;
+	// without them it is the whole sentence, so its full stop belongs
+	// inside — matching the single-Project forms above, which build a
+	// complete sentence either way.
+	if len(notes) == 0 {
+		return "**" + headline + ".**"
+	}
+	return "**" + headline + "** — " + strings.Join(notes, ", ") + "."
+}
+
+// singleProjectVerdict reads as a sentence about one Project rather than
+// as arithmetic over a set of one — "4 changes in `infra`", not "4 changes
+// across 1 project, 0 with no changes, 0 failed". A repository with one
+// Project is the common case, not an edge case.
+func singleProjectVerdict(r ProjectResult) string {
+	switch {
+	case !r.Success:
+		return fmt.Sprintf("**`%s` failed.**", r.ProjectName)
+	case r.Changes.Any():
+		return fmt.Sprintf("**%s in `%s`.**", changeCount(r.Changes.Total()), r.ProjectName)
+	default:
+		return fmt.Sprintf("**No changes in `%s`.**", r.ProjectName)
+	}
+}
+
+func changeCount(n int) string {
+	if n == 1 {
+		return "1 change"
+	}
+	return fmt.Sprintf("%d changes", n)
+}
+
+// buildFooter closes the comment with what applies to the whole run: the
+// Locks this pull request now holds, and the commands that act on all
+// Projects at once. Empty when no Lock is held, so a run that locked
+// nothing says nothing about locks.
+func buildFooter(results []ProjectResult) string {
+	var locked []string
+	for _, r := range results {
+		if r.Locked {
+			locked = append(locked, "`"+r.ProjectName+"`")
+		}
+	}
+	if len(locked) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf(
+		"This pull request holds locks on %s until applied or released.\n`/turnip apply` · `/turnip unlock`",
+		strings.Join(locked, ", "),
+	)
 }
 
 // buildDetailSectionPart renders one self-contained <details> piece
 // carrying chunk (a whole Output, or one slice of a split Output).
 // total == 1 omits the "part N/M" suffix entirely, for the common case
 // where a Project's Output fits in a single piece.
+//
+// The next-steps block is attached to the final piece only: repeating it
+// on every slice of a split output would be noise, and the reader reaches
+// the last piece before deciding what to do.
 func buildDetailSectionPart(r ProjectResult, chunk string, part, total int) string {
-	summary := fmt.Sprintf("%s (%s) — %s", r.ProjectName, r.Operation, statusWord(r.Success))
+	summary := summaryLine(r)
 	if total > 1 {
 		summary += fmt.Sprintf(" (output part %d/%d)", part, total)
 	}
-	return fmt.Sprintf("<details>\n<summary>%s</summary>\n\n%s\n%s\n```\n\n</details>", summary, fenceFor(r.Success), chunk)
+
+	var trailer string
+	if part == total {
+		trailer = blockedNote(r) + nextSteps(r)
+	}
+
+	return fmt.Sprintf(
+		"<details>\n<summary>%s</summary>\n\n%s\n%s\n```%s\n\n</details>",
+		summary, fenceFor(r.Success), chunk, trailer,
+	)
+}
+
+// summaryLine is what a reader sees without expanding anything, so it
+// carries the whole per-Project verdict: status, name, Operation, and
+// what changed.
+//
+// Counts are rendered only for a successful Operation. A failure reports
+// no usable counts — presenting its zeroes would make a run that never
+// completed look like one that planned nothing.
+func summaryLine(r ProjectResult) string {
+	detail := "no changes"
+	switch {
+	case !r.Success:
+		detail = "failed"
+	case r.Changes.Any():
+		detail = fmt.Sprintf("+%d ~%d -%d", r.Changes.Add, r.Changes.Change, r.Changes.Destroy)
+	}
+
+	return fmt.Sprintf("%s %s · %s · %s", statusMark(r.Success), r.ProjectName, r.Operation, detail)
+}
+
+// nextSteps prints the commands that act on this Project alone.
+//
+// Each is offered by state rather than from a fixed list: apply only
+// where there is something to apply, unlock only where a Lock is actually
+// held. Nothing here encodes *which* outcomes leave a Lock held — that is
+// the lock lifecycle's business, and reading r.Locked rather than
+// inferring from r.Success keeps this correct when that lifecycle
+// changes.
+//
+// An unresolved operation name omits its command rather than guessing at
+// one, since the names are per-tool and this package has no Plugin
+// registry to ask.
+func nextSteps(r ProjectResult) string {
+	var lines []string
+
+	if r.Success && r.Changes.Any() && r.ApplyOperation != "" {
+		lines = append(lines, fmt.Sprintf("- Apply just this project: `/turnip %s %s`", r.ApplyOperation, r.ProjectName))
+	}
+	if r.PlanOperation != "" {
+		lines = append(lines, fmt.Sprintf("- Re-plan it: `/turnip %s %s`", r.PlanOperation, r.ProjectName))
+	}
+	if r.Locked {
+		lines = append(lines, fmt.Sprintf("- Release its lock: `/turnip unlock %s`", r.ProjectName))
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+	return "\n\n" + strings.Join(lines, "\n")
+}
+
+// blockedNote names the pull request whose Lock refused this Operation,
+// linking to it so the reader can go and look rather than search
+// (Requirement 7.2). A holder we could not identify is reported without
+// inventing a reference.
+func blockedNote(r ProjectResult) string {
+	if r.BlockedBy == nil {
+		return ""
+	}
+	if r.BlockedBy.URL == "" {
+		return fmt.Sprintf("\n\nLocked by pull request #%d.", r.BlockedBy.Number)
+	}
+	return fmt.Sprintf("\n\nLocked by [#%d](%s).", r.BlockedBy.Number, r.BlockedBy.URL)
 }
 
 // fenceFor picks the opening code fence for a Project's output.
@@ -176,16 +455,9 @@ func fenceFor(success bool) string {
 	return "```"
 }
 
-func statusEmoji(success bool) string {
+func statusMark(success bool) string {
 	if success {
-		return "✅ success"
+		return "✅"
 	}
-	return "❌ failure"
-}
-
-func statusWord(success bool) string {
-	if success {
-		return "success"
-	}
-	return "failure"
+	return "❌"
 }

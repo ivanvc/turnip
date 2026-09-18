@@ -49,6 +49,20 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 		Operation:   rec.Operation,
 		Success:     result.Success,
 		Output:      result.Output,
+		Changes: github.ChangeCounts{
+			Add:     int(result.Changes.Add),
+			Change:  int(result.Changes.Change),
+			Destroy: int(result.Changes.Destroy),
+		},
+	}
+	// The comment prints per-Project commands, and operation names are
+	// per-tool ("diff"/"apply" for Helmfile, "preview"/"up" for Pulumi).
+	// internal/github has no Plugin registry to ask, so they are resolved
+	// here and carried. An unregistered tool leaves them empty, which
+	// omits those commands rather than guessing at a name.
+	if p, ok := o.plugins[rec.Project.Tool]; ok {
+		pr.PlanOperation = p.GetPlanOperation()
+		pr.ApplyOperation = p.GetApplyOperation()
 	}
 	if !result.Success && result.ErrorMessage != "" {
 		pr.Output = result.Output + "\n\n" + result.ErrorMessage
@@ -83,6 +97,16 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 		}
 	}
 
+	// Locked records whether this pull request still holds the Project's
+	// Lock once this result has been handled, so the comment can say so
+	// and offer the command that releases it.
+	//
+	// It is deliberately not derived from Success: which outcomes leave a
+	// Lock held is the lock lifecycle's business, and stating the fact
+	// rather than inferring it keeps the comment honest when that
+	// lifecycle changes. Every path below sets it explicitly.
+	pr.Locked = true
+
 	if result.Success {
 		p, ok := o.plugins[rec.Project.Tool]
 		switch {
@@ -99,6 +123,7 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 			if err := o.locks.ReleaseLock(ctx, rec.ProjectKey, rec.PRNumber); err != nil {
 				slog.ErrorContext(ctx, "releasing lock", "operation_id", operationID, "error", err)
 			} else {
+				pr.Locked = false
 				pr.Output += "\n\nLock released — this Project is now free for another PR to plan against."
 			}
 		}
@@ -106,6 +131,9 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 	// A failed or timed-out Operation triggers no Lock mutation
 	// (Requirement 6.8): a failed plan leaves the Lock held with no new
 	// plan data, a failed apply leaves the Lock held rather than released.
+	// Slice 18 revisits the first of those — a failed plan holds a Lock
+	// that protects nothing — and pr.Locked will follow it without this
+	// code changing, because it reports the state rather than deducing it.
 
 	if err := o.records.Delete(ctx, operationID); err != nil {
 		slog.ErrorContext(ctx, "deleting operation record", "operation_id", operationID, "error", err)

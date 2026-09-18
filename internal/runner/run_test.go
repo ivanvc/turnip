@@ -356,7 +356,7 @@ func (p *echoWorkingDirPlugin) Execute(_ context.Context, _ string, opts plugin.
 func TestRunWith_WorkspacePathStrippedFromWhatTheServerSees(t *testing.T) {
 	rep := &fakeReporter{}
 	cfg := testRunConfig()
-	cfg.ProjectDir = "environments/cicd-2"
+	cfg.ProjectDir = "environments/project"
 	var stdout, stderr safeBuffer
 
 	exitCode := runWith(context.Background(), cfg, rep, fakeSelector(&echoWorkingDirPlugin{operations: []string{"diff"}}), &stdout, &stderr)
@@ -364,11 +364,11 @@ func TestRunWith_WorkspacePathStrippedFromWhatTheServerSees(t *testing.T) {
 
 	assert.NotContains(t, rep.lastResult.Output, "/tmp/turnip-runner-",
 		"the workspace path must never reach the Server, and from there the PR comment")
-	assert.Contains(t, rep.lastResult.Output, `"environments/cicd-2/values.yaml"`,
+	assert.Contains(t, rep.lastResult.Output, `"environments/project/values.yaml"`,
 		"the repository-relative path a reviewer recognizes survives")
 
 	require.Len(t, rep.logLines, 1)
-	assert.Equal(t, "reading environments/cicd-2/values.yaml", rep.logLines[0].line,
+	assert.Equal(t, "reading environments/project/values.yaml", rep.logLines[0].line,
 		"streamed log lines are stripped too, not just the final result")
 
 	// The local mirror deliberately keeps the absolute path: `kubectl

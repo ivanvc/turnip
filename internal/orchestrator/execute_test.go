@@ -237,6 +237,52 @@ func TestExecuteOne_PlanLockConflictIsRejected(t *testing.T) {
 	assert.InDelta(t, lockBefore+1, scrapeMetric(t, "turnip_lock_attempts_total", map[string]string{"outcome": "rejected"}), 0.0001)
 }
 
+// Requirement 7.2: the refusal names the blocking pull request *and*
+// links to it. The URL was always present in the status being read — only
+// the number reached the comment.
+func TestExecuteOne_PlanLockConflictCarriesTheBlockingPullRequest(t *testing.T) {
+	locks := &fakeLockManager{
+		acquireLockFunc: func(ctx context.Context, projectKey string, prNumber int, url, lockedBy string) (bool, error) {
+			return false, nil
+		},
+		getLockStatusFunc: func(ctx context.Context, projectKey string) (*lock.LockStatus, error) {
+			return &lock.LockStatus{
+				Locked:         true,
+				PRNumber:       7,
+				PullRequestURL: "https://github.com/owner/repo/pull/7",
+			}, nil
+		},
+	}
+	o, _ := testOrchestrator(t, locks, &fakeJobCreator{t: t})
+
+	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
+
+	require.NotNil(t, result.BlockedBy, "a contended lock must identify its holder")
+	assert.Equal(t, 7, result.BlockedBy.Number)
+	assert.Equal(t, "https://github.com/owner/repo/pull/7", result.BlockedBy.URL)
+}
+
+// Requirement 5.3: a holder that cannot be determined is reported without
+// inventing a reference, so the comment says the Project is locked and
+// stops there.
+func TestExecuteOne_PlanLockConflictWithUnknownHolderInventsNothing(t *testing.T) {
+	locks := &fakeLockManager{
+		acquireLockFunc: func(ctx context.Context, projectKey string, prNumber int, url, lockedBy string) (bool, error) {
+			return false, nil
+		},
+		getLockStatusFunc: func(ctx context.Context, projectKey string) (*lock.LockStatus, error) {
+			return &lock.LockStatus{Locked: false}, nil
+		},
+	}
+	o, _ := testOrchestrator(t, locks, &fakeJobCreator{t: t})
+
+	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
+
+	assert.False(t, result.Success)
+	assert.Nil(t, result.BlockedBy, "an unidentifiable holder must not be fabricated")
+	assert.Contains(t, result.Output, "locked by another PR")
+}
+
 func TestExecuteOne_ApplyWithoutLockIsRejected(t *testing.T) {
 	locks := &fakeLockManager{
 		isLockedByPRFunc: func(ctx context.Context, projectKey string, prNumber int) (bool, error) {
@@ -392,13 +438,13 @@ func TestExecuteOne_ProjectServiceAccountUsedWhenAllowed(t *testing.T) {
 	client := &fakeExecuteClient{}
 
 	target := testHelmfileTarget()
-	target.Project.Runner.ServiceAccount = "turnip-runner-cicd2"
+	target.Project.Runner.ServiceAccount = "turnip-runner-project"
 
 	o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
 
 	job := jobsClient.lastCreatedJob()
 	require.NotNil(t, job)
-	assert.Equal(t, "turnip-runner-cicd2", job.Spec.Template.Spec.ServiceAccountName)
+	assert.Equal(t, "turnip-runner-project", job.Spec.Template.Spec.ServiceAccountName)
 }
 
 func TestExecuteTargets_RunsConcurrentlyAndWaitsForAll(t *testing.T) {

@@ -14,8 +14,8 @@ least one changed file — no comment needed. For Helmfile, "plan" means
 Each triggered project gets its own check run
 (`turnip/<project>/<operation>`, e.g. `turnip/web/diff`) and a
 consolidated PR comment summarizing every project touched by that PR
-(a table up top, full tool output in collapsible detail sections below
-it) — see "What you'll see on the PR" below.
+(a verdict line up top, then one collapsible section per project) — see
+"What you'll see on the PR" below.
 
 ## Triggering by comment
 
@@ -106,11 +106,38 @@ Practically:
 - **Check runs**, one per (project, operation), named
   `turnip/<project>/<operation>` — `in_progress` while the Runner Job is
   executing, then `success`/`failure` with the tool's own output attached.
-- **A PR comment** consolidating every project touched by that trigger: a
-  summary table first, then a collapsible `<details>` section per project
-  with the full command output. A single project's output that's too
-  long for one GitHub comment splits across multiple comments rather than
-  getting truncated — nothing is silently cut off.
+- **A PR comment** consolidating every project touched by that trigger.
+  It opens with a **verdict line** — the total change across every
+  project, and how many reported no changes or failed — so you can tell
+  whether the PR needs attention without expanding anything.
+
+  Below it, one collapsible section per project. Each section's heading
+  stays visible while collapsed and carries that project's status and
+  change counts (`✅ web · diff · +1 ~4 -2`), so a run across many
+  projects is scannable at a glance. Expanding one shows the full command
+  output, followed by the commands that act on **that project alone**:
+
+  ```
+  - Apply just this project: /turnip apply web
+  - Re-plan it: /turnip diff web
+  - Release its lock: /turnip unlock web
+  ```
+
+  Only the commands that actually apply are shown — a project that failed
+  is never offered an apply, and unlock appears only where this PR is
+  holding a lock. The comment closes by naming the projects this PR has
+  locked, with `/turnip apply` and `/turnip unlock` for acting on all of
+  them at once.
+
+  A plan holds each project's lock until it is applied or released, which
+  is what stops another PR planning the same project underneath you.
+  `/turnip unlock` gives it up without applying.
+
+  A single project's output that's too long for one GitHub comment
+  splits across multiple comments rather than getting truncated. If even
+  that isn't enough, the **earliest** sections are dropped first and the
+  comment says how many — the end is kept, because that's where the
+  errors and the summary are.
 
 If something fails partway — a lock conflict, a GitHub API hiccup, a tool
 error, a Job that never started — see `docs/troubleshooting.md` for what

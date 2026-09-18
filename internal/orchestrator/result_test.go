@@ -64,6 +64,88 @@ func TestHandleLog_MarksStarted(t *testing.T) {
 	assert.InDelta(t, before+1, scrapeMetric(t, "turnip_runner_job_start_latency_seconds", nil), 0.0001)
 }
 
+// publishedResult runs HandleResult and returns the ProjectResult it
+// published, which is what reaches the pull request comment. The
+// subscription is established before the handler runs because Pub/Sub has
+// no replay.
+func publishedResult(t *testing.T, o *Orchestrator, operationID string, result rpc.OperationResult) github.ProjectResult {
+	t.Helper()
+	ctx := context.Background()
+
+	resultCh := make(chan github.ProjectResult, 1)
+	go func() {
+		r, _ := waitForDone(ctx, o.redis, operationID)
+		resultCh <- r
+	}()
+
+	require.Eventually(t, func() bool {
+		return o.redis.PubSubNumSub(ctx, doneChannel(operationID)).Val()[doneChannel(operationID)] > 0
+	}, time.Second, time.Millisecond)
+
+	require.NoError(t, o.HandleResult(ctx, operationID, result))
+
+	select {
+	case got := <-resultCh:
+		return got
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the published result")
+		return github.ProjectResult{}
+	}
+}
+
+// The counts the Runner reported, and the Plugin's operation names, must
+// reach the result — the renderer has no Plugin registry to resolve names
+// itself, and re-parsing the output for counts would duplicate work the
+// Runner already did.
+func TestHandleResult_CarriesChangeCountsAndResolvedOperationNames(t *testing.T) {
+	o, _ := testResultOrchestrator(t, &fakeLockManager{})
+	createTestRecord(t, o, "op-counts", "diff", false)
+
+	got := publishedResult(t, o, "op-counts", rpc.OperationResult{
+		Success:  true,
+		PlanData: []byte("plan-data"),
+		Changes:  rpc.ChangeSummary{Add: 1, Change: 4, Destroy: 2},
+	})
+
+	assert.Equal(t, github.ChangeCounts{Add: 1, Change: 4, Destroy: 2}, got.Changes)
+	assert.Equal(t, "diff", got.PlanOperation, "resolved from the Project's Plugin")
+	assert.Equal(t, "apply", got.ApplyOperation)
+}
+
+// Locked reports the state after the result was handled, rather than being
+// inferred from Success — which is what lets Slice 18 change whether a
+// failed plan keeps its Lock without this code or the renderer changing.
+func TestHandleResult_LockStateFollowsWhatActuallyHappened(t *testing.T) {
+	t.Run("successful plan holds its lock", func(t *testing.T) {
+		o, _ := testResultOrchestrator(t, &fakeLockManager{})
+		createTestRecord(t, o, "op-plan", "diff", false)
+
+		got := publishedResult(t, o, "op-plan", rpc.OperationResult{
+			Success: true, PlanData: []byte("plan-data"),
+		})
+
+		assert.True(t, got.Locked)
+	})
+
+	t.Run("successful apply releases it", func(t *testing.T) {
+		o, _ := testResultOrchestrator(t, &fakeLockManager{})
+		createTestRecord(t, o, "op-apply", "apply", true)
+
+		got := publishedResult(t, o, "op-apply", rpc.OperationResult{Success: true})
+
+		assert.False(t, got.Locked, "a released lock must not be offered for unlocking")
+	})
+
+	t.Run("failed apply keeps it", func(t *testing.T) {
+		o, _ := testResultOrchestrator(t, &fakeLockManager{})
+		createTestRecord(t, o, "op-failed-apply", "apply", true)
+
+		got := publishedResult(t, o, "op-failed-apply", rpc.OperationResult{Success: false})
+
+		assert.True(t, got.Locked, "an apply that may have mutated infrastructure keeps its lock")
+	})
+}
+
 func TestHandleResult_UnclaimableIsNoop(t *testing.T) {
 	o, _ := testResultOrchestrator(t, &fakeLockManager{})
 	// No record created at all.

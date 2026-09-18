@@ -342,7 +342,7 @@ worked in parallel.
     the checks tab, where previously the only signal was the conclusion
     icon — the title merely repeated the name (github-integration's task
     22 defaults `Title` to the check run's name when a caller leaves it
-    unset), so the tab showed `turnip/cicd-2/diff` twice and nothing else
+    unset), so the tab showed `turnip/project/diff` twice and nothing else
   - Deliberately *not* in the name: the name is the check run's stable
     identity, matched by required status checks and branch protection. A
     name varying with the outcome would register as a separate check per

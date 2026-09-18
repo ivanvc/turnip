@@ -122,7 +122,7 @@ happened to put the clone.
    and deleting it is both wrong and unnecessary, since the Pod is
    ephemeral
 7. THE Runner SHALL continue rewriting the Workspace path out of output
-   bound for the Server, so a reviewer sees `environments/cicd-2/...`
+   bound for the Server, so a reviewer sees `environments/project/...`
    rather than an absolute path (grpc-runner's task 24, unchanged by the
    path becoming fixed)
 8. THE `/turnip/src` path SHALL be documented, and repositories MAY

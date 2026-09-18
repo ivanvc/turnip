@@ -25,6 +25,8 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 14 | Per-Tool Provisioning | `tool-provisioning` | Complete | Slices 2, 12 |
 | 15 | Refuse Fork Pull Requests | `fork-pull-requests` | Not Started | Slice 6 |
 | 16 | Cloning Submodules | `clone-submodules` | Complete | Slice 5 |
+| 17 | Pull Request Comment Output | `comment-output` | Complete | Slices 4, 6 |
+| 18 | Hold a Lock Only When There Is Something to Apply | `lock-release-rules` | Not Started | Slices 3, 6 |
 
 ## Slice Details
 
@@ -441,6 +443,137 @@ below), a configuration UI, submodules hosted on a host other than the
 repository's own — a GitHub installation token authenticates nothing on
 GitLab or an internal server, so those are reported rather than attempted
 — and submodule-aware `whenModified` matching.
+
+---
+
+### Slice 17: Pull Request Comment Output
+
+**Goal**: Make the consolidated comment report what an Operation did, not
+merely that it happened.
+
+**What's missing today**: a pilot run that changed four releases produced
+a three-column table and nothing else. The Runner had computed the change
+counts and the Server had stored them in the Lock; none of it reached the
+reader.
+
+**Delivers**: a verdict line opening the comment; one collapsed section
+per Project whose summary line carries status and change counts while
+shut; per-Project commands to apply, re-plan and unlock that Project
+alone; the Lock this pull request holds named explicitly; and truncation
+that preserves the end of a comment rather than its beginning.
+
+**Prior art, diverged from deliberately**: Atlantis prints a heading per
+project with per-project commands beneath it, and a `Plan Summary`
+footer. Its per-project commands are adopted; its heading-per-project
+structure is not — headings cost a screen for three projects, where a
+collapsed `<details>` summary costs one line and stays legible because
+GitHub renders summary text while the section is shut. That fact is what
+makes the summary table unnecessary rather than merely unfashionable.
+
+**Not in this slice**: rewriting tool output so `+`/`-`/`~` markers
+highlight (Slice 7 — helmfile needs none, Terraform will); draft pull
+requests; hiding no-change projects; operator-customisable templates; and
+when a comment is posted versus updated, which `server-orchestration`
+already settled as minimize-then-repost.
+
+**Global requirements covered**: implements the unimplemented half of
+Requirement 7.2 (the contention message names the blocking PR but omits
+the link `LockStatus.PullRequestURL` already carries); implements and
+**amends** Requirement 17.3; **amends** Requirement 10.2. Both amendments
+drop a mandated *summary table* in favour of stating the intent — each
+Project's name, status and change counts legible without expanding
+anything. The table was the cheapest shape to generate when those
+criteria were first written, not a decision anyone made.
+
+---
+
+### Slice 18: Hold a Lock Only When There Is Something to Apply
+
+**Goal**: Stop a Lock outliving the thing it protects.
+
+**What's wrong today**: a Lock is acquired when a plan *starts* and
+released only on a successful apply, a manual `/turnip unlock`, or the
+pull request closing. Two outcomes therefore keep a Lock that guards
+nothing — a plan that **failed**, and a plan that **succeeded with no
+changes** — each blocking every other pull request from planning that
+Project until a human intervenes, and giving the author no hint that they
+are now the obstacle.
+
+**The reasoning**: a Lock does two jobs — mutual exclusion *during*
+execution, and custody of the plan artifact *between* plan and apply.
+Both outcomes above discharge both jobs. Execution is over, and there is
+either no artifact at all or one whose application changes nothing.
+
+Framing this around *failure* alone was the original mistake: failure is
+not the property that matters. The property is whether an applicable
+plan exists.
+
+**Delivers** a five-way rule, where today there is one:
+
+| Outcome | Lock | Why |
+|---|---|---|
+| plan succeeded, with changes | held | the case the Lock exists for — apply must get exactly what was planned |
+| plan succeeded, no changes | released | the stored plan applies to nothing, so it is worth no one's wait |
+| plan failed | released | nothing to apply, execution finished |
+| plan timed out | held | no result arrived; the Runner may still be live, and releasing under a live Runner is worse than a stale Lock |
+| apply failed | held | an apply mutates — infrastructure may be partly changed, and another pull request must not apply on top of an unknown state |
+
+The apply asymmetry is the substance of the slice: today's blanket "a
+failed or timed-out Operation triggers no Lock mutation" is correct for a
+failed apply and wrong for a failed plan.
+
+**Open question, to settle before implementing**: is applying a no-change
+plan genuinely inert? For Helmfile it should be, but `apply` can run
+hooks that `diff` does not, so "nothing to apply" may not mean "applying
+does nothing". If a no-change apply has effects someone might want, the
+no-changes row above becomes a judgement rather than a deduction.
+
+**Implementable as stated**: the cases are already distinguishable where
+the decision is made. `HandleResult` runs only when `ClaimForResult`
+succeeds — a Runner actually reported — while `sweepOnce` claims records
+whose start deadline passed and which never started, reporting "timed
+out". Within `HandleResult`, the change counts the Runner reported
+separate "succeeded with changes" from "succeeded with none".
+
+**Where it lands**: the semantics are documented in `redis-lock-manager`,
+but `ReleaseLock` itself does not change — what changes is when the
+orchestrator calls it, in `internal/orchestrator/result.go`. Expect an
+amendment task in each.
+
+**Carries a documentation fix**: `result.go` and `HandleResult` cite
+"Requirement 6.6-6.8" for Lock behaviour. Requirement 6 is *Plan with
+Destroy Flag* and has five criteria; the governing requirement is 7.
+The wrong citation is what makes this behaviour look deliberate when
+nothing specifies it.
+
+**Global requirements covered**: the two halves of this slice stand
+differently, which is worth knowing before it is picked up.
+
+*Releasing after a failed plan fills a gap.* Requirement 7 covers
+acquisition, contention, a successful plan, persistence, apply
+verification, a successful apply, manual unlock and atomicity. Failure
+appears nowhere in the global spec, so nothing is overturned.
+
+*Releasing after a no-change plan **amends Requirement 7.3**.* That
+criterion says a plan that "completes successfully" stores its result and
+"THE Lock SHALL remain held" — and a no-change plan completes
+successfully. Requirement 7.4 repeats it, listing release triggers that
+do not include this one. So this half contradicts a written decision
+rather than filling a hole, and must amend 7.3 and 7.4 explicitly, the
+way Slice 17 amended 10.2 and 17.3.
+
+That asymmetry is easy to miss: the failure case looked like the whole
+slice precisely because it was the half nobody had written down.
+
+**Interacts with Slice 17, but requires nothing from it.** Slice 17's
+comment offers `unlock` where `ProjectResult.Locked` is true, and
+`HandleResult` sets that field from what actually happened to the Lock
+rather than inferring it from success. So when this slice stops a failed
+or no-change plan from holding a Lock, those sections stop offering
+unlock and drop out of the "holds locks on …" footer on their own —
+no renderer change, no orchestrator change beyond the release itself.
+Slice 17 was built that way deliberately, and a test there pins each
+lock outcome so a regression here would be caught rather than rendered.
 
 ---
 

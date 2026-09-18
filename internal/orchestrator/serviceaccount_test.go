@@ -53,7 +53,7 @@ func TestResolveServiceAccount_RequestRefusedWhenNotAllowed(t *testing.T) {
 }
 
 func TestResolveServiceAccount_RequestHonoredWhenAllowed(t *testing.T) {
-	got, err := resolveServiceAccount(projectWithServiceAccount("turnip-runner-cicd2"), "turnip-runner", allowServiceAccount(true))
+	got, err := resolveServiceAccount(projectWithServiceAccount("turnip-runner-project"), "turnip-runner", allowServiceAccount(true))
 	require.NoError(t, err)
-	assert.Equal(t, "turnip-runner-cicd2", got)
+	assert.Equal(t, "turnip-runner-project", got)
 }

@@ -305,8 +305,8 @@ it:
 ```yaml
 schemaVersion: v1alpha1
 projects:
-  - name: cicd-2
-    directory: environments/cicd-2
+  - name: project
+    directory: environments/project
     tool: helmfile
     env:
       AWS_CONFIG_FILE: /turnip/src/.turnip/aws-config

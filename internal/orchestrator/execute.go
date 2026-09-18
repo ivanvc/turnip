@@ -92,9 +92,19 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 			metrics.LockAttempt("rejected")
 			status, err := o.locks.GetLockStatus(ctx, key)
 			if err != nil || !status.Locked {
+				// The holder could not be determined, so the message says
+				// the Project is locked without inventing a reference.
 				return rejectedResult(t, "locked by another PR")
 			}
-			return rejectedResult(t, fmt.Sprintf("locked by PR #%d", status.PRNumber))
+			rejected := rejectedResult(t, fmt.Sprintf("locked by PR #%d", status.PRNumber))
+			// The URL was already in the status being read; carrying it
+			// lets the comment link to the blocking pull request rather
+			// than merely naming a number (Requirement 7.2).
+			rejected.BlockedBy = &github.BlockingPullRequest{
+				Number: status.PRNumber,
+				URL:    status.PullRequestURL,
+			}
+			return rejected
 		}
 		metrics.LockAttempt("acquired")
 	} else {

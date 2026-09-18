@@ -70,4 +70,63 @@ type ProjectResult struct {
 	Operation string
 	Success   bool
 	Output    string
+
+	// Changes is what the Operation reported changing. It is read only
+	// when Success is true: a Project that failed, or that never ran at
+	// all, must not render counts that look like a completed plan.
+	Changes ChangeCounts
+
+	// PlanOperation/ApplyOperation are the tool-native operation names for
+	// this Project's Plugin — "diff"/"apply" for Helmfile,
+	// "preview"/"up" for Pulumi. They are resolved by the caller because
+	// this package has no Plugin registry to ask, which is the same reason
+	// Tool above is carried rather than interpreted.
+	//
+	// An empty value omits that command from the Project's section rather
+	// than guessing at a name.
+	PlanOperation  string
+	ApplyOperation string
+
+	// Locked reports whether the pull request holds this Project's Lock
+	// once the Operation has been handled. It is deliberately not derived
+	// from Success: which outcomes leave a Lock held is the lock
+	// lifecycle's business, and stating the fact rather than inferring it
+	// keeps this package correct when that lifecycle changes.
+	Locked bool
+
+	// BlockedBy identifies the pull request whose Lock refused this
+	// Operation. Nil unless the Operation was rejected for that reason.
+	BlockedBy *BlockingPullRequest
+}
+
+// ChangeCounts reports how much an Operation changed, as the Plugin
+// extracted it from the tool's own output.
+//
+// Declared here rather than imported from internal/plugin: this package
+// talks to GitHub, and pulling in the plugin system for one struct of
+// three ints would couple them for no benefit. The caller converts.
+type ChangeCounts struct {
+	Add     int
+	Change  int
+	Destroy int
+}
+
+// Any reports whether anything changed at all. A successful Operation
+// whose counts are all zero is "no changes" — a distinct statement from
+// having reported nothing, which is what a failure leaves behind.
+func (c ChangeCounts) Any() bool {
+	return c.Add != 0 || c.Change != 0 || c.Destroy != 0
+}
+
+// Total is the number a verdict line reports across Projects.
+func (c ChangeCounts) Total() int {
+	return c.Add + c.Change + c.Destroy
+}
+
+// BlockingPullRequest identifies the pull request holding a Lock that
+// refused an Operation, so the refusal can link to it rather than merely
+// naming a number.
+type BlockingPullRequest struct {
+	Number int
+	URL    string
 }
