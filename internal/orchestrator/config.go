@@ -37,6 +37,13 @@ type Config struct {
 	// overrides.go for the known paths and the default, which preserves
 	// the behaviour that shipped before this setting existed.
 	AllowedOverrides map[string]bool
+	// CloneSubmodules is the Submodule_Mode every clone uses unless a
+	// repository overrides it in its own configuration file (and that
+	// override is permitted). Unset means config.SubmodulesTopLevel:
+	// turnip clones specifically to run IaC that may reference submodule
+	// paths, so defaulting off would make every repository with a
+	// submodule meet a confusing failure before anything worked.
+	CloneSubmodules string
 }
 
 // MissingEnvVarsError names every required environment variable that was
@@ -126,6 +133,12 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("orchestrator: parsing TURNIP_ALLOWED_OVERRIDES: %w", err)
 	}
 	cfg.AllowedOverrides = allowedOverrides
+
+	cloneSubmodules, err := parseSubmodules(env("TURNIP_CLONE_SUBMODULES"))
+	if err != nil {
+		return Config{}, fmt.Errorf("orchestrator: parsing TURNIP_CLONE_SUBMODULES: %w", err)
+	}
+	cfg.CloneSubmodules = cloneSubmodules
 
 	return cfg, nil
 }

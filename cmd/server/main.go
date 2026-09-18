@@ -74,6 +74,7 @@ func run(cfg orchestrator.Config) error {
 		cfg.RunnerImage,
 		cfg.RunnerServiceAccount,
 		cfg.AllowedOverrides,
+		cfg.CloneSubmodules,
 	)
 
 	pingRedis := func(ctx context.Context) error { return redisClient.Ping(ctx).Err() }

@@ -88,6 +88,25 @@ or nothing happens for several minutes before a timeout is reported.
   read the repository. A merge conflict needs resolving in the PR the
   normal way (no turnip-side action); anything else, check the GitHub
   App's repository access.
+- **A tool complaining about a path or repository you know exists** (e.g.
+  `Error: repo .. not found` from `helm pull ../charts/...`, or a file a
+  tool insists is missing): most often an **uninitialised submodule**. The
+  directory is present but empty, so the tool reaches through the gap and
+  reports whatever its own parser made of the path — a message that names
+  neither the submodule nor the repository it came from. Check whether the
+  path lives in a submodule, then whether the Server has
+  `TURNIP_CLONE_SUBMODULES=none`, or the repository set
+  `clone.submodules: none` in its own config file. A submodule nested
+  inside another needs `recursive`; `top-level` fetches only the first
+  layer.
+- **`submodule ... is hosted on <host>, which this installation token
+  cannot authenticate`**: the submodule lives somewhere the GitHub App
+  isn't installed — another forge, or a self-hosted server. turnip has
+  only the installation token, which authenticates nothing off the
+  repository's own host, so this is reported before any fetch is attempted
+  rather than surfacing later as a generic authentication error. A
+  submodule on the *same* host works whatever URL form it uses: SSH and
+  other schemes are rewritten to authenticated HTTPS automatically.
 
 ## Plugin execution errors
 

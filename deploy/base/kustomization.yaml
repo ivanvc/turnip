@@ -21,12 +21,17 @@ configMapGenerator:
       - TURNIP_K8S_NAMESPACE=default
       - TURNIP_RUNNER_SERVER_ADDR=turnip-server:9090
       - TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS=false
+      # TURNIP_CLONE_SUBMODULES defaults to `top-level`, which is what the
+      # base wants, so it is left unset rather than restated here. Set it
+      # to `none` to stop cloning submodules at all, or `recursive` for
+      # submodules of submodules.
       # TURNIP_ALLOWED_OVERRIDES is deliberately unset: its default permits
-      # nothing, and the only path it accepts today is
-      # `runner.serviceAccount`. That file comes from the PR's own head
-      # commit, so letting it choose a ServiceAccount would let any PR
-      # author borrow that account's permissions — an overlay opts in
-      # deliberately rather than the base shipping it on.
+      # nothing, and the paths it accepts today are
+      # `runner.serviceAccount` and `clone.submodules`. That file comes
+      # from the PR's own head commit, so letting it choose a
+      # ServiceAccount would let any PR author borrow that account's
+      # permissions — an overlay opts in deliberately rather than the base
+      # shipping it on.
       # TURNIP_RUNNER_IMAGE is required (orchestrator.ConfigFromEnv), so
       # the base ships a real default rather than an empty placeholder —
       # an overlay overrides it to match its own Runner image tag

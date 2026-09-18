@@ -59,7 +59,7 @@ func (o *Orchestrator) handlePlanTrigger(ctx context.Context, client github.GitH
 		return nil
 	}
 
-	targets := planTargetsFor(matched, o.plugins)
+	targets := planTargetsFor(matched, o.plugins, cfg.Clone)
 
 	// Detach from the request context: the webhook HTTP handler responds
 	// as soon as this method returns, but executing Targets can take far

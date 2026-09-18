@@ -79,6 +79,52 @@ version and the project's major version coincide. There is no
 compatibility shim in the meantime: a file on an older schema is
 rejected outright, never silently upgraded.
 
+### `clone` — how the repository is checked out
+
+Top-level, beside `projects:` rather than inside one: a pull request
+produces a single clone that every matched project then runs in, so this
+describes the checkout itself rather than any one project.
+
+```yaml
+schemaVersion: v1alpha2
+
+clone:
+  submodules: recursive
+
+projects:
+  - directory: infrastructure
+    uses: helmfile@1.1.7
+```
+
+**`submodules`** decides how far submodule initialisation goes:
+
+| Value | Behaviour |
+|---|---|
+| `none` | submodules are not initialised; the directory stays empty |
+| `top-level` | one level of submodules — the default |
+| `recursive` | submodules of submodules too |
+
+Not `shallow`: in git that word means a depth-limited fetch, and turnip
+deliberately does the opposite — submodules are fetched at full depth, so
+the commit the parent pins is certainly present.
+
+**Only honored when the Server's `TURNIP_ALLOWED_OVERRIDES` includes
+`clone.submodules`**; otherwise the operation is refused with a comment on
+the PR and no Runner Job is created. The gate here is about cost rather
+than safety, unlike `runner.serviceAccount`'s — fetching a submodule the
+App can already read grants no permission the repository doesn't already
+have — but an operator may still have reason to refuse an expensive fetch,
+so it reuses the same list rather than inventing a second mechanism.
+
+Submodules are fetched with the same installation token as the repository
+itself, and therefore reach **only repositories your GitHub App is
+installed on**. A submodule on the repository's own host works whatever
+form `.gitmodules` writes it in — SSH, `git://`, an explicit port — because
+turnip rewrites those to authenticated HTTPS; it holds no SSH key and
+never will. A submodule hosted anywhere else is reported by name *before*
+anything is fetched, rather than failing later as a generic authentication
+error.
+
 ### `uses` — what to run
 
 `<tool>`, or `<tool>@<version>`:
@@ -241,7 +287,8 @@ than one restart-and-discover-the-next-one at a time.
 | `TURNIP_RUNNER_IMAGE` | yes | the Runner container image a deployed Server creates Jobs with |
 | `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` | no (default `false`) | collapse an older plan comment on the same PR once a newer one supersedes it |
 | `TURNIP_RUNNER_SERVICE_ACCOUNT` | no (default unset) | ServiceAccount every Runner Pod runs as — how a Runner gets cloud credentials (EKS Pod Identity/IRSA) and in-cluster API permissions. Unset leaves Pods on the namespace's `default` ServiceAccount, which normally has neither |
-| `TURNIP_ALLOWED_OVERRIDES` | no (default: permits nothing) | comma-separated list of the fields a repository's own config file may set. The only path accepted today is `runner.serviceAccount`. The default matches what turnip has always done: a repository cannot choose the identity its Runner assumes, since this file is read from the PR's own head commit. An unrecognized path is a startup error rather than a silently ineffective setting. Note that `uses` is *not* an override — turnip has no Server-side tool to fall back to, so what a project runs is always the repository's to say |
+| `TURNIP_CLONE_SUBMODULES` | no (default `top-level`) | how far the clone initialises submodules: `none`, `top-level`, or `recursive`. Applies to every repository this Server clones, unless one overrides it with `clone.submodules` *and* that path is permitted below. Defaults on, unlike `actions/checkout` — turnip clones specifically to run IaC that may reference submodule paths, so defaulting off would make every repository with a submodule fail confusingly before anything worked. An unrecognized value is a startup error |
+| `TURNIP_ALLOWED_OVERRIDES` | no (default: permits nothing) | comma-separated list of the fields a repository's own config file may set. The paths accepted today are `runner.serviceAccount` and `clone.submodules`. The default matches what turnip has always done: a repository cannot choose the identity its Runner assumes, since this file is read from the PR's own head commit. An unrecognized path is a startup error rather than a silently ineffective setting. Note that `uses` is *not* an override — turnip has no Server-side tool to fall back to, so what a project runs is always the repository's to say |
 
 In `deploy/base`, the two credential-shaped values
 (`TURNIP_GITHUB_WEBHOOK_SECRET`, `TURNIP_GITHUB_PRIVATE_KEY`) come from a

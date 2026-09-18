@@ -60,8 +60,12 @@ type Orchestrator struct {
 	// pin its own tool version.
 	runnerServiceAccount string
 	allowedOverrides     map[string]bool
-	startTimeout         time.Duration
-	sweepInterval        time.Duration
+	// cloneSubmodules is the Server-wide Submodule_Mode from
+	// Config.CloneSubmodules; submodules.go turns it plus a Target's
+	// repository-scoped clone block into the mode the Job's clone uses.
+	cloneSubmodules string
+	startTimeout    time.Duration
+	sweepInterval   time.Duration
 }
 
 // New constructs an Orchestrator. runnerServerAddr is the address a
@@ -79,6 +83,7 @@ func New(
 	runnerImage string,
 	runnerServiceAccount string,
 	allowedOverrides map[string]bool,
+	cloneSubmodules string,
 ) *Orchestrator {
 	return &Orchestrator{
 		installationClient:           func(id int64) github.GitHubClient { return appAuth.InstallationClient(id) },
@@ -93,6 +98,7 @@ func New(
 
 		runnerServiceAccount: runnerServiceAccount,
 		allowedOverrides:     allowedOverrides,
+		cloneSubmodules:      cloneSubmodules,
 
 		startTimeout:  defaultStartTimeout,
 		sweepInterval: defaultSweepInterval,

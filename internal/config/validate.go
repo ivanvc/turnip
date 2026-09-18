@@ -124,6 +124,22 @@ func validate(c *Config) error {
 		}
 	}
 
+	// clone: belongs to the file rather than to any one Project, so its
+	// problems are reported against the file itself. An empty value is
+	// valid and means "unset" — the Server's default applies.
+	switch c.Clone.Submodules {
+	case "", SubmodulesNone, SubmodulesTopLevel, SubmodulesRecursive:
+	default:
+		errs = append(errs, &ValidationError{
+			ProjectRef: configFileRef,
+			Field:      "clone.submodules",
+			Message: fmt.Sprintf(
+				"unrecognized value %q; expected %q, %q or %q",
+				c.Clone.Submodules, SubmodulesNone, SubmodulesTopLevel, SubmodulesRecursive,
+			),
+		})
+	}
+
 	if len(errs) == 0 {
 		return nil
 	}

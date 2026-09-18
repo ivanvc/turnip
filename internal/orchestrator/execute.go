@@ -68,6 +68,14 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		return rejectedResult(t, err.Error())
 	}
 
+	// Repository-scoped rather than per-Project, but resolved in the same
+	// place and for the same reason: a refused override must not leave a
+	// Lock held for an Operation that never runs.
+	submodules, err := resolveSubmodules(t.Clone, o.cloneSubmodules, o.allowedOverrides)
+	if err != nil {
+		return rejectedResult(t, err.Error())
+	}
+
 	isPlan := t.Operation == p.GetPlanOperation()
 	isApply := t.Operation == p.GetApplyOperation()
 	key := projectKey(repo.Owner, repo.Name, t.Project.Name)
@@ -191,6 +199,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		PlanData:       planData,
 		RunnerImage:    o.runnerImage,
 		ServiceAccount: serviceAccount,
+		Submodules:     submodules,
 	})
 	if err != nil {
 		o.deleteRecord(ctx, operationID)

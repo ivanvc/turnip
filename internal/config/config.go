@@ -17,6 +17,27 @@ const SupportedSchemaVersion = "v1alpha2"
 type Config struct {
 	SchemaVersion string    `yaml:"schemaVersion"`
 	Projects      []Project `yaml:"projects"`
+
+	// Clone configures the checkout itself, which serves every Project a
+	// pull request matches — so it is repository-scoped and sits beside
+	// Projects rather than inside one. Two Projects disagreeing about how
+	// the single shared clone was made would have no coherent resolution.
+	Clone CloneSpec `yaml:"clone,omitempty"`
+}
+
+// CloneSpec is the subset of a repository's configuration that shapes the
+// clone rather than any individual Project.
+//
+// Nested under `clone:` rather than placed loose at the top level: the two
+// keys above are structural, and a third loose key would open a grab-bag
+// that every future repository-wide setting joins. It also gives the
+// override its dotted path, `clone.submodules`, matching the shape of the
+// existing `runner.serviceAccount`.
+type CloneSpec struct {
+	// Submodules is the Submodule_Mode for this repository, overriding the
+	// Server's default when the operator permits that override. Empty
+	// means unset — the Server's value applies.
+	Submodules string `yaml:"submodules,omitempty"`
 }
 
 // Project is a configuration unit within Config. Its fields answer three
@@ -68,6 +89,21 @@ type RunnerSpec struct {
 	// configuration from TURNIP_* and finds its tool binary through PATH.
 	Env map[string]string `yaml:"env,omitempty"`
 }
+
+// Submodule modes decide whether a clone initialises the repository's
+// submodules and how deeply. Deliberately not named "shallow": in git that
+// word means a depth-limited fetch, and submodules are fetched at full
+// depth so the commit the parent pins is certainly present.
+//
+// These live here, in the leaf package, because both sides read them — the
+// Server validates the configured value and the Runner interprets it — and
+// two independent copies could drift into disagreeing about what a value
+// means.
+const (
+	SubmodulesNone      = "none"
+	SubmodulesTopLevel  = "top-level"
+	SubmodulesRecursive = "recursive"
+)
 
 // reservedEnvPrefix is the namespace the Runner reads its own
 // configuration from; a Project setting anything here could redirect the

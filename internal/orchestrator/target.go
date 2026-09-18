@@ -16,6 +16,17 @@ type Target struct {
 	Operation   string
 	ExtraArgs   []string
 	TriggeredBy string
+
+	// Clone is the repository-scoped clone configuration, carried here
+	// because executeOne is handed a Target and nothing else: the parsed
+	// *config.Config does not survive target construction, so a setting
+	// that belongs to the file rather than to a Project would otherwise
+	// have no route to the execution path.
+	//
+	// Every Target matched by one pull request carries the same value —
+	// mild redundancy, accepted so that resolving and refusing it keeps
+	// the identical shape to runner.serviceAccount's.
+	Clone config.CloneSpec
 }
 
 // planTargetsFor builds one Target per matched Project at its tool's
@@ -23,7 +34,7 @@ type Target struct {
 // whose tool isn't in the registry is silently skipped — this shouldn't
 // normally happen, since config.Parse already rejects an unsupported
 // Tool value before a Project can reach here.
-func planTargetsFor(matched []config.Project, plugins PluginRegistry) []Target {
+func planTargetsFor(matched []config.Project, plugins PluginRegistry, clone config.CloneSpec) []Target {
 	targets := make([]Target, 0, len(matched))
 	for _, project := range matched {
 		p, ok := plugins[project.Tool]
@@ -34,6 +45,7 @@ func planTargetsFor(matched []config.Project, plugins PluginRegistry) []Target {
 			Project:     project,
 			Operation:   p.GetPlanOperation(),
 			TriggeredBy: "auto",
+			Clone:       clone,
 		})
 	}
 	return targets
@@ -94,6 +106,7 @@ func resolveTargets(
 			Operation:   cmd.Operation,
 			ExtraArgs:   cmd.ExtraArgs,
 			TriggeredBy: author,
+			Clone:       cfg.Clone,
 		})
 	}
 

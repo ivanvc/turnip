@@ -24,8 +24,21 @@ import (
 // `terraform_version` out of `allowed_overrides` entirely.
 const overrideServiceAccount = "runner.serviceAccount"
 
+// overrideCloneSubmodules lets a repository choose how its own submodules
+// are cloned. Unlike the path above it is repository-scoped rather than
+// per-Project: one clone serves every Project a pull request matches, so
+// two Projects disagreeing would have no coherent resolution.
+//
+// It is gated for cost rather than for safety. Fetching a submodule the
+// App can already read grants no capability the repository does not
+// already have, so by the principle that gates belong on what *grants*
+// capability this would not need gating at all. It is listed because an
+// operator may still have reason to refuse the fetch — an expensive
+// submodule the IaC never reads — and reusing this list costs nothing.
+const overrideCloneSubmodules = "clone.submodules"
+
 // knownOverridePaths is sorted so error messages list them stably.
-var knownOverridePaths = []string{overrideServiceAccount}
+var knownOverridePaths = []string{overrideCloneSubmodules, overrideServiceAccount}
 
 // defaultAllowedOverrides permits nothing — exactly what turnip did before
 // this setting existed, where a repository could never choose its own

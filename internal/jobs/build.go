@@ -78,6 +78,12 @@ type OperationParams struct {
 	// applies. The Server resolves this value (including whether a
 	// Project may choose it at all) before calling BuildJob.
 	ServiceAccount string
+	// Submodules is the Submodule_Mode the clone uses, resolved by the
+	// Server from its own default and the repository's override (and
+	// whether that override is permitted) before calling BuildJob. Empty
+	// means top-level, so a Job carrying no value still initialises
+	// submodules rather than silently leaving an empty directory.
+	Submodules string
 }
 
 // BuildJob constructs the Kubernetes Job that runs one Operation for one
@@ -143,10 +149,16 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 	// use for a GitHub installation token, and under runInImage that
 	// process runs in a vendor image executing arbitrary tool plugins.
 	cloneContainer := corev1.Container{
-		Name:         "clone",
-		Image:        op.RunnerImage,
-		Args:         []string{"clone"},
-		Env:          append(slices.Clone(baseEnv), corev1.EnvVar{Name: "TURNIP_GITHUB_TOKEN", Value: op.GitHubToken}),
+		Name:  "clone",
+		Image: op.RunnerImage,
+		Args:  []string{"clone"},
+		// The submodule mode is set here for the same reason as the token:
+		// only the clone reads it, so the container that runs the tool has
+		// no business carrying it.
+		Env: append(slices.Clone(baseEnv),
+			corev1.EnvVar{Name: "TURNIP_GITHUB_TOKEN", Value: op.GitHubToken},
+			corev1.EnvVar{Name: "TURNIP_CLONE_SUBMODULES", Value: op.Submodules},
+		),
 		VolumeMounts: []corev1.VolumeMount{workspaceMount},
 	}
 

@@ -21,7 +21,7 @@ type resultReporter interface {
 
 type pluginSelector func(tool string) (plugin.Plugin, error)
 
-type cloner func(ctx context.Context, dir, repoURL, commitSHA, baseRef, token string) error
+type cloner func(ctx context.Context, dir, repoURL, commitSHA, baseRef, token, submodules string) error
 
 // selectPlugin resolves cfg.Tool to a Plugin (Requirement 6.1). Today only
 // "helmfile" (Slice 2) exists; Slice 7 adds Terraform and Pulumi.
@@ -96,7 +96,7 @@ func runCloneWith(ctx context.Context, cfg Config, rep resultReporter, clone clo
 		return reportCloneFailure(ctx, rep, "clone: TURNIP_WORKSPACE_DIR is required when cloning", stderr)
 	}
 
-	if err := clone(ctx, cfg.WorkspaceDir, cfg.RepoURL, cfg.CommitSHA, cfg.BaseRef, cfg.GitHubToken); err != nil {
+	if err := clone(ctx, cfg.WorkspaceDir, cfg.RepoURL, cfg.CommitSHA, cfg.BaseRef, cfg.GitHubToken, cfg.CloneSubmodules); err != nil {
 		// Same wording and same path-stripping the Runner used when it
 		// owned the clone, so what reaches the pull request is unchanged.
 		message := stripWorkspacePath(cfg.WorkspaceDir, fmt.Sprintf("clone failed: %v", err))

@@ -22,8 +22,9 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 11 | HA Validation & Documentation | `ha-validation` | Complete | Slices 6, 9, 10 |
 | 12 | Runner Workspace & Project Environment | `runner-workspace-environment` | Complete | Slices 1, 5 |
 | 13 | Project Schema v1alpha2 | `project-schema-v1alpha2` | Complete | Slice 12 |
-| 14 | Per-Tool Provisioning | `tool-provisioning` | Not Started | Slices 2, 12 |
+| 14 | Per-Tool Provisioning | `tool-provisioning` | Complete | Slices 2, 12 |
 | 15 | Refuse Fork Pull Requests | `fork-pull-requests` | Not Started | Slice 6 |
+| 16 | Cloning Submodules | `clone-submodules` | Complete | Slice 5 |
 
 ## Slice Details
 
@@ -392,6 +393,57 @@ explored — both are decisions for whoever takes this.
 
 ---
 
+### Slice 16: Cloning Submodules
+
+**Goal**: Check out a repository's submodules, configurably, so a tool
+reaching through a submodule path finds files rather than an empty
+directory.
+
+**What was missing**: `clone.go` ran `init`, `remote add`, a
+bounded-depth `fetch`, `checkout` and a merge, and stopped. A submodule
+path was present but empty, and nothing reported it.
+
+**Found in the pilot** as `Error: repo .. not found` from `helm pull
+../helm-charts/...` — helm could not read the path as a local chart, so it
+parsed it as `<repo>/<chart>` and reported a missing repository named
+`..`. The actual cause appears nowhere in that message.
+
+**Delivers**: submodule initialisation after the merge; a three-state mode
+(`none`/`top-level`/`recursive`) defaulting to `top-level` — not
+`shallow`, which in git means a depth-limited fetch and would promise the
+opposite of what happens, since submodules are fetched at full depth; a
+Server-level default (`TURNIP_CLONE_SUBMODULES`) with a repository-level
+override (`clone.submodules`, nested under a new `clone:` block beside
+`projects:` rather than loose at the top level) through the existing
+`TURNIP_ALLOWED_OVERRIDES` gate; token authentication for private
+submodules, including URLs written in SSH or any other scheme git accepts,
+rewritten to authenticated HTTPS; and a loud failure instead of a silently
+incomplete checkout.
+
+**Prior art, diverged from deliberately**: `actions/checkout` names its
+input `submodules` and takes the same three states, but defaults to
+`false`. The name is adopted; the default is not — that action checks out
+repositories for arbitrary purposes, where turnip clones specifically to
+run IaC that may reference submodule paths, so defaulting off would make
+every repository with a submodule meet the failure above before anything
+worked. Atlantis has no native support — its issue has been open since
+October 2018 and users work around it with server-side pre-workflow
+hooks, which is a gap nobody closed rather than a considered rejection.
+
+**Carries a security fix**: redaction currently replaces only arguments
+*exactly equal* to the authenticated URL, so a token carried inside a
+larger argument — as submodule authentication requires — would reach a
+pull request comment. Redacting the token itself is part of this slice
+rather than a follow-up.
+
+**Not in this slice**: per-repository server-side configuration (Backlog
+below), a configuration UI, submodules hosted on a host other than the
+repository's own — a GitHub installation token authenticates nothing on
+GitLab or an internal server, so those are reported rather than attempted
+— and submodule-aware `whenModified` matching.
+
+---
+
 ## Backlog (not yet sliced)
 
 Recorded so they aren't rediscovered the hard way. None of these has a
@@ -533,6 +585,75 @@ Reproduce with `go test ./internal/runner/ -run
 TestReporter_ReportReconnectsAndResendsFullBufferWithResumedTrue -count=20`.
 Start by deciding which of the two it is; only then decide whether the fix
 belongs in the reporter or the test.
+
+### Per-repository server-side configuration
+
+turnip's Server configuration is global: one value applies to every
+repository it serves. Several settings would be better expressed per
+repository — whether to fetch submodules, whether fork pull requests are
+ever permitted, which overrides a given repository may take — and each
+time one appears, the choice is between a global default that is wrong for
+someone and a repository-side setting that the repository's own authors
+control.
+
+Atlantis solves this with a server-side `repos.yaml` keyed by repository
+id (a literal or a regex), carrying per-repository `allowed_overrides`,
+`allow_custom_workflows`, and workflow selection. That is the shape to
+copy if this is picked up.
+
+Deliberately not built for any single setting: introducing a whole
+configuration surface to express one tri-state value is disproportionate,
+and each setting so far has had a defensible global default plus a
+repository-level override. Worth revisiting when a third or fourth
+setting genuinely needs per-repository policy, or when an operator serves
+repositories they do not own.
+
+A configuration UI is further out still and is not implied by this:
+turnip has no UI, no settings persistence, and no authentication for one.
+
+### A top-level `runner:` block, merged into each Project's
+
+`TURNIP_RUNNER_SERVICE_ACCOUNT` carries a Server-wide default today, and a
+Project overrides it with `runner.serviceAccount`, gated through
+`TURNIP_ALLOWED_OVERRIDES` (Slice 13). `runner.env` is per-Project only,
+and deliberately ungated. What is missing in both cases is the layer
+between the Server and the Project: a repository stating its shared Runner
+configuration once, with each Project stating only its delta.
+
+Slice 16 introduces the first repository-scoped block, `clone:`, so the
+shape to copy already exists — a top-level `runner:` beside it.
+
+**Merging is field-dependent, and that is the design work.**
+`serviceAccount` is a scalar: a Project that sets one wins outright, and
+the repository's value is a default beneath it — three layers, with the
+Server's at the bottom. `env` is a map and must merge *per key*, because a
+Project setting one variable should not silently drop every shared one,
+which is exactly what replacing the map wholesale would do.
+
+**The gating asymmetry is inherited, not redesigned.**
+`runner.serviceAccount` is gated because it grants capability: it picks an
+identity, and turnip.yaml is read from the pull request's own head commit,
+so whoever opens the pull request chooses its contents. `runner.env`
+grants nothing the repository does not already have, which is why it is
+ungated. A repository-level block changes neither judgment, but it does
+mean the gate has to apply per field rather than to the block as a whole.
+
+**It weakens the case for workspaces and workflows further.** The survey
+behind turnip's decision not to grow a workflows concept found Atlantis
+workflows are overwhelmingly argument carriers — repositories reach for
+them, and for additional `workspace` entries, largely to avoid repeating
+boilerplate across near-identical projects. Letting shared configuration
+be stated once removes that pressure at its source. One boundary worth
+keeping explicit, though: this addresses the *configuration-repetition*
+reason for declaring many projects, not Terraform workspaces as a
+state-separation mechanism — a different thing wearing the same name, and
+nothing here replaces it.
+
+If it is picked up, Slice 16's Decision 8 is the seam: `Target` already
+has to carry repository-scoped configuration to the execution path, and
+this would be the second such block after `clone:` — which settles whether
+that field should be named for one block or carry the repository's
+configuration generally.
 
 ## Notes
 

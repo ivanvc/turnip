@@ -38,6 +38,15 @@ type Config struct {
 	// what the Runner's own tests exercise and what any caller outside a
 	// turnip-built Job gets.
 	WorkspaceDir string
+
+	// CloneSubmodules is the Submodule_Mode this Operation's clone uses:
+	// one of config.Submodules{None,TopLevel,Recursive}. Like GitHubToken
+	// it is set on the clone initContainer and deliberately absent from
+	// the container that runs the tool, so it is optional here and read
+	// only in clone mode. An empty value means top-level rather than
+	// "off", so a Job built by an older Server still initialises
+	// submodules instead of silently producing an empty directory.
+	CloneSubmodules string
 }
 
 // MissingEnvVarsError names every required environment variable that was
@@ -106,6 +115,10 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 	// the Runner — though not for clone mode, which has nowhere durable to
 	// write and rejects it (see runCloneWith).
 	cfg.WorkspaceDir = env("TURNIP_WORKSPACE_DIR")
+
+	// Set on the clone initContainer and nowhere else, like the token
+	// above. Empty means top-level, not "off" — see initSubmodules.
+	cfg.CloneSubmodules = env("TURNIP_CLONE_SUBMODULES")
 
 	if raw := env("TURNIP_TOOL_CONFIG"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &cfg.ToolConfig); err != nil {

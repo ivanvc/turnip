@@ -243,7 +243,7 @@ func TestRunCloneWith_SuccessExitsZeroWithoutContactingTheServer(t *testing.T) {
 	rep := &fakeReporter{}
 	var stderr safeBuffer
 
-	clone := func(_ context.Context, dir, _, _, _, _ string) error {
+	clone := func(_ context.Context, dir, _, _, _, _, _ string) error {
 		assert.Equal(t, "/turnip/src", dir, "the clone lands in the mounted workspace, not a temporary directory")
 		return nil
 	}
@@ -258,7 +258,7 @@ func TestRunCloneWith_FailureReportsBeforeExitingNonZero(t *testing.T) {
 	rep := &fakeReporter{}
 	var stderr safeBuffer
 
-	clone := func(context.Context, string, string, string, string, string) error {
+	clone := func(context.Context, string, string, string, string, string, string) error {
 		return errors.New("commit not found")
 	}
 
@@ -275,7 +275,7 @@ func TestRunCloneWith_MergeConflictStaysDistinguishable(t *testing.T) {
 	rep := &fakeReporter{}
 	var stderr safeBuffer
 
-	clone := func(context.Context, string, string, string, string, string) error {
+	clone := func(context.Context, string, string, string, string, string, string) error {
 		return &MergeConflictError{Output: "CONFLICT (content): Merge conflict in main.tf"}
 	}
 
@@ -295,7 +295,7 @@ func TestRunCloneWith_MissingWorkspaceDirIsAConfigurationError(t *testing.T) {
 	var stderr safeBuffer
 
 	cloneCalled := false
-	clone := func(context.Context, string, string, string, string, string) error {
+	clone := func(context.Context, string, string, string, string, string, string) error {
 		cloneCalled = true
 		return nil
 	}
@@ -313,7 +313,7 @@ func TestRunCloneWith_ReportFailureStillExitsNonZero(t *testing.T) {
 	rep := &fakeReporter{reportErr: errors.New("server unreachable")}
 	var stderr safeBuffer
 
-	clone := func(context.Context, string, string, string, string, string) error {
+	clone := func(context.Context, string, string, string, string, string, string) error {
 		return errors.New("commit not found")
 	}
 
