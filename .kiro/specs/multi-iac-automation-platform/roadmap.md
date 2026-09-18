@@ -21,6 +21,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 10 | Deployment: Kustomize & Release Images | `deployment-kustomize` | Complete | Slices 6, 9 |
 | 11 | HA Validation & Documentation | `ha-validation` | Complete | Slices 6, 9, 10 |
 | 12 | Runner Workspace & Project Environment | `runner-workspace-environment` | Complete | Slices 1, 5 |
+| 13 | Project Schema v1alpha2 | `project-schema-v1alpha2` | Not Started | Slice 12 |
 
 ## Slice Details
 
@@ -254,10 +255,50 @@ changing its `config` map.
 
 ---
 
+### Slice 13: Project Schema v1alpha2
+
+**Goal**: Reshape a Project around the three questions its settings
+actually answer — what to run, how to call it, where it runs — and make an
+unrecognised key an error rather than silence.
+
+**Delivers**:
+- `uses: <tool>[@<version>]`, replacing the `tool` field and
+  `config.version`, with a leading `v` accepted and normalized
+- `with:`, replacing `config` as a map the Plugin alone reads. Today's
+  `config` holds three recognised keys of which only `environment` reaches
+  a Plugin; `version` and `serviceAccount` are read by turnip itself
+- `runner:`, grouping `serviceAccount` and `env` — the settings that shape
+  the Pod rather than the tool
+- `TURNIP_ALLOWED_OVERRIDES`, a list of dotted paths a repository may set,
+  replacing the single `TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG`
+  boolean, which does not generalise as sensitive settings accumulate
+- Unrecognised keys rejected through the existing accumulating validation
+  path — the gap that let a misplaced top-level `serviceAccount` be read
+  and silently discarded during the pilot, costing a deploy cycle to
+  diagnose from an unrelated-looking credentials error
+- `schemaVersion: v1alpha2`, with no compatibility machinery
+- `.turnip/config.yaml` as the preferred configuration location, giving a
+  repository a directory for turnip-related files rather than a single
+  root file; root `turnip.yaml` stays accepted, `.github/turnip.yaml` is
+  dropped, and only the `.yaml` extension is read. Two probes, as today,
+  so the not-found path costs no more than it already does
+
+**Not in this slice**: resolving a floating version, deriving a version
+from the IaC code's own constraint, provisioning additional binaries, and
+per-project Runner resources or timeouts. The first two are in the Backlog
+below; `runner:` gives the last an obvious home when it is wanted.
+
+**Global requirements covered**: amends Requirement 18, restated around
+`uses`/`with` — which also repairs 18.8, whose "a version the Server
+recognizes" wording still described the allowlist `grpc-runner` task 22
+replaced — and Requirement 14.2a's cross-reference to it.
+
+---
+
 ## Backlog (not yet sliced)
 
-Recorded so they aren't rediscovered the hard way. Neither has a spec
-directory, and neither is scheduled.
+Recorded so they aren't rediscovered the hard way. None of these has a
+spec directory, and none is scheduled.
 
 ### Azure Workload Identity needs Runner *pod* labels
 
@@ -311,6 +352,66 @@ move. Woodpecker shows the cost of leaving it too long: having made the
 workspace configurable after plugins had already hardcoded it, it now
 carries a permanent exception — "Plugins will always have the workspace
 base at `/woodpecker`".
+
+### Resolving a floating tool version
+
+`uses: terraform@latest` is rejected, because a floating tag breaks the
+guarantee locking exists to provide: plan on Monday against 1.9.5, apply
+on Thursday against 1.10.0, and the binary that runs is not the one that
+produced the approved plan. Locking cannot help, because the drift is in
+the tool rather than in the plan.
+
+Two mechanisms together make it viable, and neither requires turnip to
+talk to a registry — which is what had made this look expensive. Set
+`imagePullPolicy: Always`, but only where the tag is actually floating, so
+pinned versions keep running from the node's cache rather than paying a
+manifest fetch on every Job; the kubelet then does the resolving. Then
+record the version that actually ran in the Redis Lock alongside the plan
+data, and build the apply Job from that concrete version rather than
+resolving `latest` a second time.
+
+The open question is how turnip learns which version ran. The cheapest
+answer is the tool-provisioning initContainer writing `<tool> version`
+into the shared tools volume it already populates — it is running the
+vendor image, and the Runner already mounts that volume.
+
+A related but distinct idea, worth weighing against it rather than
+alongside: derive the version from the IaC code's own constraint, as
+Atlantis does by reading Terraform's `required_version`. That keeps the
+code as the source of truth and resolves deterministically at plan time,
+but only one of the three tools has such a constraint to read. Note that
+`required_version` constrains rather than selects, so it cannot be
+combined with `latest` — it would turn a drifting version into a hard
+failure rather than a correct choice.
+
+Worth doing when a consumer asks to stop pinning, not before: the
+concrete-version path has to keep working either way.
+
+### Cross-project execution ordering
+
+turnip executes every matched Project in parallel (global Requirement
+17.1) and offers no way to say one must finish before another starts.
+
+This looked minor until it was measured. A survey of a real
+multi-repository Atlantis deployment found ordering declared on **353 of
+387 projects** — near-universal — in every case to make one foundational
+project complete before the projects that depend on it start. By contrast
+the same survey found the `workflows` concept, which turnip deliberately
+does not implement, doing no real work at all. Ordering is the larger gap
+of the two, and was the one nobody had written down.
+
+Atlantis spells it two ways: `execution_order_group`, an integer bucket
+where lower runs first, and `depends_on`, naming specific projects. The
+surveyed deployment used the integer form exclusively and `depends_on`
+nowhere — worth weighing, since the integer form is far simpler to
+schedule and evidently sufficient in practice.
+
+Deliberately left out of `project-schema-v1alpha2`: the schema half is
+trivial, but the behaviour is not — `executeTargets` would need to run
+groups in sequence while keeping projects within a group parallel, and
+decide what an ordered group does when an earlier project fails. Adding
+the key before the behaviour would ship a field that parses and does
+nothing, which is the failure this platform has now been bitten by twice.
 
 ## Notes
 

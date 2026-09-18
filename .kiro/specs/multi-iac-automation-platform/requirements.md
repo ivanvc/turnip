@@ -48,7 +48,7 @@ This document specifies requirements for rewriting the multi-IaC automation plat
 
 #### Acceptance Criteria
 
-1. WHEN the Server processes a Webhook_Event, THE Server SHALL read turnip.yaml from the repository root
+1. WHEN the Server processes a Webhook_Event, THE Server SHALL read the repository's configuration from `.turnip/config.yaml`, falling back to `turnip.yaml` at the repository root; no other location and no other file extension is accepted
 2. THE Server SHALL parse the projects list from turnip.yaml
 3. FOR EACH Project, THE Server SHALL extract the directory, tool type, and WhenModified_Rule patterns
 4. IF turnip.yaml is missing or invalid, THEN THE Server SHALL post an error comment to the PR
@@ -214,7 +214,7 @@ This document specifies requirements for rewriting the multi-IaC automation plat
 
 1. WHEN an Operation is triggered, THE Server SHALL create a Kubernetes Job resource for the Runner
 2. THE Runner Job SHALL include the repository URL, commit SHA, Project directory, and Operation type as environment variables
-2a. THE Runner Job SHALL provision the Project's IaC_Tool binary via a dedicated initContainer using that tool's vendor-published image, tagged with the resolved tool version (Requirement 18.6-18.8), copying the binary to a volume shared with the Runner's main container
+2a. THE Runner Job SHALL provision the Project's IaC_Tool binary via a dedicated initContainer using that tool's vendor-published image, tagged with the resolved tool version (Requirement 18.7-18.10), copying the binary to a volume shared with the Runner's main container
 3. THE Runner SHALL clone the repository at the specified commit SHA on startup
 4. WHEN the Operation completes, THE Kubernetes Job SHALL terminate and THE Server SHALL delete the Job resource
 5. IF the Runner Job fails to start within 5 minutes, THEN THE Server SHALL report the failure via GitHub comment and check run
@@ -253,20 +253,22 @@ This document specifies requirements for rewriting the multi-IaC automation plat
 2. THE Server SHALL wait for all Project Operations to complete before posting the consolidated comment
 3. THE consolidated comment SHALL include a summary table with one row per Project showing status and change counts
 4. THE consolidated comment SHALL include detailed output sections for each Project in collapsible markdown details blocks
-### Requirement 18: Tool-Specific Configuration in turnip.yaml
+### Requirement 18: Tool Selection and Tool Configuration in turnip.yaml
 
-**User Story:** As a developer, I want to specify tool-specific settings per Project, so that I can configure workspaces, stacks, and environments.
+**User Story:** As a developer, I want to name the IaC_Tool a Project uses and configure it, so that I can pin a tool version and set workspaces, stacks, and environments.
 
 #### Acceptance Criteria
 
-1. THE turnip.yaml parser SHALL support a "config" field within each Project definition
-2. WHERE the IaC_Tool is Terraform, THE config field SHALL support "workspace" to specify the Terraform workspace name
-3. WHERE the IaC_Tool is Pulumi, THE config field SHALL support "stack" to specify the Pulumi stack name
-4. WHERE the IaC_Tool is Helmfile, THE config field SHALL support "environment" to specify the Helmfile environment
-5. THE Server SHALL pass the tool-specific config to the Plugin when executing Operations
-6. THE config field SHALL support a tool-agnostic "version" key specifying the IaC_Tool version the Runner Job SHALL provision (Requirement 14.2a)
-7. IF "version" is absent, THEN THE Server SHALL use a documented default version for that IaC_Tool
-8. IF "version" is present but is not a version the Server recognizes for that IaC_Tool, THEN THE Server SHALL reject the configuration with an error comment on the PR, without creating a Runner Job
+1. THE turnip.yaml parser SHALL support a "uses" field within each Project definition, naming the IaC_Tool as "<tool>" or "<tool>@<version>"
+2. THE turnip.yaml parser SHALL support a "with" field within each Project definition, carrying configuration read by that Project's Plugin and by nothing else
+3. WHERE the IaC_Tool is Terraform, THE with field SHALL support "workspace" to specify the Terraform workspace name, and "backendConfig" to specify backend configuration the Plugin passes to the tool's initialization step — a survey of real Atlantis deployments found a per-project backend key to be the single most common reason projects need per-project arguments at all
+4. WHERE the IaC_Tool is Pulumi, THE with field SHALL support "stack" to specify the Pulumi stack name
+5. WHERE the IaC_Tool is Helmfile, THE with field SHALL support "environment" to specify the Helmfile environment
+6. THE Server SHALL pass the with field to the Plugin when executing Operations
+7. THE version portion of "uses" SHALL specify the IaC_Tool version the Runner Job SHALL provision (Requirement 14.2a)
+8. IF the version portion is absent, THEN THE Server SHALL use a documented default version for that IaC_Tool
+9. IF the version portion is present but is not well-formed, THEN THE Server SHALL reject the configuration with an error comment on the PR, without creating a Runner Job — well-formedness is a semver shape, not membership of a list the Server maintains, so a version the vendor publishes is usable the day it ships
+10. THE Server SHALL accept a version portion written with or without a leading "v", normalizing it before the vendor image tag is formed
 
 ### Requirement 19: High Availability Server Deployment
 

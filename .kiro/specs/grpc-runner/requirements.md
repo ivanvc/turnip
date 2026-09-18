@@ -13,7 +13,7 @@ check runs) — this slice only implements the mechanism.
 
 This slice implements Requirements 8 and 14 from the global spec
 (`.kiro/specs/multi-iac-automation-platform/requirements.md`), plus the
-tool-version-resolution sub-clauses of Requirement 18 (18.6-18.8) that
+tool-version-resolution sub-clauses of Requirement 18 (18.7-18.10) that
 Requirement 14.2a depends on. It builds on Slice 2's `Plugin` interface
 (the Runner loads and executes a Plugin) and Slice 1's `Project`/`Config`
 types (the Job builder reads a matched Project's directory, tool, and

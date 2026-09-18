@@ -164,15 +164,16 @@ instead of a confusing partial failure downstream.
 1. WHEN the Server begins handling a `pull_request` event with action
    `opened`/`synchronize`, or an `issue_comment` event that will need
    Project context, THE Server SHALL attempt to fetch the config file via
-   `GitHubClient.GetFile(ctx, owner, repo, "turnip.yaml", headSHA)` at the
-   repository root (Requirement 1.1 of the global spec) first; IF that call
-   returns an error wrapping `github.ErrFileNotFound`, THE Server SHALL
-   retry at `.github/turnip.yaml` before treating the file as absent — a
-   second accepted location this slice adds on top of the global spec's
-   repository-root requirement, matching the convention GitHub's own
-   tooling already uses for CODEOWNERS/Dependabot config (root or
-   `.github/`). THE Server SHALL pass whichever location's content is found
-   to `config.Parse` before taking any other action for that event
+   `GitHubClient.GetFile(ctx, owner, repo, ".turnip/config.yaml", headSHA)`
+   first; IF that call returns an error wrapping `github.ErrFileNotFound`,
+   THE Server SHALL retry at `turnip.yaml` in the repository root before
+   treating the file as absent (Requirement 1.1 of the global spec). THE
+   Server SHALL pass whichever location's content is found to
+   `config.Parse` before taking any other action for that event.
+   `.github/turnip.yaml` was accepted by earlier versions and is no longer
+   read — superseded by `project-schema-v1alpha2`'s Requirement 8, which
+   replaces it with a dedicated `.turnip/` directory a repository can keep
+   related files in
 2. IF `GetFile` returns an error wrapping `github.ErrFileNotFound` for
    BOTH locations, THEN THE Server SHALL NOT proceed further for that
    event — no Lock acquisition, Runner Job, or check run (Requirement 1.4
@@ -429,7 +430,7 @@ the Job — so that horizontal scaling doesn't break correctness.
 5. IF `BuildJob` returns an `*jobs.UnrecognizedToolError` or
    `*jobs.UnrecognizedVersionError`, THE Server SHALL post an error comment
    identifying the Project and the invalid tool/version and SHALL NOT
-   create a Job (Requirement 18.8 of the global spec) — an unrecognized
+   create a Job (Requirement 18.9 of the global spec) — an unrecognized
    `Tool` value itself was already rejected earlier by `config.Parse`
    (Requirement 1), so this path is reached only for an invalid `version`
    value within an otherwise-valid Project

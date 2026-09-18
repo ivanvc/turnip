@@ -129,7 +129,7 @@ Re-verify these paths against whatever version is actually pinned at
 implementation time — a vendor could restructure their image layout between
 when this was checked and then.
 
-**Version resolution** (Requirement 18.6-18.8): the Server reads
+**Version resolution** (Requirement 18.7-18.10): the Server reads
 `config.version` from the matched Project. If present, it's validated
 against a known-good list for that tool before the Job is created; if
 invalid, the Server posts an error comment and creates no Job. If absent,
@@ -756,7 +756,7 @@ type LockData struct {
 
 *For any* created runner job requesting tool version V for IaC_Tool T, the job specification should include an initContainer using T's vendor-published image tagged V, and the main container should mount the volume that initContainer populates.
 
-**Validates: Requirements 14.2a, 18.6, 18.7**
+**Validates: Requirements 14.2a, 18.7, 18.8**
 
 ### Property 24: Runner Clones Correct Commit
 
