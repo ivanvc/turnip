@@ -655,6 +655,40 @@ this would be the second such block after `clone:` — which settles whether
 that field should be named for one block or carry the repository's
 configuration generally.
 
+### Authenticating to a cluster turnip is not running in
+
+The Runner authenticates to Kubernetes with its Pod's ServiceAccount —
+in-cluster configuration, which is exactly right when the IaC targets the
+cluster the Runner runs in, and useless otherwise. Nothing today produces
+a kubeconfig for anywhere else.
+
+For an external cluster something has to mint credentials *before* the
+tool runs. On EKS that is `aws eks update-kubeconfig`, which needs the AWS
+CLI present in the container and a Pod identity permitted to call it
+(Pod Identity/IRSA already selects that identity through
+`runner.serviceAccount`).
+
+Two shapes, neither chosen:
+
+- **A general pre-command**, the Atlantis-shaped option and the one first
+  suggested. Flexible, and it covers providers turnip has never heard of.
+  But it is arbitrary code read from the pull request's own head commit,
+  so it needs the same gating argument `runner.serviceAccount` has — and
+  by the principle that gates belong on what *grants* capability, running
+  arbitrary commands plainly grants it.
+- **A declarative kubeconfig step** turnip performs itself from named
+  inputs (cluster, region, role). No arbitrary execution and nothing new
+  to gate, but it only ever covers the providers turnip teaches itself.
+
+**It collides with Slice 14.** Under run-in-image the container running
+the tool is the vendor's own image, which for helmfile is Alpine and does
+not carry the AWS CLI. Any design here that assumes it can install
+packages into that image is assuming something turnip deliberately gave
+up when it stopped building tool images.
+
+Not urgent while the pilot targets the cluster turnip itself runs in,
+which is also the case that needs no credentials at all.
+
 ## Notes
 
 - Slices 1–5 can be developed in parallel once Slice 0 is complete

@@ -117,6 +117,20 @@ or nothing happens for several minutes before a timeout is reported.
   submodule on the *same* host works whatever URL form it uses: SSH and
   other schemes are rewritten to authenticated HTTPS automatically.
 
+- **`secrets is forbidden: User "system:serviceaccount:..." cannot list
+  resource "secrets"`**: the Runner's ServiceAccount has no RBAC in the
+  namespace a release lives in. Helm keeps release state in a Secret in
+  that namespace, so even a read-only `diff` must list Secrets there.
+  Binding the built-in `view` ClusterRole will **not** fix it — Kubernetes
+  excludes Secrets from `view` deliberately, because reading them grants
+  the API access of every ServiceAccount in the namespace.
+  **Granting only Secrets is not the fix either**: it clears this error,
+  and then the next one arrives for a CRD, a namespace, or whatever kind a
+  chart's `lookup` consults. helmfile manages whatever its charts declare,
+  so in practice the Runner needs administrative access to the cluster.
+  See "What the Runner's ServiceAccount needs" in `docs/configuration.md`
+  for what to grant and what that grant means.
+
 ## Plugin execution errors
 
 **Symptom**: the check run/comment shows a failure with the tool's own

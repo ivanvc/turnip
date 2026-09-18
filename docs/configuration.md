@@ -215,6 +215,117 @@ redirect a backend or a role just as readily — but if that boundary
 matters to you, it's the Server-side settings below, not `env`, that
 decide what credentials the Runner holds in the first place.
 
+### What the Runner's ServiceAccount needs
+
+turnip ships no ServiceAccount and no RBAC for the Runner, deliberately.
+The Runner runs *your* IaC, so what it needs is whatever your IaC
+manages — and anything turnip shipped would have to carry elevated access
+to be useful for anyone. That is a grant an operator should make
+knowingly, not one inherited from a manifest they applied in order to
+install turnip. `deploy/base` creates only the Server's own
+ServiceAccount and Role, which cover creating Jobs and reading Pods and
+nothing else.
+
+#### How helmfile authenticates
+
+Inside the cluster turnip runs in there is nothing to configure: the
+Runner Pod carries a projected ServiceAccount token, and helm's client
+finds it the way any in-cluster client does. No kubeconfig, no cloud
+credentials, no `aws eks update-kubeconfig`. *Which* ServiceAccount comes
+from `TURNIP_RUNNER_SERVICE_ACCOUNT`, or from a Project's
+`runner.serviceAccount` where the operator permits that override.
+
+Targeting any **other** cluster needs a kubeconfig, which turnip does not
+yet produce — see the roadmap's Backlog.
+
+Helm plugins authenticate separately, and to different things.
+`helm-secrets` decrypting through a cloud KMS, or a chart pulled from a
+private registry, needs *cloud* credentials rather than cluster ones.
+Those come from the Pod's identity — EKS Pod Identity/IRSA, GCP Workload
+Identity, selected by that same ServiceAccount — and from `runner.env`
+for whatever the plugin reads out of its environment.
+
+#### What to grant it
+
+**In practice, administrative access to the cluster.** That is not a
+recommendation made lightly, so here is why the smaller grants do not
+hold.
+
+Helm keeps each release's state in a Secret in the release's namespace, so
+even a read-only `diff` must list Secrets there. That is the first failure
+most people meet:
+
+```
+Error: query: failed to query with labels: secrets is forbidden:
+User "system:serviceaccount:<namespace>:<name>" cannot list resource
+"secrets" in API group "" in the namespace "<release-namespace>"
+```
+
+Granting exactly that gets past exactly that error, and then the next one
+arrives — a chart's `lookup`, a CRD, a namespace, a cluster-scoped
+resource. **Enumerating minimal permissions for helmfile is a losing
+game**: a helmfile manages whatever its charts declare, so the permission
+set is the union of every kind any chart touches, and it moves whenever a
+chart does. `apply` needs create/update/delete across all of it, and a
+repository that installs CRDs or namespaces needs cluster-scoped rights to
+match.
+
+Neither built-in shortcut works. `view` excludes Secrets deliberately —
+*"reading the contents of Secrets enables access to ServiceAccount
+credentials in the namespace, which would allow API access as any
+ServiceAccount in the namespace (a form of privilege escalation)"* — so it
+cannot even diff. `edit` covers Secrets but not cluster-scoped resources
+or CRDs.
+
+For a Runner that applies, bind `cluster-admin` and know that you did:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: turnip-runner
+subjects:
+  - kind: ServiceAccount
+    name: turnip-runner
+    namespace: turnip-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+```
+
+A Runner that only ever diffs can be narrower — Secrets plus read on what
+the charts consult, bound per namespace — but expect to revisit it as the
+charts change.
+
+#### What that grant means
+
+**A plan is not a read-only operation in the security sense.** helmfile's
+`prepare` and `cleanup` hooks run for *every* command, `diff` included;
+only `presync`/`postsync` are restricted to the mutating ones, which
+helmfile documents as the place for commands that may mutate cluster state
+"as it will not be run for read-only operations like `lint`, `diff` or
+`template`". A hook runs an arbitrary executable inside the Runner
+container, and that container holds the ServiceAccount token.
+
+Since a plan runs automatically when a pull request opens, a pull request
+that adds a `prepare` hook runs arbitrary code with the Runner's cluster
+credentials before anyone reviews it. If those credentials are
+`cluster-admin`, so is the pull request.
+
+That is the same trust boundary the committed IaC already sits on — a
+chart can redirect a resource as readily as a hook can run one — but it
+is sharper than it looks, and two things follow:
+
+- **Run turnip only on repositories whose contributors you already trust
+  with the cluster.** Refusing pull requests from forks is a planned slice
+  and is **not implemented yet**; until it is, a fork's pull request is
+  treated like any other.
+- **Scope by cluster, not by rule set.** The practical blast radius is
+  decided when you choose which cluster turnip runs in and which
+  repository drives it — not by trimming permissions that will grow back
+  the next time a chart adds a resource kind.
+
 ### Where the Runner puts things
 
 Everything turnip creates inside a Runner Pod lives under `/turnip`:
