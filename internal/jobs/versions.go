@@ -2,16 +2,9 @@ package jobs
 
 import (
 	"fmt"
-	"regexp"
-)
 
-// versionPattern is a permissive semver-shaped check ("1.9.5",
-// "0.170.1", "1.7.4-rc1") — not a vendor-specific grammar. It exists to
-// reject obviously-wrong input (typos, a floating tag like "latest",
-// stray whitespace) with a fast, clear error, not to enumerate every
-// version a vendor has ever published. See toolImage.versions below for
-// why this replaced an exhaustive allowlist.
-var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
+	"github.com/ivanvc/turnip/internal/config"
+)
 
 // toolImage describes how to provision one IaC tool's CLI binary onto a
 // Runner Job via an initContainer.
@@ -108,7 +101,12 @@ func resolveVersion(tool, requestedVersion string) (string, error) {
 		return ti.versions[0], nil
 	}
 
-	if !versionPattern.MatchString(requestedVersion) {
+	// Defensive since Slice 13: internal/config rejects a malformed version
+	// at parse time, which puts the error on the pull request rather than
+	// here at Job-build time. The shape rule lives there because config is
+	// a leaf package this one imports, so it cannot be borrowed the other
+	// way round without a cycle.
+	if !config.IsWellFormedVersion(requestedVersion) {
 		return "", &UnrecognizedVersionError{Tool: tool, Version: requestedVersion, Examples: ti.versions}
 	}
 

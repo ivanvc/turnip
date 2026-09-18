@@ -32,15 +32,15 @@ func TestParseError_Error(t *testing.T) {
 }
 
 func TestValidationError_Error(t *testing.T) {
-	err := &ValidationError{ProjectRef: "vpc", Field: "tool", Message: "unsupported tool"}
-	assert.Equal(t, "config: vpc: tool: unsupported tool", err.Error())
+	err := &ValidationError{ProjectRef: "vpc", Field: "uses", Message: "unsupported tool"}
+	assert.Equal(t, "config: vpc: uses: unsupported tool", err.Error())
 }
 
 func TestValidationErrors_Error(t *testing.T) {
 	errs := ValidationErrors{
 		&ValidationError{ProjectRef: "vpc", Field: "name", Message: "name is required"},
-		&ValidationError{ProjectRef: "rds", Field: "tool", Message: "tool is required"},
+		&ValidationError{ProjectRef: "rds", Field: "uses", Message: "uses is required"},
 	}
-	want := "config: vpc: name: name is required\nconfig: rds: tool: tool is required"
+	want := "config: vpc: name: name is required\nconfig: rds: uses: uses is required"
 	assert.Equal(t, want, errs.Error())
 }

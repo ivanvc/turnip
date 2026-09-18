@@ -187,20 +187,25 @@ func testOrchestrator(t *testing.T, locks lock.LockManager, jobsClient jobCreato
 		fake.redis = client
 	}
 	o := &Orchestrator{
-		locks:         locks,
-		jobs:          jobsClient,
-		plugins:       testRegistry(),
-		records:       newRecordStore(client),
-		redis:         client,
-		startTimeout:  5 * time.Minute,
-		sweepInterval: 30 * time.Second,
+		locks:   locks,
+		jobs:    jobsClient,
+		plugins: testRegistry(),
+		records: newRecordStore(client),
+		redis:   client,
+		// Matches what a real Server has. Left nil, every override would
+		// be refused — including a Project that merely pins a tool
+		// version — and the failure would look like a lock or job problem
+		// rather than an overrides one.
+		allowedOverrides: defaultAllowedOverrides(),
+		startTimeout:     5 * time.Minute,
+		sweepInterval:    30 * time.Second,
 	}
 	return o, client
 }
 
 func testHelmfileTarget() Target {
 	return Target{
-		Project:     config.Project{Name: "helm-a", Directory: "a", Tool: "helmfile"},
+		Project:     config.Project{Name: "helm-a", Directory: "a", Uses: "helmfile", Tool: "helmfile"},
 		Operation:   "diff",
 		TriggeredBy: "auto",
 	}
@@ -365,11 +370,11 @@ func TestExecuteOne_ProjectServiceAccountRefusedWhenNotAllowed(t *testing.T) {
 	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
 	o, _ := testOrchestrator(t, locks, jobsClient)
 	o.runnerServiceAccount = "turnip-runner"
-	o.allowServiceAccountFromConfig = false
+	o.allowedOverrides = map[string]bool{}
 	client := &fakeExecuteClient{}
 
 	target := testHelmfileTarget()
-	target.Project.Config = map[string]string{"serviceAccount": "atlantis"}
+	target.Project.Runner.ServiceAccount = "atlantis"
 
 	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
 
@@ -383,11 +388,11 @@ func TestExecuteOne_ProjectServiceAccountUsedWhenAllowed(t *testing.T) {
 	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
 	o, _ := testOrchestrator(t, locks, jobsClient)
 	o.runnerServiceAccount = "turnip-runner"
-	o.allowServiceAccountFromConfig = true
+	o.allowedOverrides = map[string]bool{overrideServiceAccount: true}
 	client := &fakeExecuteClient{}
 
 	target := testHelmfileTarget()
-	target.Project.Config = map[string]string{"serviceAccount": "turnip-runner-cicd2"}
+	target.Project.Runner.ServiceAccount = "turnip-runner-cicd2"
 
 	o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
 

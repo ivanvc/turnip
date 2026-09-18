@@ -23,13 +23,13 @@ func TestParse_MissingRequiredFields(t *testing.T) {
 	}{
 		{
 			name:  "missing directory",
-			yaml:  "schemaVersion: v1alpha1\nprojects:\n  - name: vpc\n    tool: terraform\n",
+			yaml:  "schemaVersion: v1alpha2\nprojects:\n  - name: vpc\n    uses: terraform\n",
 			field: "directory",
 		},
 		{
-			name:  "missing tool",
-			yaml:  "schemaVersion: v1alpha1\nprojects:\n  - name: vpc\n    directory: infra/vpc\n",
-			field: "tool",
+			name:  "missing uses",
+			yaml:  "schemaVersion: v1alpha2\nprojects:\n  - name: vpc\n    directory: infra/vpc\n",
+			field: "uses",
 		},
 	}
 
@@ -51,7 +51,7 @@ func TestParse_MissingRequiredFields(t *testing.T) {
 }
 
 func TestParse_MissingNameAndDirectoryRefersToProjectByIndex(t *testing.T) {
-	data := []byte("schemaVersion: v1alpha1\nprojects:\n  - tool: terraform\n")
+	data := []byte("schemaVersion: v1alpha2\nprojects:\n  - uses: terraform\n")
 
 	_, err := Parse(data)
 	require.Error(t, err)
@@ -67,7 +67,7 @@ func TestParse_MissingNameAndDirectoryRefersToProjectByIndex(t *testing.T) {
 }
 
 func TestParse_UnsupportedTool(t *testing.T) {
-	data := []byte("schemaVersion: v1alpha1\nprojects:\n  - name: vpc\n    directory: infra/vpc\n    tool: cloudformation\n")
+	data := []byte("schemaVersion: v1alpha2\nprojects:\n  - name: vpc\n    directory: infra/vpc\n    uses: cloudformation\n")
 
 	_, err := Parse(data)
 	require.Error(t, err)
@@ -82,14 +82,14 @@ func TestParse_UnsupportedTool(t *testing.T) {
 
 func TestParse_DuplicateProjectNames(t *testing.T) {
 	data := []byte(`
-schemaVersion: v1alpha1
+schemaVersion: v1alpha2
 projects:
   - name: vpc
     directory: infra/vpc-a
-    tool: terraform
+    uses: terraform
   - name: vpc
     directory: infra/vpc-b
-    tool: terraform
+    uses: terraform
 `)
 
 	_, err := Parse(data)
@@ -107,21 +107,21 @@ projects:
 
 func TestParse_MultipleSimultaneousViolations(t *testing.T) {
 	data := []byte(`
-schemaVersion: v1alpha1
+schemaVersion: v1alpha2
 projects:
   - directory: infra/a
   - name: b
     directory: infra/b
-    tool: terraform
+    uses: terraform
   - name: b
     directory: infra/c
-    tool: nope
+    uses: nope
 `)
 
 	_, err := Parse(data)
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
-	assert.GreaterOrEqual(t, len(verrs), 3, "want at least 3 violations (missing tool, missing name, duplicate name, bad tool): %v", verrs)
+	assert.GreaterOrEqual(t, len(verrs), 3, "want at least 3 violations (missing uses, duplicate name, bad tool): %v", verrs)
 }
 
 // The Runner reads its own configuration out of TURNIP_* and finds its
@@ -129,15 +129,16 @@ projects:
 // reconfiguring the Runner rather than the tool it runs.
 func TestParse_ReservedEnvNamesRejectedTogether(t *testing.T) {
 	data := []byte(`
-schemaVersion: v1alpha1
+schemaVersion: v1alpha2
 projects:
   - name: web
     directory: infra/web
-    tool: helmfile
-    env:
-      TURNIP_SERVER_ADDR: elsewhere
-      PATH: /nowhere
-      AWS_PROFILE: untouched
+    uses: helmfile
+    runner:
+      env:
+        TURNIP_SERVER_ADDR: elsewhere
+        PATH: /nowhere
+        AWS_PROFILE: untouched
 `)
 
 	_, err := Parse(data)
@@ -146,14 +147,14 @@ projects:
 	require.Len(t, verrs, 2, "both reserved names reported, and the legal one left alone: %v", verrs)
 
 	assert.ElementsMatch(t,
-		[]string{`env["PATH"]`, `env["TURNIP_SERVER_ADDR"]`},
+		[]string{`runner.env["PATH"]`, `runner.env["TURNIP_SERVER_ADDR"]`},
 		[]string{verrs[0].Field, verrs[1].Field})
 }
 
 // The prefix is what's reserved, not a fixed list of known variables —
 // a name turnip doesn't use today is still rejected.
 func TestParse_UnknownTurnipPrefixedEnvNameStillRejected(t *testing.T) {
-	data := []byte("schemaVersion: v1alpha1\nprojects:\n  - directory: d\n    tool: helmfile\n    env:\n      TURNIP_NOT_A_REAL_VARIABLE: x\n")
+	data := []byte("schemaVersion: v1alpha2\nprojects:\n  - directory: d\n    uses: helmfile\n    runner:\n      env:\n        TURNIP_NOT_A_REAL_VARIABLE: x\n")
 
 	_, err := Parse(data)
 	require.Error(t, err)
@@ -163,7 +164,7 @@ func TestParse_UnknownTurnipPrefixedEnvNameStillRejected(t *testing.T) {
 }
 
 func TestParse_OrdinaryEnvNamesAccepted(t *testing.T) {
-	data := []byte("schemaVersion: v1alpha1\nprojects:\n  - directory: d\n    tool: helmfile\n    env:\n      AWS_PROFILE: prod\n      PATHOLOGICAL: not-PATH\n")
+	data := []byte("schemaVersion: v1alpha2\nprojects:\n  - directory: d\n    uses: helmfile\n    runner:\n      env:\n        AWS_PROFILE: prod\n        PATHOLOGICAL: not-PATH\n")
 
 	_, err := Parse(data)
 	require.NoError(t, err, "only PATH exactly is reserved, not names that merely start with it")
@@ -171,11 +172,11 @@ func TestParse_OrdinaryEnvNamesAccepted(t *testing.T) {
 
 func TestParse_InvalidGlobPattern(t *testing.T) {
 	data := []byte(`
-schemaVersion: v1alpha1
+schemaVersion: v1alpha2
 projects:
   - name: vpc
     directory: infra/vpc
-    tool: terraform
+    uses: terraform
     whenModified:
       - "infra/vpc/["
 `)
@@ -191,4 +192,67 @@ projects:
 		}
 	}
 	assert.True(t, found, "no whenModified ValidationError found in %v", verrs)
+}
+
+// Unrecognised keys turnip *does* define the shape of are errors, and
+// several are reported together rather than one per attempt.
+func TestParse_UnknownKeysRejectedTogether(t *testing.T) {
+	data := []byte(`
+schemaVersion: v1alpha2
+bogusTop: 1
+projects:
+  - directory: d
+    uses: helmfile
+    nope: x
+`)
+
+	_, err := Parse(data)
+	require.Error(t, err)
+	verrs := asValidationErrors(t, err)
+	require.Len(t, verrs, 2, "both unknown keys reported: %v", verrs)
+
+	assert.ElementsMatch(t, []string{"bogusTop", "nope"}, []string{verrs[0].Field, verrs[1].Field})
+	for _, v := range verrs {
+		assert.Contains(t, v.Message, "unrecognized field")
+		assert.NotContains(t, v.Message, "config.", "the decoder's Go type names must never reach a PR comment")
+	}
+}
+
+// `runner` is a struct turnip defines, so a typo inside it is caught —
+// unlike `with`, which is a free map by design.
+func TestParse_UnknownKeyInsideRunnerRejected(t *testing.T) {
+	data := []byte("schemaVersion: v1alpha2\nprojects:\n  - directory: d\n    uses: helmfile\n    runner:\n      serviceAcount: typo\n")
+
+	_, err := Parse(data)
+	require.Error(t, err)
+	verrs := asValidationErrors(t, err)
+	require.Len(t, verrs, 1)
+	assert.Equal(t, "serviceAcount", verrs[0].Field)
+}
+
+// Anchors and merge keys are how real configurations avoid the repetition
+// a per-project schema forces. yaml.v3 expands "<<" before matching
+// fields, so strict decoding must not see it as an unknown key — pinned
+// here because the instinct on reading "reject unknown keys" is to add a
+// special case for it.
+func TestParse_MergeKeysSurviveStrictDecoding(t *testing.T) {
+	data := []byte(`
+schemaVersion: v1alpha2
+projects:
+  - &base
+    name: a
+    directory: infra/a
+    uses: terraform@1.9.5
+    whenModified: ["infra/**"]
+  - <<: *base
+    name: b
+`)
+
+	c, err := Parse(data)
+	require.NoError(t, err)
+	require.Len(t, c.Projects, 2)
+
+	assert.Equal(t, "b", c.Projects[1].Name)
+	assert.Equal(t, "infra/a", c.Projects[1].Directory, "the merged key is inherited")
+	assert.Equal(t, "1.9.5", c.Projects[1].ToolVersion, "derivation runs on the merged result")
 }

@@ -25,8 +25,11 @@ func (e *UnmatchedProjectError) Unwrap() error {
 	return ErrUnmatchedProject
 }
 
-// ErrConfigMissing is returned by fetchConfig when turnip.yaml exists at
-// neither the repository root nor .github/turnip.yaml (Requirement 1.2)
-// — distinguishable from any other fetch failure (Requirement 1.3), which
+// ErrConfigMissing is returned by fetchConfig when no turnip
+// configuration exists at any accepted location (Requirement 1.2) —
+// distinguishable from any other fetch failure (Requirement 1.3), which
 // callers report with the underlying error's message included.
-var ErrConfigMissing = errors.New("orchestrator: turnip.yaml not found at repository root or .github/turnip.yaml")
+//
+// The locations come from configFilePaths rather than being written out
+// again here; see configFilePathList.
+var ErrConfigMissing = fmt.Errorf("orchestrator: no turnip configuration found at %s", configFilePathList(""))

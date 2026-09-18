@@ -4,31 +4,63 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/ivanvc/turnip/internal/config"
 	"github.com/ivanvc/turnip/internal/github"
 )
 
-// fetchConfig fetches and parses turnip.yaml, trying the repository root
-// first and .github/turnip.yaml only on a root-level ErrFileNotFound
-// (Requirement 1.1). Returns ErrConfigMissing (wrapped) if neither
-// location has the file (Requirement 1.2); any other GetFile error is
-// returned as-is (Requirement 1.3); a config.Parse failure
-// (*config.ParseError or config.ValidationErrors) is returned as-is too
-// (Requirement 1.4).
+// configFilePaths are the locations a repository's turnip configuration
+// may live, in the order they are tried.
+//
+// The dedicated directory comes first so a repository migrating to it
+// takes effect by adding the new file, with no second step to remove the
+// old one. `.turnip/` also gives a repository somewhere to keep files the
+// tool itself reads — an AWS config, say — which a Project can reference
+// through the fixed workspace path; turnip reads nothing in there but
+// this one file.
+//
+// Only `.yaml` is accepted. `.github/turnip.yaml`, read by versions
+// before v1alpha2, is not.
+var configFilePaths = []string{".turnip/config.yaml", "turnip.yaml"}
+
+// configFilePathList renders the accepted locations for a human. Both the
+// error and the PR comment call it rather than writing the list out
+// again: a reader who finds two lists disagreeing has no way to know
+// which one the code actually uses.
+func configFilePathList(quote string) string {
+	parts := make([]string, len(configFilePaths))
+	for i, path := range configFilePaths {
+		parts[i] = quote + path + quote
+	}
+	return strings.Join(parts, " or ")
+}
+
+// fetchConfig fetches and parses the repository's turnip configuration,
+// trying each accepted location in order and stopping at the first that
+// exists (Requirement 1.1). Returns ErrConfigMissing (wrapped) if none
+// does (Requirement 1.2); any other GetFile error is returned as-is
+// (Requirement 1.3); a config.Parse failure (*config.ParseError or
+// config.ValidationErrors) is returned as-is too (Requirement 1.4).
+//
+// Exactly one request per location, and no more: this runs on every pull
+// request open and synchronize in every installed repository, including
+// those that never onboard, so the not-found path is the one paid most
+// often.
 func fetchConfig(ctx context.Context, client github.GitHubClient, owner, repo, headSHA string) (*config.Config, error) {
-	data, err := client.GetFile(ctx, owner, repo, "turnip.yaml", headSHA)
-	if errors.Is(err, github.ErrFileNotFound) {
-		data, err = client.GetFile(ctx, owner, repo, ".github/turnip.yaml", headSHA)
-		if errors.Is(err, github.ErrFileNotFound) {
-			return nil, fmt.Errorf("%w: %s/%s@%s", ErrConfigMissing, owner, repo, headSHA)
+	for _, path := range configFilePaths {
+		data, err := client.GetFile(ctx, owner, repo, path, headSHA)
+		switch {
+		case err == nil:
+			return config.Parse(data)
+		case errors.Is(err, github.ErrFileNotFound):
+			continue
+		default:
+			return nil, err
 		}
 	}
-	if err != nil {
-		return nil, err
-	}
 
-	return config.Parse(data)
+	return nil, fmt.Errorf("%w: %s/%s@%s", ErrConfigMissing, owner, repo, headSHA)
 }
 
 // configErrorComment renders a fetchConfig failure into a PR comment body
@@ -39,7 +71,8 @@ func configErrorComment(err error) string {
 		// rather than plain text. The "> " prefix is required on every
 		// line of the block, including the marker line.
 		return "> [!WARNING]\n" +
-			"> `turnip.yaml` was not found in this repository (checked the repository root and `.github/turnip.yaml`)."
+			"> No turnip configuration was found in this repository (checked " +
+			configFilePathList("`") + ")."
 	}
 
 	// WARNING, not CAUTION: the repository opted into turnip and its
@@ -55,13 +88,13 @@ func configErrorComment(err error) string {
 	var validationErrs config.ValidationErrors
 	if errors.As(err, &parseErr) || errors.As(err, &validationErrs) {
 		return "> [!WARNING]\n" +
-			"> `turnip.yaml` is invalid, so no operations ran.\n\n" +
+			"> The turnip configuration is invalid, so no operations ran.\n\n" +
 			fmt.Sprintf("```\n%s\n```", err.Error())
 	}
 
 	// CAUTION: not the PR author's to fix. A failed fetch is an auth,
 	// permissions, or rate-limit problem on turnip's own installation.
 	return "> [!CAUTION]\n" +
-		"> Fetching `turnip.yaml` failed, so no operations ran. This is usually an authentication, permission, or rate-limit problem with turnip's GitHub App rather than something wrong with this repository.\n\n" +
+		"> Fetching the turnip configuration failed, so no operations ran. This is usually an authentication, permission, or rate-limit problem with turnip's GitHub App rather than something wrong with this repository.\n\n" +
 		fmt.Sprintf("<details>\n<summary>Error</summary>\n\n```\n%s\n```\n\n</details>", err.Error())
 }

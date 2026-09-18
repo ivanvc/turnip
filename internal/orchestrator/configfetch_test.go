@@ -21,7 +21,7 @@ func TestConfigErrorComment_MissingIsAGitHubWarningAlert(t *testing.T) {
 
 	assert.Equal(t,
 		"> [!WARNING]\n"+
-			"> `turnip.yaml` was not found in this repository (checked the repository root and `.github/turnip.yaml`).",
+			"> No turnip configuration was found in this repository (checked `.turnip/config.yaml` or `turnip.yaml`).",
 		body)
 
 	for _, line := range strings.Split(body, "\n") {
@@ -33,8 +33,8 @@ func TestConfigErrorComment_MissingIsAGitHubWarningAlert(t *testing.T) {
 // it ranks WARNING — CAUTION stays reserved for failures needing an
 // operator, which is what makes it worth noticing.
 func TestConfigErrorComment_InvalidConfigIsAWarningWithDetailsOutsideTheAlert(t *testing.T) {
-	_, err := config.Parse([]byte("schemaVersion: v1alpha1\nprojects:\n  - name: broken\n"))
-	require.Error(t, err, "a project with no directory or tool is invalid")
+	_, err := config.Parse([]byte("schemaVersion: v1alpha2\nprojects:\n  - name: broken\n"))
+	require.Error(t, err, "a project with no directory or uses is invalid")
 
 	body := configErrorComment(err)
 	assert.Contains(t, body, "> [!WARNING]")
@@ -50,7 +50,7 @@ func TestConfigErrorComment_FetchFailureIsACaution(t *testing.T) {
 	body := configErrorComment(errors.New("rate limit exceeded"))
 
 	assert.Contains(t, body, "> [!CAUTION]")
-	assert.Contains(t, body, "Fetching `turnip.yaml` failed")
+	assert.Contains(t, body, "Fetching the turnip configuration failed")
 	assert.Contains(t, body, "rate limit exceeded", "the cause must be readable without pod/log access")
 	assertNothingNestedInsideAlert(t, body)
 }

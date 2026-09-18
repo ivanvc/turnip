@@ -77,11 +77,11 @@ func (f *fakePRClient) getFileCallLog() []string {
 }
 
 const validTurnipYAML = `
-schemaVersion: v1alpha1
+schemaVersion: v1alpha2
 projects:
   - name: helm-a
     directory: a
-    tool: helmfile
+    uses: helmfile
     whenModified:
       - "a/**"
 `
@@ -159,10 +159,14 @@ func TestHandlePlanTrigger_ZeroMatchedProjectsTakesNoAction(t *testing.T) {
 	assert.Empty(t, client.postedComments())
 }
 
-func TestHandlePlanTrigger_DotGithubFallback(t *testing.T) {
+// The dedicated directory is tried first and the repository root is the
+// fallback — that order is deliberate, so a repository migrating to
+// `.turnip/` takes effect by adding the new file rather than needing a
+// second step to remove the old one.
+func TestHandlePlanTrigger_RootFileIsTheFallback(t *testing.T) {
 	o, _ := testPullRequestOrchestrator(t)
 	client := &fakePRClient{
-		files:         map[string][]byte{".github/turnip.yaml": []byte(validTurnipYAML)},
+		files:         map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
 		modifiedFiles: []string{"unrelated/file.txt"},
 	}
 
@@ -173,8 +177,30 @@ func TestHandlePlanTrigger_DotGithubFallback(t *testing.T) {
 	require.NoError(t, o.handlePlanTrigger(context.Background(), client, event))
 
 	require.Len(t, client.getFileCallLog(), 2)
-	assert.Equal(t, "turnip.yaml", client.getFileCallLog()[0])
-	assert.Equal(t, ".github/turnip.yaml", client.getFileCallLog()[1])
+	assert.Equal(t, ".turnip/config.yaml", client.getFileCallLog()[0])
+	assert.Equal(t, "turnip.yaml", client.getFileCallLog()[1])
+}
+
+// The dedicated location wins outright when both exist; the two are never
+// merged.
+func TestHandlePlanTrigger_DedicatedDirectoryWinsOverRoot(t *testing.T) {
+	o, _ := testPullRequestOrchestrator(t)
+	client := &fakePRClient{
+		files: map[string][]byte{
+			".turnip/config.yaml": []byte(validTurnipYAML),
+			"turnip.yaml":         []byte("schemaVersion: v1alpha2\nprojects: []\n"),
+		},
+		modifiedFiles: []string{"unrelated/file.txt"},
+	}
+
+	event := &github.WebhookEvent{
+		Repository:  github.Repository{Owner: "owner", Name: "repo"},
+		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc"},
+	}
+	require.NoError(t, o.handlePlanTrigger(context.Background(), client, event))
+
+	assert.Equal(t, []string{".turnip/config.yaml"}, client.getFileCallLog(),
+		"the root file is never fetched once the dedicated one is found")
 }
 
 // A repository with no turnip.yaml hasn't opted into turnip, and this
@@ -194,8 +220,8 @@ func TestHandlePlanTrigger_MissingConfigPostsNothing(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond) // nothing should be posted, even async
 	assert.Empty(t, client.postedComments())
-	assert.Equal(t, []string{"turnip.yaml", ".github/turnip.yaml"}, client.getFileCallLog(),
-		"both locations are still checked before giving up")
+	assert.Equal(t, []string{".turnip/config.yaml", "turnip.yaml"}, client.getFileCallLog(),
+		"both locations are checked before giving up, and no more than both — this runs on every PR in every installed repository")
 }
 
 // An invalid turnip.yaml is the opposite case: that repository *has*
@@ -204,7 +230,7 @@ func TestHandlePlanTrigger_MissingConfigPostsNothing(t *testing.T) {
 func TestHandlePlanTrigger_InvalidConfigStillPostsComment(t *testing.T) {
 	o, _ := testPullRequestOrchestrator(t)
 	client := &fakePRClient{files: map[string][]byte{
-		"turnip.yaml": []byte("schemaVersion: v1alpha1\nprojects:\n  - name: broken\n"), // no directory/tool
+		"turnip.yaml": []byte("schemaVersion: v1alpha2\nprojects:\n  - name: broken\n"), // no directory/uses
 	}}
 
 	event := &github.WebhookEvent{

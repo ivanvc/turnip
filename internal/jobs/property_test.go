@@ -17,11 +17,17 @@ func genTool(t *rapid.T) string {
 	return rapid.SampledFrom(tools).Draw(t, "tool")
 }
 
+// genProject builds a Project the way Parse would have left one: Tool and
+// ToolVersion are derived fields, and applyDefaults runs only inside
+// Parse, so a hand-built fixture has to set them itself. Setting Uses
+// alone would produce a Project with no tool at all.
 func genProject(t *rapid.T) config.Project {
+	tool := genTool(t)
 	return config.Project{
 		Name:      rapid.StringMatching(`[a-z][a-z0-9-]{0,15}`).Draw(t, "name"),
 		Directory: rapid.StringMatching(`[a-z][a-z0-9/_-]{0,20}`).Draw(t, "directory"),
-		Tool:      genTool(t),
+		Uses:      tool,
+		Tool:      tool,
 	}
 }
 
@@ -64,8 +70,9 @@ func TestProperty_RunnerJobToolProvisioning(t *testing.T) {
 		version := rapid.SampledFrom(ti.versions).Draw(t, "version")
 
 		project := genProject(t)
+		project.Uses = tool + "@" + version
 		project.Tool = tool
-		project.Config = map[string]string{"version": version}
+		project.ToolVersion = version
 
 		job, err := BuildJob(project, genOperationParams(t))
 		require.NoError(t, err)

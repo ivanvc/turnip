@@ -8,48 +8,67 @@ describes).
 
 ## `turnip.yaml`
 
-Committed to the repository root (or `.github/turnip.yaml` — checked only
-if the root file is missing, never both merged):
+Committed as **`.turnip/config.yaml`**, or as **`turnip.yaml`** in the
+repository root. The dedicated directory is checked first; whichever is
+found first is used, and the two are never merged. Only the `.yaml`
+extension is read — `.yml` is not checked at either location.
+
+`.turnip/` also gives you somewhere to keep files the *tool* reads (an
+AWS config, say) next to turnip's own; turnip reads nothing in there
+besides `config.yaml`, and a project can point at a sibling through the
+fixed workspace path described under "Where the Runner puts things".
 
 ```yaml
-schemaVersion: v1alpha1
+schemaVersion: v1alpha2
 projects:
   - name: web            # optional — defaults to `directory` if omitted
     directory: infra/web
-    tool: helmfile
     whenModified:
       - "infra/web/**"
-    config:
+    uses: helmfile@1.7.4
+    with:
       environment: staging
+    runner:
+      env:
+        AWS_PROFILE: web-deployer
 ```
 
 | Field | Required | Notes |
 |---|---|---|
-| `schemaVersion` (top-level) | **yes** | the version of this file's schema — must be `v1alpha1`; see below |
+| `schemaVersion` (top-level) | **yes** | the version of this file's schema — must be `v1alpha2`; see below |
 | `projects[].name` | no | defaults to `directory`; must be unique across the file once defaulted |
 | `projects[].directory` | **yes** | the tool's working directory, relative to the repo root |
-| `projects[].tool` | **yes** | one of `terraform`, `pulumi`, `helmfile` — see "Tool support" below |
+| `projects[].uses` | **yes** | what to run: `<tool>` or `<tool>@<version>` — see below |
 | `projects[].whenModified` | no | a list of glob patterns (full `**` support — [doublestar](https://github.com/bmatcuk/doublestar) syntax); a PR whose changed files match none of a project's patterns never triggers it |
-| `projects[].config` | no | a free-form string map, tool-specific — see below |
-| `projects[].env` | no | environment variables for the tool's process — see below |
+| `projects[].with` | no | how to call it: configuration the tool itself reads — see below |
+| `projects[].runner` | no | where it runs: settings for the Runner Pod — see below |
 
 Every violation across the whole file is reported together (a typo in
 project 3 doesn't hide a missing `directory` in project 1) — you'll see
 every problem in one pass, not one-at-a-time.
 
+**A key turnip doesn't recognize is an error, not a silent no-op.** Every
+field above is checked by name, so a misspelling or a setting written at
+the wrong level fails the check with the offending key and its line
+number rather than being read and quietly discarded. The one deliberate
+exception is inside `with`, which exists precisely to carry keys turnip
+does not define.
+
 ### `schemaVersion`
 
-Required, and exactly one value is accepted today: `v1alpha1`. A file
+Required, and exactly one value is accepted today: `v1alpha2`. A file
 missing it, or carrying anything else, is rejected naming both what it
-found and what this turnip supports.
+found and what this turnip supports — and it is reported *on its own*,
+without also listing every field the older schema used, since the version
+is the one fact that explains them.
 
 "Version" means three unrelated things around turnip, so to be explicit
 about which one this is:
 
 | | What it versions |
 |---|---|
-| `schemaVersion` (top-level) | the shape of `turnip.yaml` itself — this field |
-| `config.version` (per project) | which release of `terraform`/`helmfile`/`pulumi` the Runner provisions |
+| `schemaVersion` (top-level) | the shape of this file — this field |
+| the `@version` in `uses` (per project) | which release of `terraform`/`helmfile`/`pulumi` the Runner provisions |
 | turnip's own release | the Server and Runner images you deploy |
 
 The `alpha` suffix is load-bearing, not decoration. Before turnip 1.0 the
@@ -60,56 +79,75 @@ version and the project's major version coincide. There is no
 compatibility shim in the meantime: a file on an older schema is
 rejected outright, never silently upgraded.
 
-### `config` map — recognized keys
+### `uses` — what to run
 
-- **`version`**: pins which release of the tool binary the Runner
-  provisions (e.g. `terraform 1.9.5`, not whatever `:latest` happens to
-  be). Omit it to get the current default. turnip keeps no list of
-  "supported" versions to validate against — any value that looks like a
-  real version (roughly semver: `1.9.5`, `0.170.1`, `1.7.4-rc1`) is
-  accepted and passed straight through to the vendor's own per-version
-  image, so a tool's new release works the moment the vendor publishes it,
-  with no turnip release required. Only obviously malformed input (a
-  floating tag like `latest`, a typo, stray whitespace) is rejected at
-  Job-build time; if the value is well-formed but the vendor doesn't
-  actually publish that tag, the Job fails when its initContainer can't
-  pull the image — reported as a normal operation failure, not caught
-  ahead of time.
-- **`environment`** (Helmfile only): passed through as helmfile's own
-  `--environment` flag.
+`<tool>`, or `<tool>@<version>`:
+
+```yaml
+    uses: helmfile              # the documented default version
+    uses: helmfile@1.7.4        # pinned
+    uses: terraform@v1.9.5      # a leading "v" is accepted and normalized
+```
+
+The tool must be one of `terraform`, `pulumi`, `helmfile` (see "Tool
+support" below).
+
+Omit the version to get turnip's current default for that tool. When you
+do pin one, turnip keeps no list of "supported" versions to validate
+against — any value shaped like a real version (roughly semver: `1.9.5`,
+`0.170.1`, `1.7.4-rc1`) is accepted and passed straight to the vendor's
+own per-version image, so a tool's new release works the moment the
+vendor publishes it, with no turnip release required.
+
+Malformed input is rejected when the file is parsed, so it appears as a
+validation error on the pull request rather than as a failed Job. That
+includes **floating tags**: `latest` is not accepted, because the same
+version has to still be there when the plan you approved is applied
+later. If a version is well-formed but the vendor doesn't publish that
+tag, the Job fails when its initContainer can't pull the image —
+reported as a normal operation failure, not caught ahead of time.
+
+### `with` — how to call it
+
+Configuration for the tool itself. Nothing turnip reads lives here: every
+key is passed to the plugin for that tool, which is why unrecognized keys
+inside `with` are accepted rather than rejected.
+
+| Key | Tool | Meaning |
+|---|---|---|
+| `environment` | Helmfile | helmfile's own `--environment` flag |
+| `workspace` | Terraform | the Terraform workspace name |
+| `backendConfig` | Terraform | backend configuration for the tool's initialization step |
+| `stack` | Pulumi | the Pulumi stack name |
+
+### `runner` — where it runs
+
+Settings that shape the Runner Pod rather than the tool inside it:
+
+```yaml
+    runner:
+      serviceAccount: turnip-runner
+      env:
+        AWS_PROFILE: web-deployer
+```
+
 - **`serviceAccount`**: the Kubernetes ServiceAccount this Project's
   Runner Pod runs as — the identity EKS Pod Identity/IRSA maps to an IAM
   role, and the one in-cluster API calls authenticate with. **Only
-  honored when the Server sets
-  `TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG=true`**; otherwise the
-  operation is refused with a comment on the PR and no Runner Job is
-  created. The gate exists because turnip reads `turnip.yaml` from the
-  pull request's own head commit, and a plan needs only collaborator
-  access — without it, anyone able to open a PR could pick any
-  ServiceAccount in the Runner namespace and use its permissions.
+  honored when the Server's `TURNIP_ALLOWED_OVERRIDES` includes
+  `runner.serviceAccount`**; otherwise the operation is refused with a
+  comment on the PR and no Runner Job is created. The gate exists because
+  turnip reads this file from the pull request's own head commit, and a
+  plan needs only collaborator access — without it, anyone able to open a
+  PR could pick any ServiceAccount in the Runner namespace and use its
+  permissions.
+- **`env`**: environment variables for the IaC tool's process. Unlike
+  `with`, these are never interpreted by turnip at all — they are simply
+  present in the environment the tool runs in, which makes this the place
+  for anything the tool's own ecosystem reads.
 
-Anything else in `config` is opaque to turnip itself — a plugin only
-reads the keys it understands.
-
-### `env` map
-
-Environment variables for the IaC tool's process. Where `config` is
-tool-specific and read by turnip's plugins, `env` is never interpreted by
-turnip at all — the variables are simply present in the environment the
-tool runs in, which is what makes it the place for anything the tool's
-own ecosystem reads:
-
-```yaml
-projects:
-  - name: web
-    directory: infra/web
-    tool: helmfile
-    env:
-      AWS_PROFILE: web-deployer
-```
-
-Two kinds of names are rejected, with every offending name in the file
-reported together rather than one per attempt:
+Two kinds of `env` name are rejected, with every offending name in the
+file reported together rather than one per attempt:
 
 - **anything beginning with `TURNIP_`** — the Runner reads its own
   configuration out of that namespace, so a Project setting one would be
@@ -123,14 +161,13 @@ Values reach the tool byte-for-byte, including values containing `$(…)`
 otherwise expand `$(VAR)` inside an environment value before the tool
 ever saw it.
 
-One thing worth being deliberate about: `turnip.yaml` is read from the
-pull request's own head commit, so `env` is something a PR author can
+One thing worth being deliberate about: this file is read from the pull
+request's own head commit, so `runner.env` is something a PR author can
 change. That is the same trust boundary the tool's own committed
 configuration already sits on — a `.tf` or helmfile in the branch can
 redirect a backend or a role just as readily — but if that boundary
-matters to you, it's the Server-side `TURNIP_RUNNER_SERVICE_ACCOUNT`
-settings below, not `env`, that decide what credentials the Runner holds
-in the first place.
+matters to you, it's the Server-side settings below, not `env`, that
+decide what credentials the Runner holds in the first place.
 
 ### Where the Runner puts things
 
@@ -178,7 +215,7 @@ than one restart-and-discover-the-next-one at a time.
 | `TURNIP_RUNNER_IMAGE` | yes | the Runner container image a deployed Server creates Jobs with |
 | `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` | no (default `false`) | collapse an older plan comment on the same PR once a newer one supersedes it |
 | `TURNIP_RUNNER_SERVICE_ACCOUNT` | no (default unset) | ServiceAccount every Runner Pod runs as — how a Runner gets cloud credentials (EKS Pod Identity/IRSA) and in-cluster API permissions. Unset leaves Pods on the namespace's `default` ServiceAccount, which normally has neither |
-| `TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG` | no (default `false`) | allow a Project's `config.serviceAccount` to override the above. Off by default: `turnip.yaml` is read from the PR's own head commit, so enabling this lets any PR author choose which ServiceAccount their Runner uses |
+| `TURNIP_ALLOWED_OVERRIDES` | no (default: permits nothing) | comma-separated list of the fields a repository's own config file may set. The only path accepted today is `runner.serviceAccount`. The default matches what turnip has always done: a repository cannot choose the identity its Runner assumes, since this file is read from the PR's own head commit. An unrecognized path is a startup error rather than a silently ineffective setting. Note that `uses` is *not* an override — turnip has no Server-side tool to fall back to, so what a project runs is always the repository's to say |
 
 In `deploy/base`, the two credential-shaped values
 (`TURNIP_GITHUB_WEBHOOK_SECRET`, `TURNIP_GITHUB_PRIVATE_KEY`) come from a

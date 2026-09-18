@@ -63,7 +63,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 
 	// Resolved before any Lock is acquired: a refused ServiceAccount must
 	// not leave a Lock held for an Operation that never runs.
-	serviceAccount, err := resolveServiceAccount(t.Project, o.runnerServiceAccount, o.allowServiceAccountFromConfig)
+	serviceAccount, err := resolveServiceAccount(t.Project, o.runnerServiceAccount, o.allowedOverrides)
 	if err != nil {
 		return rejectedResult(t, err.Error())
 	}

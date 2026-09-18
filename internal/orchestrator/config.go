@@ -32,11 +32,11 @@ type Config struct {
 	// permitted). Optional: empty leaves Pods on the namespace's default
 	// ServiceAccount, which is what turnip did before this setting existed.
 	RunnerServiceAccount string
-	// AllowServiceAccountFromConfig gates whether a Project's
-	// `config.serviceAccount` in turnip.yaml may override
-	// RunnerServiceAccount. Default false — see
-	// serviceaccount.go's resolveServiceAccount for why.
-	AllowServiceAccountFromConfig bool
+	// AllowedOverrides is the set of Project fields a repository's
+	// turnip.yaml may set for itself, from TURNIP_ALLOWED_OVERRIDES. See
+	// overrides.go for the known paths and the default, which preserves
+	// the behaviour that shipped before this setting existed.
+	AllowedOverrides map[string]bool
 }
 
 // MissingEnvVarsError names every required environment variable that was
@@ -121,13 +121,11 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 		cfg.MinimizeOutdatedPlanComments = enabled
 	}
 
-	if raw := env("TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG"); raw != "" {
-		allowed, err := strconv.ParseBool(raw)
-		if err != nil {
-			return Config{}, fmt.Errorf("orchestrator: parsing TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG: %w", err)
-		}
-		cfg.AllowServiceAccountFromConfig = allowed
+	allowedOverrides, err := parseAllowedOverrides(env("TURNIP_ALLOWED_OVERRIDES"))
+	if err != nil {
+		return Config{}, fmt.Errorf("orchestrator: parsing TURNIP_ALLOWED_OVERRIDES: %w", err)
 	}
+	cfg.AllowedOverrides = allowedOverrides
 
 	return cfg, nil
 }

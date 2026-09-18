@@ -8,13 +8,22 @@ common failure, and what to do about it.
 **Symptom**: a PR comment saying configuration is missing, or a parse
 error with a line number, instead of a plan.
 
-- **`turnip.yaml` not found**: the comment links to setup docs. Add
-  `turnip.yaml` (or `.github/turnip.yaml`) to the repository root.
+- **No configuration found**: the comment names both accepted locations.
+  Add `.turnip/config.yaml`, or `turnip.yaml` in the repository root.
+  Only the `.yaml` extension is read, and `.github/turnip.yaml` — accepted
+  by turnip before schema `v1alpha2` — is not read any more.
 - **Invalid YAML syntax**: the comment includes the parse error and line
   number — fix that line and push again (a new commit re-triggers the
   plan).
+- **Unrecognized field**: the comment names the key and its line. turnip
+  checks every field it defines by name, so this is usually a misspelling
+  or a setting written at the wrong level (the one place arbitrary keys
+  are allowed is inside `with`).
+- **Unsupported `schemaVersion`**: reported on its own, without also
+  listing the fields of the older schema. Migrate the file rather than
+  changing the version alone — the field names changed too.
 - **Invalid project configuration**: the comment names the specific
-  project and the validation error (e.g. an unsupported `tool` value, or
+  project and the validation error (e.g. an unsupported tool in `uses`, or
   a project missing its required `directory`). Fix that project's entry.
 
 ## Lock contention
@@ -86,9 +95,11 @@ or nothing happens for several minutes before a timeout is reported.
 stdout/stderr attached.
 
 - **Tool not installed**: the comment names the missing tool/exit code.
-  This means the requested `version` in `turnip.yaml` isn't one
-  `internal/jobs`'s init-container provisioning recognizes — check the
-  project's `version` value against what's actually supported.
+  A *malformed* version never gets this far — it's rejected when the file
+  is parsed, as a validation comment naming `uses`. What reaches here is a
+  well-formed version the vendor doesn't actually publish, so the
+  initContainer had nothing to pull: check the `@version` in `uses`
+  against the tool vendor's own published image tags.
 - **Tool command failed** (e.g. `terraform plan` itself errored): the
   full stdout/stderr is in the PR comment — this is the tool telling you
   something real about your infrastructure code, not a turnip failure.

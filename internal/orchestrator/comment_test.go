@@ -145,7 +145,10 @@ func TestHandleIssueComment_MissingConfigStillPostsComment(t *testing.T) {
 	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip diff", "alice")))
 
 	require.Len(t, client.postedComments(), 1)
-	assert.Contains(t, client.postedComments()[0], "not found")
+	// Asserted on the path rather than the phrasing: where to put the file
+	// is the part of this message that has to be right, and it survives a
+	// rewording that a substring like "not found" does not.
+	assert.Contains(t, client.postedComments()[0], ".turnip/config.yaml")
 }
 
 func TestHandleIssueComment_NonCollaboratorRejectedBeforeAnyCommand(t *testing.T) {

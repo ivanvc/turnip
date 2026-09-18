@@ -74,13 +74,13 @@ type OperationParams struct {
 // constructing anything else, returning an error immediately — and building
 // no part of the Job spec — on an unrecognized version (Requirement 8.4).
 func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) {
-	version, err := resolveVersion(project.Tool, project.Config["version"])
+	version, err := resolveVersion(project.Tool, project.ToolVersion)
 	if err != nil {
 		return nil, err
 	}
 	ti := toolImages[project.Tool]
 
-	toolConfig, err := json.Marshal(project.Config)
+	toolConfig, err := json.Marshal(project.With)
 	if err != nil {
 		return nil, fmt.Errorf("jobs: marshal tool config: %w", err)
 	}
@@ -129,10 +129,10 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 	// documented escape, and an escaped reference is left alone whether
 	// or not the name it mentions exists. Sorted so the spec is
 	// deterministic and diffable.
-	for _, name := range slices.Sorted(maps.Keys(project.Env)) {
+	for _, name := range slices.Sorted(maps.Keys(project.Runner.Env)) {
 		env = append(env, corev1.EnvVar{
 			Name:  name,
-			Value: strings.ReplaceAll(project.Env[name], "$", "$$"),
+			Value: strings.ReplaceAll(project.Runner.Env[name], "$", "$$"),
 		})
 	}
 

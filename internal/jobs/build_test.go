@@ -15,8 +15,9 @@ func testProject(tool string) config.Project {
 	return config.Project{
 		Name:      "web",
 		Directory: "infra/web",
+		Uses:      tool,
 		Tool:      tool,
-		Config:    map[string]string{"environment": "staging"},
+		With:      map[string]string{"environment": "staging"},
 	}
 }
 
@@ -128,11 +129,36 @@ func TestBuildJob_ToolsAndWorkspaceVolumes(t *testing.T) {
 	assert.ElementsMatch(t, []corev1.VolumeMount{toolsMount, workspaceMount}, spec.Containers[0].VolumeMounts)
 }
 
+// The one behavioural change in separating `with` from the map it
+// replaced: TURNIP_TOOL_CONFIG used to carry the whole `config` map,
+// including two keys no Plugin ever read — the tool version, resolved by
+// this package, and the ServiceAccount, resolved by the orchestrator. It
+// now carries `with` alone, and both of those reach the Job spec through
+// their own fields instead.
+func TestBuildJob_ToolConfigCarriesOnlyWith(t *testing.T) {
+	project := testProject("helmfile")
+	project.ToolVersion = "1.7.4"
+	project.Runner.ServiceAccount = "turnip-runner"
+
+	job, err := BuildJob(project, testParams())
+	require.NoError(t, err)
+
+	env := envMap(job.Spec.Template.Spec.Containers[0])
+	assert.JSONEq(t, `{"environment":"staging"}`, env["TURNIP_TOOL_CONFIG"])
+	assert.NotContains(t, env["TURNIP_TOOL_CONFIG"], "version",
+		"the tool version is this package's to resolve, not a Plugin's to read")
+	assert.NotContains(t, env["TURNIP_TOOL_CONFIG"], "serviceAccount",
+		"nor is the Pod's identity")
+
+	assert.Contains(t, job.Spec.Template.Spec.InitContainers[0].Image, "1.7.4",
+		"the pinned version reaches the initContainer's image tag")
+}
+
 // A Project's env reaches the tool as ordinary Job-spec variables
 // (Decision 3): no transport, no Runner-side parsing.
 func TestBuildJob_ProjectEnvOnRunnerContainer(t *testing.T) {
 	project := testProject("helmfile")
-	project.Env = map[string]string{"AWS_PROFILE": "prod", "HELM_EXPERIMENTAL": "true"}
+	project.Runner.Env = map[string]string{"AWS_PROFILE": "prod", "HELM_EXPERIMENTAL": "true"}
 
 	job, err := BuildJob(project, testParams())
 	require.NoError(t, err)
@@ -148,7 +174,7 @@ func TestBuildJob_ProjectEnvOnRunnerContainer(t *testing.T) {
 // and an escaped reference is left alone whether or not the name exists.
 func TestBuildJob_ProjectEnvValuesAreEscapedAgainstExpansion(t *testing.T) {
 	project := testProject("helmfile")
-	project.Env = map[string]string{
+	project.Runner.Env = map[string]string{
 		"EXPANDABLE": "$(TURNIP_TOOL) and $HOME",
 		"PLAIN":      "no dollars here",
 	}
@@ -165,14 +191,14 @@ func TestBuildJob_ProjectEnvValuesAreEscapedAgainstExpansion(t *testing.T) {
 // is noise in every diff of it.
 func TestBuildJob_ProjectEnvInSortedKeyOrder(t *testing.T) {
 	project := testProject("helmfile")
-	project.Env = map[string]string{"CHARLIE": "3", "ALPHA": "1", "BRAVO": "2"}
+	project.Runner.Env = map[string]string{"CHARLIE": "3", "ALPHA": "1", "BRAVO": "2"}
 
 	job, err := BuildJob(project, testParams())
 	require.NoError(t, err)
 
 	var got []string
 	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
-		if _, ok := project.Env[e.Name]; ok {
+		if _, ok := project.Runner.Env[e.Name]; ok {
 			got = append(got, e.Name)
 		}
 	}
@@ -210,7 +236,7 @@ func TestBuildJob_RunnerImageFromParams(t *testing.T) {
 
 func TestBuildJob_UnrecognizedVersionReturnsErrorAndNoJob(t *testing.T) {
 	project := testProject("terraform")
-	project.Config = map[string]string{"version": "not-a-real-version"}
+	project.ToolVersion = "not-a-real-version"
 
 	job, err := BuildJob(project, testParams())
 	require.Error(t, err)
@@ -222,7 +248,7 @@ func TestBuildJob_UnrecognizedVersionReturnsErrorAndNoJob(t *testing.T) {
 func TestBuildJob_ExplicitVersionSelectsMatchingImage(t *testing.T) {
 	project := testProject("terraform")
 	wantVersion := toolImages["terraform"].versions[1]
-	project.Config = map[string]string{"version": wantVersion}
+	project.ToolVersion = wantVersion
 
 	job, err := BuildJob(project, testParams())
 	require.NoError(t, err)
@@ -239,7 +265,7 @@ func TestBuildJob_VersionNotInExampleListStillBuilds(t *testing.T) {
 	project := testProject("terraform")
 	const notInList = "9.9.9"
 	require.NotContains(t, toolImages["terraform"].versions, notInList)
-	project.Config = map[string]string{"version": notInList}
+	project.ToolVersion = notInList
 
 	job, err := BuildJob(project, testParams())
 	require.NoError(t, err)

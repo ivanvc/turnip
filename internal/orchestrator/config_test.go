@@ -81,21 +81,32 @@ func TestConfigFromEnv_RunnerServiceAccountOptional(t *testing.T) {
 	assert.Empty(t, cfg.RunnerServiceAccount, "unset must not be a missing-variable error")
 }
 
-func TestConfigFromEnv_ServiceAccountFromConfigDefaultsFalse(t *testing.T) {
+// Unset must keep behaving exactly as turnip did before the setting
+// existed: a repository could never choose its own ServiceAccount.
+func TestConfigFromEnv_AllowedOverridesDefaultsToNothing(t *testing.T) {
 	cfg, err := ConfigFromEnv(envMap(nil))
 	require.NoError(t, err)
-	assert.False(t, cfg.AllowServiceAccountFromConfig)
+	assert.Empty(t, cfg.AllowedOverrides)
 }
 
-func TestConfigFromEnv_ServiceAccountFromConfigParsesTrue(t *testing.T) {
-	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG": "true"}))
+func TestConfigFromEnv_AllowedOverridesParsesList(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(map[string]string{
+		"TURNIP_ALLOWED_OVERRIDES": " runner.serviceAccount ",
+	}))
 	require.NoError(t, err)
-	assert.True(t, cfg.AllowServiceAccountFromConfig)
+	assert.True(t, cfg.AllowedOverrides[overrideServiceAccount], "surrounding whitespace is trimmed")
 }
 
-func TestConfigFromEnv_ServiceAccountFromConfigInvalidValue(t *testing.T) {
-	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG": "not-a-bool"}))
-	assert.Error(t, err)
+// An unrecognized path would gate nothing while looking like it gated
+// something — the operator-side version of the silently-ignored key this
+// schema version removes from turnip.yaml.
+func TestConfigFromEnv_AllowedOverridesUnknownPathIsAnError(t *testing.T) {
+	_, err := ConfigFromEnv(envMap(map[string]string{
+		"TURNIP_ALLOWED_OVERRIDES": "runner.serviceaccount",
+	}))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "runner.serviceaccount", "the error names what was written")
+	assert.Contains(t, err.Error(), overrideServiceAccount, "and what was probably meant")
 }
 
 func TestConfigFromEnv_MissingRunnerImage(t *testing.T) {

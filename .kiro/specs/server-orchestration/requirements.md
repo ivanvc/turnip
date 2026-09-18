@@ -457,12 +457,16 @@ the Job — so that horizontal scaling doesn't break correctness.
     configuration — and SHALL do so before acquiring any Lock for that
     Target, so a refusal never leaves a Lock held for an Operation that
     never runs
-11. WHERE a Project sets `config.serviceAccount` in turnip.yaml, THE
-    Server SHALL honor it only IF its own
-    `TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG` is true; otherwise
-    THE Server SHALL reject that Target with a comment naming the Project
-    and the requested ServiceAccount, and SHALL NOT create a Runner Job
-    for it
+11. WHERE a Project sets `runner.serviceAccount` in its configuration
+    file, THE Server SHALL honor it only IF its own
+    `TURNIP_ALLOWED_OVERRIDES` includes that path; otherwise THE Server
+    SHALL reject that Target with a comment naming the Project, the
+    requested ServiceAccount, and the variable that would permit it, and
+    SHALL NOT create a Runner Job for it. Amended by
+    `project-schema-v1alpha2`, which replaced the single
+    `TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG` boolean with a list
+    of permitted paths, since a boolean per setting does not generalise as
+    settings accumulate
 
 ### Requirement 8: Runner Job Start Timeout and Diagnosis
 
