@@ -79,11 +79,36 @@ func initSubmodules(ctx context.Context, run gitRunner, dir, repoURL, token, mod
 
 	if out, err := run(ctx, "", "git", args, submoduleConfigEnv(urls, parentHost, token)); err != nil {
 		return fmt.Errorf(
-			"runner: clone: git %s: %w: %s",
-			strings.Join(redactArgs(args, authedURL, token), " "), err, redact(string(out), authedURL, token),
+			"runner: clone: git %s: %w: %s%s",
+			strings.Join(redactArgs(args, authedURL, token), " "), err,
+			redact(string(out), authedURL, token), accessHint(string(out)),
 		)
 	}
 	return nil
+}
+
+// accessHint explains the one thing git's own message cannot.
+//
+// GitHub answers "Repository not found" both for a repository that does
+// not exist and for one the credential cannot see — it deliberately does
+// not distinguish them, so as not to leak which private repositories
+// exist. Read literally, the message sends the reader off to check a
+// spelling that is usually correct.
+//
+// By this point turnip has already rewritten the URL to carry the
+// installation token, so the fetch was authenticated. The remaining
+// explanation is almost always that the GitHub App is not installed on the
+// submodule's repository: an installation token reaches only the
+// repositories its installation was granted, and an installation set to
+// "only select repositories" commonly covers the parent but not a shared
+// chart or module repository beside it.
+func accessHint(out string) string {
+	if !strings.Contains(out, "Repository not found") {
+		return ""
+	}
+	return "\nhint: turnip authenticated this fetch with its installation token, so " +
+		"\"Repository not found\" most likely means the GitHub App is not installed on " +
+		"that repository rather than that it does not exist — check the App's repository access"
 }
 
 // readSubmoduleURLs asks git for the submodule URLs rather than parsing

@@ -359,3 +359,45 @@ func TestInitSubmodules_FetchFailureFailsTheCloneNamingTheSubmodule(t *testing.T
 	require.Error(t, err, "an unfetchable submodule must fail the clone, not be skipped")
 	assert.Contains(t, err.Error(), "charts", "git's message names the submodule and must reach the caller")
 }
+
+// Found in the pilot: GitHub answers "Repository not found" both for a
+// repository that does not exist and for one the credential cannot see, so
+// the bare message sends the reader to check a spelling that is correct.
+// The fetch was already authenticated by this point, so turnip names the
+// likely cause instead.
+func TestInitSubmodules_NotFoundSuggestsTheAppIsNotInstalled(t *testing.T) {
+	dir := t.TempDir()
+	writeGitmodules(t, dir)
+
+	run, _ := recordingGit(func(args []string) ([]byte, error) {
+		if slices.Contains(args, "config") {
+			return []byte("submodule.charts.url https://github.com/owner/charts\n"), nil
+		}
+		return []byte("remote: Repository not found.\n" +
+			"fatal: repository 'https://github.com/owner/charts/' not found"), errors.New("exit status 1")
+	})
+
+	err := initSubmodules(context.Background(), run, dir, "https://github.com/owner/repo", "tok", config.SubmodulesTopLevel)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not installed",
+		"a 404 on an authenticated fetch should point at the App's repository access")
+}
+
+// The hint must not attach itself to unrelated failures.
+func TestInitSubmodules_OtherFailuresCarryNoAccessHint(t *testing.T) {
+	dir := t.TempDir()
+	writeGitmodules(t, dir)
+
+	run, _ := recordingGit(func(args []string) ([]byte, error) {
+		if slices.Contains(args, "config") {
+			return []byte("submodule.charts.url https://github.com/owner/charts\n"), nil
+		}
+		return []byte("fatal: unable to access: server certificate verification failed"), errors.New("exit status 1")
+	})
+
+	err := initSubmodules(context.Background(), run, dir, "https://github.com/owner/repo", "tok", config.SubmodulesTopLevel)
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "not installed")
+}

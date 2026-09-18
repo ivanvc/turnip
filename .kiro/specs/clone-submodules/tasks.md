@@ -260,6 +260,25 @@ the stage before it compiles.
     `gofmt -l .` clean, and the real golangci-lint v2 via
     `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...`
 
+- [x] 14. Amendment - name the likely cause of "Repository not found"
+  - Found in the pilot after the slice was complete: a private submodule on
+    the repository's *own* host failed with git's bare
+    `remote: Repository not found`. Read literally that says the repository
+    does not exist, when it actually means the credential cannot see it —
+    GitHub answers identically for both, so as not to leak which private
+    repositories exist
+  - turnip has already rewritten the URL to carry the installation token by
+    that point, so the fetch was authenticated. The remaining explanation is
+    almost always that the App is not installed on the submodule's
+    repository; an installation set to "only select repositories" commonly
+    covers the parent but not a shared chart or module repository beside it
+  - This is the same class of misleading message the slice exists to
+    remove — `Error: repo .. not found` was the original one — so it
+    belongs here rather than in a later slice
+  - The hint is attached only to a "Repository not found" output, with a
+    test pinning that an unrelated failure does not acquire it
+  - _Requirements: 4.1_
+
 ## Notes
 
 - **No new dependencies.** The rewrite is git configuration, the mode is a

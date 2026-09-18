@@ -99,6 +99,15 @@ or nothing happens for several minutes before a timeout is reported.
   `clone.submodules: none` in its own config file. A submodule nested
   inside another needs `recursive`; `top-level` fetches only the first
   layer.
+- **`remote: Repository not found` for a submodule on the same host**:
+  the fetch *was* authenticated — turnip rewrites submodule URLs to carry
+  the installation token — so this almost never means the repository is
+  missing or misspelled. GitHub returns the same answer for a repository
+  the credential cannot see, deliberately, so it doesn't reveal which
+  private repositories exist. Check that the **GitHub App is installed on
+  the submodule's repository**: an installation set to "only select
+  repositories" commonly includes the parent but not a shared chart or
+  module repository next to it. turnip appends a hint saying as much.
 - **`submodule ... is hosted on <host>, which this installation token
   cannot authenticate`**: the submodule lives somewhere the GitHub App
   isn't installed — another forge, or a self-hosted server. turnip has
