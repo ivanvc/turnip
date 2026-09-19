@@ -94,6 +94,7 @@ func pullRequestWebhookEvent(e *gh.PullRequestEvent) *WebhookEvent {
 			HeadSHA: e.GetPullRequest().GetHead().GetSHA(),
 			BaseRef: e.GetPullRequest().GetBase().GetRef(),
 			HeadRef: e.GetPullRequest().GetHead().GetRef(),
+			Draft:   e.GetPullRequest().GetDraft(),
 		},
 		Installation: Installation{ID: e.GetInstallation().GetID()},
 	}

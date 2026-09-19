@@ -27,6 +27,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 16 | Cloning Submodules | `clone-submodules` | Complete | Slice 5 |
 | 17 | Pull Request Comment Output | `comment-output` | Complete | Slices 4, 6 |
 | 18 | Hold a Lock Only When There Is Something to Apply | `lock-release-rules` | Not Started | Slices 3, 6 |
+| 19 | Draft Pull Requests | `draft-pull-requests` | Complete | Slices 4, 6 |
 
 ## Slice Details
 
@@ -574,6 +575,59 @@ unlock and drop out of the "holds locks on …" footer on their own —
 no renderer change, no orchestrator change beyond the release itself.
 Slice 17 was built that way deliberately, and a test there pins each
 lock outcome so a regression here would be caught rather than rendered.
+
+---
+
+### Slice 19: Draft Pull Requests
+
+**Goal**: Stop turnip acting on its own for work its author has marked
+unfinished.
+
+**What's wrong today**: GitHub sends `opened` for a draft pull request
+and `synchronize` on every push to one, so turnip plans drafts exactly as
+it plans anything else — running IaC against a real cluster, holding
+cloud credentials, and taking a Lock on every matched Project. Because a
+plan's Lock is held until applied, unlocked, or the pull request closes,
+a developer iterating in a draft blocks everyone else from planning those
+Projects without being told.
+
+**turnip has no concept of a draft at all.** `github.PullRequest` carries
+`Number`, `HeadSHA`, `BaseRef` and `HeadRef`; the webhook parser reads no
+draft flag. So this is not a condition to add to an existing check — the
+information never reaches the orchestrator, the same shape of gap Slice
+16 met with `Target` and `*config.Config`.
+
+**Delivers**: a `Draft` field carried from the webhook payload; the
+automatic plan skipped for drafts at no cost beyond receiving the
+webhook; `ready_for_review` handled so marking a pull request ready
+produces a plan; and `closed` left untouched so a draft's Locks are still
+released.
+
+**Prior art, diverged from deliberately**: Atlantis gates this behind
+`--allow-draft-prs`, defaulting to `false`, and treats `ready_for_review`
+as a freshly opened pull request. Both behaviours are adopted. **The flag
+is not**: planning work its author declared unfinished has no
+constituency, and anyone who wants it can comment. A setting nobody
+should switch on is a setting not worth having.
+
+**Only the automatic plan observes it.** A comment trigger on a draft
+runs normally, takes its Lock, stores plan data, and is appliable — being
+a draft changes *when turnip acts on its own*, never what it is capable
+of. That is structural rather than enforced: the `issue_comment` path
+builds a `PullRequest` carrying only `Number`, so the comment path cannot
+consult the flag even by accident.
+
+**The decision worth reading** is where the guard goes. It is the first
+statement of the plan-trigger arm, not a check before the switch — the
+natural-looking "if it's a draft, ignore it" placement skips `closed`
+too, and silently stops releasing Locks for exactly the pull requests
+most likely to be abandoned rather than closed cleanly.
+
+**Global requirements covered**: **amends Requirement 4.1**, which says
+"WHEN a PR is opened, THE Server SHALL trigger plan Operations for all
+matching Projects" without qualification, and GitHub sends `opened` for
+drafts. Requirement 4.2's `synchronize` clause is amended for the same
+reason.
 
 ---
 

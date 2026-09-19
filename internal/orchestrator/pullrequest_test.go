@@ -142,6 +142,109 @@ func TestHandlePullRequest_DispatchesOnAction(t *testing.T) {
 	assert.Empty(t, fakeClient.postedComments())
 }
 
+// A draft is work its author marked unfinished, so turnip does not act on
+// it of its own accord.
+//
+// The assertion is the *absence of side effects*, not that the call
+// returned nil — a guard in the wrong place would also return nil. What
+// proves the guard ran early is that turnip.yaml was never fetched:
+// handlePlanTrigger's first act is that lookup, so an empty getFileCalls
+// means nothing downstream of the guard executed (Requirement 1.4).
+func TestHandlePullRequest_DraftIsNotPlannedAutomatically(t *testing.T) {
+	for _, action := range []string{"opened", "synchronize"} {
+		t.Run(action, func(t *testing.T) {
+			o, _ := testPullRequestOrchestrator(t)
+			fakeClient := &fakePRClient{
+				files:         map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
+				modifiedFiles: []string{"a/main.tf"},
+			}
+			o.installationClient = func(id int64) github.GitHubClient { return fakeClient }
+
+			event := &github.WebhookEvent{
+				Action:       action,
+				Repository:   github.Repository{Owner: "owner", Name: "repo"},
+				PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc", Draft: true},
+				Installation: github.Installation{ID: 1},
+			}
+			require.NoError(t, o.HandlePullRequest(context.Background(), event))
+
+			assert.Empty(t, fakeClient.postedComments(), "a skipped draft posts nothing")
+			assert.Empty(t, fakeClient.getFileCallLog(),
+				"a skipped draft must not even fetch turnip.yaml")
+		})
+	}
+}
+
+// Marking a pull request ready produces a plan. GitHub sends
+// ready_for_review with the payload's draft field already false, so the
+// same guard lets it through — no special case, no remembered state.
+//
+// Without this action handled, skipping drafts would be a trap: a draft
+// marked ready would sit with no plan until someone pushed again.
+func TestHandlePullRequest_ReadyForReviewPlans(t *testing.T) {
+	client := newTestRedisClient(t)
+	fakeClient := &fakePRClient{
+		files:         map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
+		modifiedFiles: []string{"a/main.tf"},
+	}
+	o := &Orchestrator{
+		locks:              &fakeLockManager{},
+		jobs:               &fakeJobCreator{t: t, redis: client, result: github.ProjectResult{Success: true, ProjectName: "helm-a"}},
+		plugins:            testRegistry(),
+		records:            newRecordStore(client),
+		redis:              client,
+		installationClient: func(id int64) github.GitHubClient { return fakeClient },
+	}
+
+	event := &github.WebhookEvent{
+		Action:       "ready_for_review",
+		Repository:   github.Repository{Owner: "owner", Name: "repo"},
+		PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc", Draft: false},
+		Installation: github.Installation{ID: 1},
+	}
+	require.NoError(t, o.HandlePullRequest(context.Background(), event))
+
+	require.Eventually(t, func() bool { return len(fakeClient.postedComments()) >= 1 }, 2*time.Second, 10*time.Millisecond)
+	assert.Contains(t, fakeClient.postedComments()[0], "helm-a")
+}
+
+// The one regression this slice can introduce, and it is silent: hoisting
+// the draft guard above the switch would skip "closed" too, so a draft's
+// Locks would never be released — for exactly the pull requests most
+// likely to be abandoned rather than closed cleanly.
+func TestHandlePullRequest_ClosedDraftStillReleasesLocks(t *testing.T) {
+	var released []string
+	locks := &fakeLockManager{
+		isLockedByPRFunc: func(ctx context.Context, projectKey string, prNumber int) (bool, error) {
+			return true, nil
+		},
+		releaseLockFunc: func(ctx context.Context, projectKey string, prNumber int) error {
+			released = append(released, projectKey)
+			return nil
+		},
+	}
+	client := newTestRedisClient(t)
+	fakeClient := &fakePRClient{files: map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)}}
+	o := &Orchestrator{
+		locks:              locks,
+		plugins:            testRegistry(),
+		records:            newRecordStore(client),
+		redis:              client,
+		installationClient: func(id int64) github.GitHubClient { return fakeClient },
+	}
+
+	event := &github.WebhookEvent{
+		Action:       "closed",
+		Repository:   github.Repository{Owner: "owner", Name: "repo"},
+		PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc", Draft: true},
+		Installation: github.Installation{ID: 1},
+	}
+	require.NoError(t, o.HandlePullRequest(context.Background(), event))
+
+	assert.NotEmpty(t, released,
+		"closing a draft must release its Locks — the draft guard must not reach this arm")
+}
+
 func TestHandlePlanTrigger_ZeroMatchedProjectsTakesNoAction(t *testing.T) {
 	o, _ := testPullRequestOrchestrator(t)
 	client := &fakePRClient{

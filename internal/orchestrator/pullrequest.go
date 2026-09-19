@@ -17,7 +17,31 @@ func (o *Orchestrator) HandlePullRequest(ctx context.Context, event *github.Webh
 	client := o.installationClient(event.Installation.ID)
 
 	switch event.Action {
-	case "opened", "synchronize":
+	case "opened", "synchronize", "ready_for_review":
+		// A draft is work its author has marked unfinished, so turnip
+		// does not act on it of its own accord: no Lock, no Runner Job,
+		// no comment. A comment trigger still works — being a draft
+		// changes when turnip acts on its own, never what it can be
+		// asked to do.
+		//
+		// The test lives here rather than before the switch on purpose.
+		// Guarding the whole handler would skip "closed" too, and a
+		// draft's Locks would stop being released — silently, and for
+		// exactly the pull requests most likely to be abandoned rather
+		// than closed cleanly. Inside the arm, "closed" is unreachable
+		// from it by construction.
+		//
+		// It also returns before handlePlanTrigger, whose first act is
+		// fetching turnip.yaml, so a skipped draft costs one webhook and
+		// no API call.
+		//
+		// "ready_for_review" needs no special case: GitHub sends it with
+		// the payload's draft field already false, so it falls through
+		// this test and plans as though the pull request had just been
+		// opened.
+		if event.PullRequest.Draft {
+			return nil
+		}
 		return o.handlePlanTrigger(ctx, client, event)
 	case "closed":
 		return o.handlePRClosed(ctx, client, event)

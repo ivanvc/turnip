@@ -26,6 +26,15 @@ type PullRequest struct {
 	HeadSHA string
 	BaseRef string
 	HeadRef string
+
+	// Draft reports whether GitHub considers this pull request a draft.
+	// It is read on exactly one path — the automatic plan, which skips
+	// drafts — and it is false on every issue_comment event, where only
+	// Number is populated. A comment trigger therefore cannot consult it
+	// even by accident, which is what keeps "drafts change when turnip
+	// acts on its own, never what it can be asked to do" structural
+	// rather than a rule to remember.
+	Draft bool
 }
 
 type Comment struct {

@@ -17,6 +17,23 @@ consolidated PR comment summarizing every project touched by that PR
 (a verdict line up top, then one collapsible section per project) — see
 "What you'll see on the PR" below.
 
+### Draft pull requests
+
+turnip does **not** plan a draft automatically. Opening one, or pushing to
+one, does nothing — no check run, no comment, no lock.
+
+Marking it ready for review plans it, exactly as though it had just been
+opened. You do not need an extra push.
+
+You can still ask for a plan on a draft at any time by commenting
+(`/turnip plan`, `/helmfile diff`, and so on). A comment-triggered plan on
+a draft behaves like any other: it takes the project's lock, stores its
+plan data, and can be applied or unlocked. Being a draft changes *when
+turnip acts on its own* — never what you can ask it to do.
+
+This is not configurable. There is no setting to turn automatic plans on
+for drafts, so it isn't worth looking for one.
+
 ## Triggering by comment
 
 Comment on the PR:

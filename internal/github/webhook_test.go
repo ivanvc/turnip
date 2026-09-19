@@ -88,6 +88,73 @@ func testPullRequestPayload(t *testing.T) []byte {
 	return payload
 }
 
+// A pull_request payload's draft flag must survive parsing: it is the
+// only thing distinguishing a draft from any other pull request, since
+// GitHub sends the same "opened" and "synchronize" actions for both.
+func TestWebhookHandler_PullRequestCarriesDraftFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		draft bool
+	}{
+		{"draft", true},
+		{"not a draft", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := &recordingEventHandler{}
+			h := NewWebhookHandler(testWebhookSecret, handler)
+
+			req := signedWebhookRequest(t, "pull_request", draftPullRequestPayload(t, tc.draft))
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			require.NotNil(t, handler.lastEvent)
+			require.NotNil(t, handler.lastEvent.PullRequest)
+			assert.Equal(t, tc.draft, handler.lastEvent.PullRequest.Draft)
+		})
+	}
+}
+
+// An issue_comment event populates Number alone, so its PullRequest can
+// never carry a draft flag. That is what makes "only the automatic plan
+// observes draft state" a property of the parsing rather than a rule the
+// orchestrator has to remember.
+func TestWebhookHandler_IssueCommentCarriesNoDraftFlag(t *testing.T) {
+	handler := &recordingEventHandler{}
+	h := NewWebhookHandler(testWebhookSecret, handler)
+
+	req := signedWebhookRequest(t, "issue_comment", testIssueCommentPayload(t, true))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, handler.lastEvent.PullRequest)
+	assert.False(t, handler.lastEvent.PullRequest.Draft,
+		"a comment event carries no draft state to consult")
+}
+
+func draftPullRequestPayload(t *testing.T, draft bool) []byte {
+	t.Helper()
+	event := &gh.PullRequestEvent{
+		Action: gh.Ptr("opened"),
+		Number: gh.Ptr(42),
+		PullRequest: &gh.PullRequest{
+			Head:  &gh.PullRequestBranch{SHA: gh.Ptr("abc123"), Ref: gh.Ptr("feature")},
+			Base:  &gh.PullRequestBranch{Ref: gh.Ptr("main")},
+			Draft: gh.Ptr(draft),
+		},
+		Repo: &gh.Repository{
+			Name:    gh.Ptr("repo"),
+			Owner:   &gh.User{Login: gh.Ptr("owner")},
+			HTMLURL: gh.Ptr("https://github.com/owner/repo"),
+		},
+		Installation: &gh.Installation{ID: gh.Ptr(int64(555))},
+	}
+	payload, err := json.Marshal(event)
+	require.NoError(t, err)
+	return payload
+}
+
 func testIssueCommentPayload(t *testing.T, onPullRequest bool) []byte {
 	t.Helper()
 	issue := &gh.Issue{Number: gh.Ptr(42)}
