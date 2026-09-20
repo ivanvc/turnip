@@ -36,6 +36,8 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 25 | Authenticating the Runner to the Server | `runner-authentication` | Not Started | Slices 5, 6 |
 | 26 | Real-Time Operation Output | `operation-output-stream` | Not Started | Slices 5, 6 |
 | 27 | Authenticated and Encrypted Redis | `redis-tls-auth` | Not Started | Slices 3, 10 |
+| 28 | Seeing and Dropping Locks Without Hunting for the PR | `lock-admin-ui` | Not Started | Slices 3, 4 |
+| 29 | Move the Webhook Off the Root Path | `webhook-path` | Not Started | Slices 4, 10 |
 
 ## Slice Details
 
@@ -1242,9 +1244,9 @@ turnip also already has both primitives this needs. `internal/orchestrator/notif
 publishes to a per-Operation Redis channel and subscribes to it from
 another replica, which is exactly the fan-out shape live output requires.
 And `cmd/server/main.go` already serves an HTTP mux (`/healthz`,
-`/readyz`, `/metrics`, with `/` routed to the webhook handler) that a
-`/operations/{id}` route can join — noting that `/` is a catch-all today,
-so route precedence needs care.
+`/readyz`, `/metrics`) that an `/operations/{id}` route can join. Slice 29
+moves the webhook off `/` beforehand, so this slice inherits a mux where
+`/` is no longer a catch-all and route precedence needs no special care.
 
 **What is genuinely missing**: Server-side accumulation. The Runner's
 256 KiB ring buffer is for *stream reconnection* — resending what a
@@ -1460,9 +1462,177 @@ security control, and it is the first thing a prospective operator reads.
 
 **Record the Redis version floor while this is open.** The documentation
 states none today. ACL usernames need Redis ≥ 6 (`AUTH user pass`);
-password-only AUTH works on 5. Slice 26 will need ≥ 5.0 for Streams if it
-takes that route, so the floor is worth stating once, here, rather than
-discovered per-slice.
+password-only AUTH works on 5. Slice 26 has since settled on streams,
+which need ≥ 5.0, so the floor is worth stating once, here, rather than
+rediscovered per slice.
+
+---
+
+### Slice 28: Seeing and Dropping Locks Without Hunting for the PR
+
+**Goal**: List every held Lock on one page, and release one from there —
+instead of opening pull requests one at a time to work out which of them
+is holding the Project you want. Dropping a Lock posts a comment on the
+pull request that held it, so the release is visible to whoever was
+relying on it rather than silently changing the world underneath them.
+
+**Prior art**: Atlantis's `/locks` page, which does exactly this and
+comments on the affected pull request when a lock is discarded. Worth
+copying in shape.
+
+**The data is already there, and needs no schema change.** This is the
+reason the slice is small. `lockKey` is `"lock:" + projectKey`
+(`internal/lock/redis.go:26`) and `projectKey` is `owner/repo/project`
+(`internal/orchestrator/execute.go:20`), so the key *itself* carries
+everything needed to identify a row. The stored `LockData` already holds
+`PRNumber`, `PullRequestURL`, `LockedAt`, `LockedBy`, `HasPlan` and
+`PlanSummary`. A lock table renders from a `SCAN` plus an `MGET` with no
+new fields written anywhere.
+
+**This is the consumer those fields were kept for.** The dead-code sweep
+flagged `LockStatus.LockedAt`, `LockedBy`, `HasPlan` and `PlanSummary` as
+having no production reader, and they were deliberately kept because
+`redis-lock-manager` Requirement 4.3 specifies them — "ahead of their
+consumer, not left behind by one", as the note on the type says. This
+slice is that consumer, which retires the note.
+
+**What is genuinely missing is enumeration.** `LockManager` has no method
+that lists locks — every existing method takes a `projectKey` the caller
+already knows. This slice adds one. It must use `SCAN`, not `KEYS`:
+`KEYS` blocks the server for the length of the keyspace, which on a shared
+Redis punishes every other tenant for turnip's admin page.
+
+**`ReleaseLock`'s signature does not fit an administrative drop.** It
+takes a `prNumber` and refuses with `ErrLockedByOtherPR` when the holder
+is someone else — correct for `/turnip unlock`, typed inside the pull
+request that holds the Lock, but an operator dropping a stuck Lock from a
+list is not acting on behalf of a pull request. Either the caller passes
+the holder's number read back from the Lock (a read-then-act with a
+lost-update window if the Lock changes hands in between) or the interface
+grows an explicit force path. Deciding which is part of this slice, and
+the CAS script already in `internal/lock/scripts.go` is the tool for doing
+it without the window.
+
+**Authorization already has an answer here — reuse it rather than invent
+one.** `handleUnlock` (`internal/orchestrator/comment.go:142`) requires
+`HasWritePermission` on the repository before releasing anything. A drop
+from a web page must clear the same bar, which has a sharp consequence
+for Slice 26's open "who may view" question: a signed, expiring URL is a
+defensible answer for *reading* log output, and is **not** an acceptable
+answer for a mutating control. Anyone holding the link could drop any
+Lock. If this slice and Slice 26 share a UI surface, the identity
+mechanism has to be chosen for this one. Whatever it turns out to be, its
+endpoints belong under the `/github/` prefix Slice 29 establishes — an
+OAuth callback at `/github/oauth/callback`, not loose at the root.
+
+**Posting the comment needs a token that no webhook supplied.** Every
+comment turnip writes today happens inside a webhook flow carrying an
+installation ID. A drop initiated from a browser has no such event, so
+the Server must resolve the installation for `owner/repo` itself before
+it can authenticate the post. That is a small piece of new plumbing, but
+it is new, and it is easy to miss when scoping this as "just a page".
+
+**The webhook moves off the root path first.** Slice 29 does that on its
+own, so neither UI slice has to carry the migration, and so this page can
+be separated from the webhook at the network layer rather than sharing a
+route with it.
+
+**Open questions**:
+
+- **Read-only first?** Listing Locks is useful on its own and carries none
+  of the authorization weight of dropping one. Shipping the list before
+  the button is a defensible split, and would let Slice 26 and this share
+  a viewer without waiting on a mutation story.
+- **What a stale Lock even means.** Slice 18 revisits holding a Lock when
+  there is nothing to apply; if it lands first, some of what this page
+  exists to clean up stops occurring.
+
+---
+
+### Slice 29: Move the Webhook Off the Root Path
+
+**Goal**: Give the webhook an explicit path of its own, so that `/` stops
+being a catch-all and so the webhook can be separated from everything else
+turnip serves.
+
+**Why now, specifically.** The path lives in each GitHub App's own
+settings, so moving it is a manual change per installation. There is
+exactly one installation today, which makes that change a single settings
+edit. This cost only ever grows, and it grows silently: a missed update
+means GitHub's deliveries 404 with nothing on turnip's side to notice —
+no failed webhook, no error, just an automation that quietly stops
+running. Spending it at one installation is the cheapest this will ever
+be.
+
+**The real reason is network separation, not tidiness.** The webhook has
+to be publicly reachable, because GitHub delivers to it from the internet.
+The surfaces Slices 26 and 28 add — live operation output, and a control
+that drops Locks — should not be. While both live under `/`, an Ingress
+cannot tell them apart: path rules are what Ingress controllers route on,
+and method-based routing is something most of them do poorly or not at
+all. Splitting the webhook onto its own path turns "expose the webhook
+publicly, keep the UI internal" into an ordinary Ingress rule instead of a
+controller-specific trick.
+
+**A secondary win worth having anyway.** `mux.Handle("/", ...)`
+(`cmd/server/main.go:85`) hands *every* unmatched path to the webhook
+handler, which then rejects it for failing signature verification. A
+typo'd probe or a stray scan surfaces as a webhook authentication error
+rather than a plain 404, which is misleading in exactly the logs someone
+reads when debugging a webhook.
+
+**The scope is small and fully enumerable**, which is the other reason to
+do it standalone:
+
+| What | Where |
+|---|---|
+| The only mount point | `cmd/server/main.go:85` |
+| Published webhook URL | `docs/configuration.md:452` |
+| Deployment guide references | `docs/deployment.md:39`, `:165` |
+
+Nothing else moves. No test asserts the route — `internal/github`'s
+webhook tests construct the handler directly and never go through the mux
+— and the deploy manifests reference only `/healthz` and `/readyz`, which
+are probe paths and unaffected. A gitignored internal note also mentions
+the URL and should be updated alongside.
+
+`docs/configuration.md:452` needs rewriting rather than adjusting: it
+currently states the root path emphatically, as "the root path (`/`), not
+`/webhook` or any other sub-path", which is the sort of sentence a reader
+trusts precisely because it anticipates the mistake.
+
+**Decisions this slice makes**:
+
+- **The path name is decided: `/github/webhook`.** Namespacing by forge
+  rather than by resource (`/webhook`) costs nothing today and avoids a
+  second published-URL migration if turnip ever accepts deliveries from
+  GitLab, Gitea, or anything else. Forge-first also gives every *other*
+  forge-specific endpoint a home rather than scattering them at the root:
+  Slice 28 needs a GitHub identity to authorize a Lock drop, and an OAuth
+  callback belongs at `/github/oauth/callback`.
+
+  Worth being explicit about what this does and does not buy. The path is
+  the cheap part of supporting a second forge; signature verification is
+  not — GitLab authenticates deliveries with a secret-token header rather
+  than GitHub's HMAC, so each forge needs its own verification path. This
+  is a hedge against renaming a published URL later, not a claim that the
+  rest of multi-forge support is designed for.
+- **Whether `/` keeps accepting deliveries during a transition.**
+  Recommendation: break cleanly. A compatibility shim's entire value is
+  letting many installations migrate on their own schedule, and there are
+  no many. A shim kept past its purpose becomes the code nobody is willing
+  to delete because nobody can prove it is unused.
+- **What `/` serves afterwards.** A 404 today; a UI index once Slice 26 or
+  28 lands. Deciding now only commits to the first.
+
+**This is an operator action as well as a code change.** Deploying it
+without updating the GitHub App's Webhook URL stops deliveries, so the two
+have to happen together — which is the whole argument for doing it while
+"the operator" is one person with one App.
+
+**Ordering**: before Slices 26 and 28. Both want a route on this server,
+and doing this first means neither of them has to carry a migration
+alongside its actual feature.
 
 ---
 
