@@ -19,6 +19,18 @@ var _ rpc.OperationHandler = (*Orchestrator)(nil)
 // 7.7/8.2), and observes Runner Job Start Latency the one time this call
 // is the one that actually performs the started transition (Decision 2
 // in metrics' design.md).
+//
+// The line argument is deliberately unread. The stream itself is
+// load-bearing — the first line arriving is what marks the Operation
+// started, which drives the latency metric above and keeps the sweep from
+// timing it out — while its payload has no consumer yet. That consumer is
+// Slice 26, a real-time output view; the Runner streams every line now so
+// the Server has something to accumulate when it exists.
+//
+// A dead-code sweep will flag this parameter, rpc.LogLine's three fields,
+// and the Runner's 256 KiB ring buffer together. Deleting any of them
+// forecloses that feature, which is why this note is here rather than the
+// obvious tidy-up.
 func (o *Orchestrator) HandleLog(ctx context.Context, operationID string, line rpc.LogLine) error {
 	justStarted, createdAt, err := o.records.MarkStarted(ctx, operationID)
 	if err != nil {

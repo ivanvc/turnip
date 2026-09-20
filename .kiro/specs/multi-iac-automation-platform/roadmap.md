@@ -34,6 +34,8 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 23 | Authorize on Permission Level, Not Call Success | `collaborator-authorization` | Not Started | Slice 4 |
 | 24 | How the Runner Receives Its GitHub Token | `runner-token-delivery` | Not Started | Slices 5, 6 |
 | 25 | Authenticating the Runner to the Server | `runner-authentication` | Not Started | Slices 5, 6 |
+| 26 | Real-Time Operation Output | `operation-output-stream` | Not Started | Slices 5, 6 |
+| 27 | Authenticated and Encrypted Redis | `redis-tls-auth` | Not Started | Slices 3, 10 |
 
 ## Slice Details
 
@@ -1222,6 +1224,198 @@ the Server-side wiring, and `deploy/base/role.yaml` for one new verb —
 `create` on `authentication.k8s.io/tokenreviews`.
 
 **Unblocks Slice 24's option B**, which is circular without it.
+
+---
+
+### Slice 26: Real-Time Operation Output
+
+**Goal**: Let someone watching a long plan or apply see what it is doing
+while it runs, instead of waiting for the comment at the end.
+
+**What already exists, and is the reason this is smaller than it sounds**:
+the Runner already streams every log line to the Server over the existing
+`ExecuteOperation` RPC, and `HandleLog` already receives each one. The
+Server simply drops them. Nothing needs to be added to the Runner, the
+proto, or the Job to get the data flowing — it is already flowing.
+
+turnip also already has both primitives this needs. `internal/orchestrator/notify.go`
+publishes to a per-Operation Redis channel and subscribes to it from
+another replica, which is exactly the fan-out shape live output requires.
+And `cmd/server/main.go` already serves an HTTP mux (`/healthz`,
+`/readyz`, `/metrics`, with `/` routed to the webhook handler) that a
+`/operations/{id}` route can join — noting that `/` is a catch-all today,
+so route precedence needs care.
+
+**What is genuinely missing**: Server-side accumulation. The Runner's
+256 KiB ring buffer is for *stream reconnection* — resending what a
+dropped connection may have lost — not for viewer backfill. A browser
+opening mid-apply needs the output so far, and no component holds it on
+the Server side today.
+
+**Prior art, and turnip can beat it.** Atlantis shipped this as
+"Real-time logs" in v0.18.0 (PR #1937): `GET /jobs/{job-id}` serves an
+xterm.js page, `GET /jobs/{job-id}/ws` the websocket, and the user reaches
+it through the commit status **Details** link rather than the comment
+body. Its mid-run semantics are worth copying exactly — `addChan` drains
+the buffered output into the new channel *before* registering the receiver,
+specifically so backfill cannot interleave with live lines.
+
+What should **not** be copied is where it is stored. Atlantis keeps job
+output in per-process maps, so a browser routed to a replica that did not
+run the job gets `invalid key`; its HA support (Redis locking, external
+plan stores) explicitly does not extend to logs, and its deployment
+manifests still ship `replicas: 1`. turnip is stateless by construction,
+so accumulating into a capped Redis list per Operation gives it
+multi-replica streaming that Atlantis cannot offer.
+
+**Nor should its security defaults be copied.** Atlantis's
+`--websocket-check-origin` defaults to `false` and web auth is off unless
+switched on, so by default any page a user visits can open the job
+websocket and read plan output — mitigated only by job ids being UUIDs.
+Plan output routinely discloses infrastructure detail, so viewer
+authorization is a design question here, not a later hardening pass. It
+belongs with the Backlog's stated-security-model entry.
+
+**Open questions, none of them answered yet**:
+
+- **Retention.** Atlantis clears on pull request close and loses
+  everything on restart. A Redis list with a TTL and a size cap is the
+  obvious turnip shape, but the cap interacts with how much scrollback is
+  worth keeping.
+- **Who may view.** GitHub identity would be the principled answer and is
+  the most work; a signed, expiring URL in the check run is the cheap one.
+- **Entry point.** The check run's Details link is where Atlantis puts it
+  and where a reader already looks; the consolidated comment is the
+  alternative.
+- **Transport.** Websockets are what Atlantis uses, but server-sent events
+  are a simpler fit for output that only flows one way.
+
+**This is why `HandleLog`'s unread parameter and the Runner's ring buffer
+must not be tidied away** — a dead-code sweep flags both, and deleting
+either forecloses this slice. The note in `result.go` says so at the site.
+
+---
+
+### Slice 27: Authenticated and Encrypted Redis
+
+**Goal**: Let turnip connect to a Redis/Valkey that requires AUTH, TLS, or
+both — so that adopting turnip stops being a reason to weaken the
+datastore it depends on.
+
+**The problem is currently written down as advice.**
+`docs/deployment.md` does not merely omit authentication; it instructs
+operators to remove it. A managed instance "works only if you disable its
+AUTH/in-transit-encryption requirement, or put an unauthenticated proxy in
+front of it". That is the deployment guide telling a reader to turn off
+encryption in transit on ElastiCache or Memorystore in order to run this
+project. The instruction is accurate about today's code, which is what
+makes it worth fixing rather than rewording.
+
+**The blast radius is exactly one process**, which is what makes this
+slice small. `cmd/server/main.go:49` holds the only
+`redis.NewClient` in the tree, and `internal/runner` contains no Redis
+reference at all. No Redis credential is threaded into a Job, an env var
+on a Runner Pod, or anything else that a pod executing repository-supplied
+IaC can read. This is therefore *not* another instance of the problem
+Slices 24 and 25 exist to solve — it touches the Server alone.
+
+**Decision 1 — TLS is inferred from the URL scheme rather than a separate
+flag.** `TURNIP_REDIS_ADDR` gains the ability to be a URL:
+`rediss://host:6379` connects over TLS, `redis://host:6379` does not, and
+a bare `host:port` behaves exactly as it does today. go-redis v9.22.0
+already implements precisely this — `ParseURL` accepts both schemes
+(`options.go:674`) and installs a `tls.Config` when the scheme is `rediss`
+(`options.go:706`) — so this is a library feature to adopt, not behaviour
+to hand-roll.
+
+The bare form must keep working, and not only for compatibility's sake:
+`ParseURL` rejects a schemeless value outright, and
+`deploy/overlays/kind/kustomization.yaml:32` ships
+`TURNIP_REDIS_ADDR=redis:6379`. So the address is parsed as a URL only
+when it carries a scheme, and treated as an `Addr` otherwise.
+
+*Alternative considered*: an explicit `TURNIP_REDIS_TLS=true`.
+*Rejected because* it is a second source of truth for a fact the address
+already states, and the two can disagree.
+
+*The tradeoff this accepts*: a one-character typo — `redis://` where
+`rediss://` was meant — silently yields a plaintext connection, and
+"did I actually get TLS?" is no longer answerable by reading the config.
+The slice compensates by making the resolved transport **observable
+rather than inferred twice**: the Server logs the transport it actually
+negotiated at startup, and the readiness surface reports it. A log line
+saying `redis: connected addr=... tls=false auth=none` is what turns a
+silent typo into a visible one.
+
+**Decision 2 — the URI may carry a username; it may never carry a
+password.** A username in the URI is the natural place for it and needs
+no variable of its own (`redis://turnip@host:6379`), which is why this
+slice adds no `TURNIP_REDIS_USERNAME`. A password there must be refused
+at startup, and the reason is specific to turnip's own manifests rather
+than a general principle: `TURNIP_REDIS_ADDR` is delivered as a
+`configMapGenerator` literal in every overlay that sets it
+(`deploy/overlays/kind/kustomization.yaml:32`,
+`deploy/overlays/release/kustomization.yaml:29`, and the note at
+`deploy/base/kustomization.yaml:11`). A password embedded in that value
+therefore lands in a **ConfigMap, not a Secret** — a different RBAC verb,
+a different audit story, and a value that turnip itself would echo into
+the startup log line Decision 1 just introduced.
+
+`ParseURL` will read `rediss://user:pass@host` into `Options.Password`
+without complaint (`options.go:686`), so silence here would quietly defeat
+the split. The startup error should name the alternative, not merely
+refuse.
+
+**Decision 3 — the password arrives by value or by path, with the path
+preferred.** `TURNIP_REDIS_PASSWORD` and `TURNIP_REDIS_PASSWORD_PATH`,
+following the shape `internal/orchestrator/config.go:107-116` already
+established for `TURNIP_GITHUB_PRIVATE_KEY` / `..._PATH`, down to naming
+both in one `missing` entry when neither is set. The path form is the
+recommended one for the same reason it matters for the private key: a
+mounted Secret file is not readable by anything holding pod-read, which is
+the exposure Slice 24 exists to close.
+
+**Decision 4 — `?skip_verify=true` must be refused explicitly.** This is
+the decision that would otherwise be made by accident. `ParseURL` honours
+a `skip_verify` query parameter and writes it straight into
+`TLSConfig.InsecureSkipVerify` (`options.go:882`). Adopting `ParseURL`
+wholesale therefore ships a certificate-verification escape hatch that
+appears nowhere in turnip's own code or documentation — the exact option
+this slice would otherwise have deliberately declined to add, arriving
+through the back door. An escape hatch that disables verification tends to
+become permanent in someone's cluster, and one that is undocumented
+becomes permanent *and* invisible.
+
+Refusing is better than silently forcing it back to `false`: a
+configuration that does not do what it plainly says is its own failure
+mode. Private CAs are served instead by an explicit CA bundle path
+(`TURNIP_REDIS_CA_PATH`), which solves the legitimate case — an internal
+certificate authority — without solving it by not checking.
+
+Usefully, `ParseURL` already errors on query keys it does not recognize
+(`options.go:887`), so turnip needs no typo guard of its own; only the
+keys it recognizes but turnip should not accept need handling.
+
+**What else adopting `ParseURL` quietly brings**, and should be decided
+rather than inherited: a database number from the URL path (`/3`, and a
+`?db=` override), and roughly twenty connection-tuning parameters —
+`dial_timeout`, `pool_size`, `max_retries`, and so on
+(`options.go:850-876`). These are arguably a gain, since turnip exposes no
+pool tuning today. But they mean `TURNIP_REDIS_ADDR` stops being an
+address and becomes a tuning surface, in a ConfigMap, unmentioned in any
+documentation. The slice should either accept them deliberately and
+document them, or restrict the accepted query keys to an allowlist.
+
+**Documentation is part of the slice, not a follow-up.**
+`docs/deployment.md`'s prerequisite 2 (lines 13-28) has to be rewritten
+rather than amended — its current text is an instruction to disable a
+security control, and it is the first thing a prospective operator reads.
+
+**Record the Redis version floor while this is open.** The documentation
+states none today. ACL usernames need Redis ≥ 6 (`AUTH user pass`);
+password-only AUTH works on 5. Slice 26 will need ≥ 5.0 for Streams if it
+takes that route, so the floor is worth stating once, here, rather than
+discovered per-slice.
 
 ---
 
