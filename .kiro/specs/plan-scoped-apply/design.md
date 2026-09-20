@@ -12,17 +12,27 @@ the plan *bytes* a tool produced, and Helmfile produces none:
 |---|---|---|
 | `len(result.PlanData) > 0` | `internal/orchestrator/result.go:113` | `StorePlanData` is never called — the Lock records neither plan data nor summary |
 | `len(data.PlanData) == 0` | `internal/lock/redis.go:94` | `GetPlanData` returns `ErrNoPlanData` |
-| `len(data.PlanData) > 0` | `internal/lock/redis.go:130` | `GetLockStatus` reports `HasPlan` false, so the comment never offers an apply |
+| `len(data.PlanData) > 0` | `internal/lock/redis.go:130` | `GetLockStatus` reports `HasPlan` false — a field stating something untrue, though nothing reads it (see below) |
 
 **The third row was found during implementation, not during design**, and
 is recorded here rather than quietly fixed. This design originally named
-two gates. The third feeds `LockStatus.HasPlan`, which is what the pull
-request comment consults to decide whether to offer an apply at all — so
-fixing only the two would have made an apply reachable while every comment
-kept saying there was no plan to apply. Worth noting as a miss: all three
-are the same expression, and two of them are in the same file, so
-searching for the *expression* rather than reasoning about the two call
-paths would have found it before the design was written.
+two gates; the third feeds `LockStatus.HasPlan`.
+
+**Its consequence was then overstated, which is the more instructive
+error.** An earlier version of this paragraph claimed that third gate is
+what a pull request comment consults to decide whether to offer an apply,
+so that fixing only two would leave every comment insisting there was no
+plan. That is false. `LockStatus.HasPlan` has **no production reader at
+all**: both callers of `GetLockStatus` use only `Locked` and `PRNumber`,
+and `nextSteps` decides from the `ProjectResult`'s own fields. The gate is
+still worth correcting — a field that reports something false is a trap
+for the first caller that reads it — but nothing is misled today.
+
+Two lessons, and the second is the one that keeps recurring in this slice:
+all three gates are the same expression and two sit in the same file, so
+searching for the *expression* would have found them before the design was
+written; and a claimed consequence needs its consumer checked rather than
+assumed.
 
 So a `/helmfile diff` acquires a Lock and stores nothing in it, and the
 apply that follows is refused with *"no plan data stored; a new plan is

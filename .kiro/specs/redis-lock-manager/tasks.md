@@ -166,11 +166,15 @@ all three, then the package doc update, then tests (unit against
   - **The rule this replaces was wrong in three places, not two.** "Empty
     `PlanData` means no plan data" lived in `GetPlanData`, in the storage
     condition upstream, and — found only during implementation — in
-    `GetLockStatus`, which derives `LockStatus.HasPlan` and so decides
-    whether a pull request comment offers an apply at all. Fixing only the
-    first two would have made an apply reachable while every comment kept
-    saying there was no plan to apply. All three now test the recorded
-    fact; the Data Model and Edge Cases sections are amended to match
+    `GetLockStatus`, which derives `LockStatus.HasPlan`. All three now
+    test the recorded fact; the Data Model and Edge Cases sections are
+    amended to match
+  - **The third one changes nothing observable today.** An earlier version
+    of this entry claimed it decided whether a pull request comment offers
+    an apply; that was wrong. `LockStatus.HasPlan` has no production
+    reader — both `GetLockStatus` callers use only `Locked` and
+    `PRNumber`. It is corrected so the field stops reporting something
+    false, not because a reader was misled
   - A Lock written before this amendment decodes with `HasPlan` false, so
     its pull request is asked to re-plan rather than having an unrecorded
     scope replayed on its behalf. No backfill and no version field — the

@@ -138,10 +138,15 @@ func (m *RedisLockManager) GetLockStatus(ctx context.Context, projectKey string)
 		PullRequestURL: data.PullRequestURL,
 		LockedAt:       data.LockedAt,
 		LockedBy:       data.LockedBy,
-		// The third site of the same bug the two gates above carried: this
-		// value decides whether a pull request comment offers an apply, so
-		// deriving it from the artifact's length told every Helmfile
-		// reader there was no plan to apply.
+		// The third site of the same expression the two gates above
+		// carried, reporting the recorded fact instead of the artifact's
+		// length so this field agrees with GetPlan.
+		//
+		// Nothing reads it today — both callers of GetLockStatus use only
+		// Locked and PRNumber, and the comment renderer decides what to
+		// offer from the ProjectResult. It is corrected because a field
+		// that reports something false is a trap for the first caller that
+		// does read it, not because any reader is currently misled.
 		HasPlan:     data.HasPlan,
 		PlanSummary: data.PlanSummary,
 	}, nil
