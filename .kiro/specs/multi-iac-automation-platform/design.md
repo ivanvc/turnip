@@ -371,13 +371,15 @@ type LockManager interface {
     // Returns true if lock acquired, false if already locked by another PR
     AcquireLock(ctx context.Context, projectKey string, prNumber int, pullRequestURL string) (bool, error)
     
-    // StorePlanData stores plan result in the lock
+    // StorePlan records a plan on the lock: its artifact (which may be
+    // empty), the arguments it ran with, and its change summary
     // Lock must already be held by this PR
-    StorePlanData(ctx context.Context, projectKey string, prNumber int, planData []byte, summary ChangeSummary) error
+    StorePlan(ctx context.Context, projectKey string, prNumber int, plan PlanRecord) error
     
-    // GetPlanData retrieves plan data from the lock
-    // Returns error if lock not held or held by different PR
-    GetPlanData(ctx context.Context, projectKey string, prNumber int) ([]byte, ChangeSummary, error)
+    // GetPlan retrieves the recorded plan from the lock
+    // Returns error if lock not held, held by a different PR, or no plan
+    // has been recorded (which is not the same as an empty artifact)
+    GetPlan(ctx context.Context, projectKey string, prNumber int) (PlanRecord, error)
     
     // ReleaseLock releases the lock (called on successful apply, PR merge/close, or manual unlock)
     ReleaseLock(ctx context.Context, projectKey string, prNumber int) error

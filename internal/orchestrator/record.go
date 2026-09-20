@@ -31,9 +31,7 @@ type OperationRecord struct {
 	PRURL          string         `json:"pr_url"`
 	HeadSHA        string         `json:"head_sha"`
 	Operation      string         `json:"operation"`
-	IsApply        bool           `json:"is_apply"`
 	ExtraArgs      []string       `json:"extra_args,omitempty"`
-	PlanData       []byte         `json:"plan_data,omitempty"`
 	TriggeredBy    string         `json:"triggered_by"`
 	CheckRunID     int64          `json:"check_run_id,omitempty"`
 	JobName        string         `json:"job_name,omitempty"`

@@ -152,7 +152,7 @@
 - [ ] Implement Execute method for "diff" operation (helmfile diff)
 - [ ] Implement Execute method for "apply" operation (helmfile apply)
 - [ ] Implement Execute method for "sync" operation (helmfile sync)
-- [ ] Implement support for destroy via helmfile destroy when explicitly requested
+- [x] ~~Implement support for destroy via helmfile destroy when explicitly requested~~ — withdrawn by Slice 20: `helmfile destroy` has no dry-run and ignores `installed:`, so no plan can describe what it would remove. Removal goes through `installed: false` → `diff` → `apply` instead
 - [ ] Implement helmfile output parsing for changed releases
 - [ ] Implement environment configuration support
 - [ ] Write unit tests for Helmfile plugin

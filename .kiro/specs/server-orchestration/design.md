@@ -204,9 +204,7 @@ type OperationRecord struct {
     PRURL          string
     HeadSHA        string
     Operation      string  // tool-native operation name
-    IsApply        bool    // Operation == Plugin.GetApplyOperation()
     ExtraArgs      []string
-    PlanData       []byte
     TriggeredBy    string  // "auto" or a GitHub username
     CheckRunID     int64
     JobName        string
@@ -518,16 +516,17 @@ concurrency requirement) and waits for all of them before returning.
 
 ```mermaid
 flowchart TD
-    T[Target] --> P{"Operation ==\nGetPlanOperation()?"}
+    T[Target] --> ARG{"not a plan\n+ carries arguments?"}
+    ARG -->|yes| RJ0["rejected: names the arguments;\nonly the plan chooses a scope"]
+    ARG -->|no| P{"Operation ==\nGetPlanOperation()?"}
     P -->|yes| AL[AcquireLock]
     AL -->|false| RJ1["rejected: locked by another PR\n(#N, autolinked) — Req 6.2"]
     AL -->|true| CR[CreateCheckRun in_progress]
     P -->|no| IL[IsLockedByPR]
     IL -->|false| RJ2["rejected: no valid lock,\nnew plan required — Req 6.3"]
-    IL -->|true, is apply| GPD[GetPlanData]
-    GPD -->|ErrNoPlanData| RJ3["rejected: new plan required — Req 6.4"]
-    GPD -->|ok| CR
-    IL -->|true, not apply| CR
+    IL -->|true| GP["GetPlan\n(every mutating Operation,\nnot only the apply)"]
+    GP -->|ErrNoPlan| RJ3["rejected: new plan required — Req 6.4"]
+    GP -->|ok| CR
     CR --> REC["create OperationRecord;\nGenerateInstallationToken"]
     REC --> BJ[jobs.BuildJob]
     BJ -->|version error| RJ4["delete record; rejected — Req 7.5"]
@@ -596,9 +595,8 @@ flowchart TD
     C -->|no| E
     D --> E{result.Success?}
     E -->|no| H[delete record; publish done]
-    E -->|"yes, plan op\n+ PlanData present"| F["StorePlanData — Req 6.6"]
-    E -->|yes, apply op| G["ReleaseLock; append\n'Lock released' note — Req 6.7"]
-    E -->|"yes, neither\n(sync/destroy/etc.)"| H
+    E -->|"yes, plan op"| F["StorePlan: the plan and the\nscope it ran with — Req 6.6"]
+    E -->|"yes, anything else"| G["ReleaseLock; append\n'Lock released' note — Req 6.7"]
     F --> H
     G --> H
 ```
@@ -746,8 +744,8 @@ own sentinel outward).
   conflicting operations** (e.g. `/turnip plan project-a` and `/turnip
   apply project-a` in the same comment). Requirement 3's sequential
   processing (per-`TriggerCommand`, in `ParseTriggers`' returned order)
-  means the plan's `AcquireLock`/`StorePlanData` fully completes (or
-  fails) before the apply's `IsLockedByPR`/`GetPlanData` runs — no
+  means the plan's `AcquireLock`/`StorePlan` fully completes (or
+  fails) before the apply's `IsLockedByPR`/`GetPlan` runs — no
   additional synchronization is needed beyond `HandleIssueComment`
   processing `TriggerCommand`s one at a time, as its flowchart above
   already shows.

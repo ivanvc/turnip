@@ -24,7 +24,8 @@ scoped to the Plugin interface and the Helmfile implementation only.
   IaC tool (Terraform, Pulumi, or Helmfile — only Helmfile is implemented in
   this slice).
 - **Operation**: One of the tool-native subcommands a Plugin exposes (e.g.,
-  `diff`, `apply`, `sync`, `destroy` for Helmfile). Unlike the global spec's
+  `diff`, `apply`, `sync` for Helmfile — not `destroy`, see Requirement
+  3.8). Unlike the global spec's
   glossary entry, this slice does not force operations into a standardized
   `plan`/`apply`/`destroy` vocabulary — each tool's own operation names are
   used directly, matching Requirement 3.2's intent.
@@ -75,13 +76,13 @@ workflow as other IaC tools.
 #### Acceptance Criteria
 
 1. THE Platform SHALL provide a Helmfile Plugin implementing the Plugin interface, with `Name()` returning `"helmfile"`
-2. THE Helmfile Plugin SHALL expose `"diff"`, `"apply"`, `"sync"`, and `"destroy"` as its supported operations
+2. THE Helmfile Plugin SHALL expose `"diff"`, `"apply"`, and `"sync"` as its supported operations
 3. THE Helmfile Plugin's `GetPlanOperation()` SHALL return `"diff"`
 4. THE Helmfile Plugin's `GetApplyOperation()` SHALL return `"apply"`
 5. WHEN the `"diff"` operation is executed, THE Helmfile Plugin SHALL run `helmfile diff`
 6. WHEN the `"apply"` operation is executed, THE Helmfile Plugin SHALL run `helmfile apply`
 7. WHEN the `"sync"` operation is executed, THE Helmfile Plugin SHALL run `helmfile sync`
-8. WHEN the `"destroy"` operation is executed, THE Helmfile Plugin SHALL run `helmfile destroy`
+8. THE Helmfile Plugin SHALL NOT expose `"destroy"`, and a trigger naming it SHALL be refused as an unrecognized operation — `helmfile destroy` has no dry-run and uninstalls every release its selector matches regardless of `installed:`, so no plan can describe what it would remove. A release is removed instead by marking it `installed: false`, which `diff` reports as a pending removal and `apply` performs
 9. THE Helmfile Plugin SHALL parse `helmfile diff` output to derive a count of changed releases and report it via `ExecuteResult.ChangeSummary`
 10. IF `helmfile diff` output cannot be parsed for a change count, THEN THE Helmfile Plugin SHALL return a zero-valued `ChangeSummary` and still return the raw `Output` and a nil `Error` (a parsing shortfall is not an execution failure)
 

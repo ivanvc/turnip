@@ -135,7 +135,7 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 		default:
 			// Every successful Operation that is not the plan discharges the
 			// Lock: apply, sync, and anything else a Plugin exposes.
-			// Narrowing this back to rec.IsApply is the regression worth
+			// Narrowing this to the apply alone is the regression worth
 			// guarding — it reads like the rule, and it silently strands a
 			// Project after a successful sync.
 			//

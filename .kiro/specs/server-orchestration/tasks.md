@@ -413,6 +413,16 @@ worked in parallel.
     Destroy Flag* and has five criteria, none about Lock lifecycle. The
     governing requirement is 7. The wrong citation is what made this
     behaviour look specified when nothing specified it
+  - **Also drops two now-dead `OperationRecord` fields.** Making release
+    the fall-through, and broadening the plan fetch to every mutating
+    Operation, left `IsApply` written and never read; `PlanData` was
+    already redundant, since the Job takes the plan bytes from a local
+    rather than from the record. Both were removed, along with the
+    `isApply` local and `createTestRecord`'s parameter. This design's
+    `OperationRecord` sketch is amended to match — it describes
+    `record.go` rather than recording history, so leaving it stale would
+    misdescribe the current shape
+  - _Requirements: (dead-code removal, no behavioural change)_
   - _Requirements: no new behaviour beyond `plan-scoped-apply`'s own_
 
 ## Notes

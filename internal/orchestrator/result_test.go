@@ -28,7 +28,7 @@ func testResultOrchestrator(t *testing.T, locks *fakeLockManager) (*Orchestrator
 	return o, fakeClient
 }
 
-func createTestRecord(t *testing.T, o *Orchestrator, operationID, operation string, isApply bool) {
+func createTestRecord(t *testing.T, o *Orchestrator, operationID, operation string) {
 	t.Helper()
 	require.NoError(t, o.records.Create(context.Background(), &OperationRecord{
 		OperationID:   operationID,
@@ -38,7 +38,6 @@ func createTestRecord(t *testing.T, o *Orchestrator, operationID, operation stri
 		Repo:          "repo",
 		PRNumber:      42,
 		Operation:     operation,
-		IsApply:       isApply,
 		CheckRunID:    555,
 		StartDeadline: time.Now().Add(5 * time.Minute).Unix(),
 		CreatedAt:     time.Now(),
@@ -47,7 +46,7 @@ func createTestRecord(t *testing.T, o *Orchestrator, operationID, operation stri
 
 func TestHandleLog_MarksStarted(t *testing.T) {
 	o, _ := testResultOrchestrator(t, &fakeLockManager{})
-	createTestRecord(t, o, "op-1", "diff", false)
+	createTestRecord(t, o, "op-1", "diff")
 
 	before := scrapeMetric(t, "turnip_runner_job_start_latency_seconds", nil)
 
@@ -99,7 +98,7 @@ func publishedResult(t *testing.T, o *Orchestrator, operationID string, result r
 // Runner already did.
 func TestHandleResult_CarriesChangeCountsAndResolvedOperationNames(t *testing.T) {
 	o, _ := testResultOrchestrator(t, &fakeLockManager{})
-	createTestRecord(t, o, "op-counts", "diff", false)
+	createTestRecord(t, o, "op-counts", "diff")
 
 	got := publishedResult(t, o, "op-counts", rpc.OperationResult{
 		Success:  true,
@@ -118,7 +117,7 @@ func TestHandleResult_CarriesChangeCountsAndResolvedOperationNames(t *testing.T)
 func TestHandleResult_LockStateFollowsWhatActuallyHappened(t *testing.T) {
 	t.Run("successful plan holds its lock", func(t *testing.T) {
 		o, _ := testResultOrchestrator(t, &fakeLockManager{})
-		createTestRecord(t, o, "op-plan", "diff", false)
+		createTestRecord(t, o, "op-plan", "diff")
 
 		got := publishedResult(t, o, "op-plan", rpc.OperationResult{
 			Success: true, PlanData: []byte("plan-data"),
@@ -129,7 +128,7 @@ func TestHandleResult_LockStateFollowsWhatActuallyHappened(t *testing.T) {
 
 	t.Run("successful apply releases it", func(t *testing.T) {
 		o, _ := testResultOrchestrator(t, &fakeLockManager{})
-		createTestRecord(t, o, "op-apply", "apply", true)
+		createTestRecord(t, o, "op-apply", "apply")
 
 		got := publishedResult(t, o, "op-apply", rpc.OperationResult{Success: true})
 
@@ -138,7 +137,7 @@ func TestHandleResult_LockStateFollowsWhatActuallyHappened(t *testing.T) {
 
 	t.Run("failed apply keeps it", func(t *testing.T) {
 		o, _ := testResultOrchestrator(t, &fakeLockManager{})
-		createTestRecord(t, o, "op-failed-apply", "apply", true)
+		createTestRecord(t, o, "op-failed-apply", "apply")
 
 		got := publishedResult(t, o, "op-failed-apply", rpc.OperationResult{Success: false})
 
@@ -159,7 +158,7 @@ func TestHandleResult_HelmfilePlanWithNoArtifactStillRecordsAPlan(t *testing.T) 
 		},
 	}
 	o, _ := testResultOrchestrator(t, locks)
-	createTestRecord(t, o, "op-helmfile-plan", "diff", false)
+	createTestRecord(t, o, "op-helmfile-plan", "diff")
 
 	require.NoError(t, o.HandleResult(context.Background(), "op-helmfile-plan", rpc.OperationResult{
 		Success:  true,
@@ -173,8 +172,8 @@ func TestHandleResult_HelmfilePlanWithNoArtifactStillRecordsAPlan(t *testing.T) 
 }
 
 // Releasing is not apply-specific: a successful sync mutates real
-// infrastructure and must give the Lock back too. Narrowing this back to
-// rec.IsApply is the regression worth guarding — it reads like the rule,
+// infrastructure and must give the Lock back too. Narrowing this to the
+// apply alone is the regression worth guarding — it reads like the rule,
 // and it strands a Project with no route back but a manual unlock.
 func TestHandleResult_SuccessfulSyncReleasesTheLock(t *testing.T) {
 	var released bool
@@ -185,7 +184,7 @@ func TestHandleResult_SuccessfulSyncReleasesTheLock(t *testing.T) {
 		},
 	}
 	o, _ := testResultOrchestrator(t, locks)
-	createTestRecord(t, o, "op-sync", "sync", false)
+	createTestRecord(t, o, "op-sync", "sync")
 
 	got := publishedResult(t, o, "op-sync", rpc.OperationResult{Success: true})
 
@@ -247,7 +246,7 @@ func TestHandleResult_SuccessfulPlan_StoresPlanNotReleasesLock(t *testing.T) {
 		},
 	}
 	o, client := testResultOrchestrator(t, locks)
-	createTestRecord(t, o, "op-1", "diff", false)
+	createTestRecord(t, o, "op-1", "diff")
 
 	err := o.HandleResult(context.Background(), "op-1", rpc.OperationResult{
 		Success:  true,
@@ -268,7 +267,7 @@ func TestHandleResult_SuccessfulApply_ReleasesLockAndAppendsNote(t *testing.T) {
 		},
 	}
 	o, _ := testResultOrchestrator(t, locks)
-	createTestRecord(t, o, "op-1", "apply", true)
+	createTestRecord(t, o, "op-1", "apply")
 
 	resultCh := make(chan github.ProjectResult, 1)
 	go func() {
@@ -300,7 +299,7 @@ func TestHandleResult_FailedApply_DoesNotReleaseLock(t *testing.T) {
 		},
 	}
 	o, _ := testResultOrchestrator(t, locks)
-	createTestRecord(t, o, "op-1", "apply", true)
+	createTestRecord(t, o, "op-1", "apply")
 
 	require.NoError(t, o.HandleResult(context.Background(), "op-1", rpc.OperationResult{Success: false, Output: "failed"}))
 	assert.False(t, released)
@@ -308,7 +307,7 @@ func TestHandleResult_FailedApply_DoesNotReleaseLock(t *testing.T) {
 
 func TestHandleResult_DeletesRecordAfterFinalizing(t *testing.T) {
 	o, _ := testResultOrchestrator(t, &fakeLockManager{})
-	createTestRecord(t, o, "op-1", "diff", false)
+	createTestRecord(t, o, "op-1", "diff")
 
 	require.NoError(t, o.HandleResult(context.Background(), "op-1", rpc.OperationResult{Success: false}))
 
@@ -340,7 +339,7 @@ func TestCheckRunResultSummary(t *testing.T) {
 // The name itself must not vary: required status checks match on it.
 func TestHandleResult_SuccessCheckRunCarriesOutcomeInTitleAndSummary(t *testing.T) {
 	o, client := testResultOrchestrator(t, &fakeLockManager{})
-	createTestRecord(t, o, "op-1", "diff", false)
+	createTestRecord(t, o, "op-1", "diff")
 
 	require.NoError(t, o.HandleResult(context.Background(), "op-1", rpc.OperationResult{
 		Success: true,
@@ -354,7 +353,7 @@ func TestHandleResult_SuccessCheckRunCarriesOutcomeInTitleAndSummary(t *testing.
 
 func TestHandleResult_FailureCheckRunTitleSaysFailure(t *testing.T) {
 	o, client := testResultOrchestrator(t, &fakeLockManager{})
-	createTestRecord(t, o, "op-2", "diff", false)
+	createTestRecord(t, o, "op-2", "diff")
 
 	require.NoError(t, o.HandleResult(context.Background(), "op-2", rpc.OperationResult{
 		Success: false,

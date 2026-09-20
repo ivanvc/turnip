@@ -266,9 +266,18 @@ The release at `result.go:122` stops being apply-specific. Within
 No new field is needed on `OperationRecord`: `HandleResult` already looks
 the Plugin up and compares `rec.Operation` against `GetPlanOperation()` at
 `result.go:113`, so the same test that selects the store branch selects
-the release branch by falling through it. `IsApply` (`record.go:34`) stays
-for the replay path in `executeOne`, which genuinely is apply-shaped, but
-it no longer governs release.
+the release branch by falling through it.
+
+**And one existing field stops being needed, which this design first got
+wrong.** An earlier version said `IsApply` stays for the replay path in
+`executeOne`. It does not: Decision 5 also broadens that fetch to every
+mutating Operation, so nothing reads the field at all once both halves
+land. `IsApply` and its local were removed, along with
+`OperationRecord.PlanData` — the Job takes the plan bytes from a local,
+never from the record. Both were found by a dead-code sweep immediately
+after this slice, not by the design, which is the lesson: a field kept
+"for" a path deserves re-checking when that path changes in the same
+slice.
 
 **A record always carries a registered tool**, because `executeOne`
 rejects an unsupported one before any record exists, so the fall-through

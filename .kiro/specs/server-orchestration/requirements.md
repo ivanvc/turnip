@@ -368,24 +368,27 @@ always uses exactly what was planned.
    `LockManager.IsLockedByPR`; IF `false`, THE Server SHALL post an error
    explaining that no Lock (or a different PR's Lock) is held and that a
    new plan is required, and SHALL NOT execute that Target
-4. FOR a Target whose Operation is specifically its Project's
-   `GetApplyOperation()`, once 6.3's verification passes, THE Server SHALL
-   additionally call `LockManager.GetPlanData` and pass the returned bytes
-   as `jobs.OperationParams.PlanData` for the Runner Job (Requirement 7.5 of
-   the global spec); IF `GetPlanData` returns `lock.ErrNoPlanData`, THE
-   Server SHALL post an error requiring a new plan and SHALL NOT execute
-   that Target
-5. FOR a Target whose Operation is neither `GetPlanOperation()` nor
-   `GetApplyOperation()` (e.g. Helmfile's `"sync"`/`"destroy"`), THE Server
-   SHALL pass no `PlanData` (nil) after 6.3's Lock verification passes —
-   only the designated apply operation consumes stored plan data
+4. FOR a Target whose Operation is NOT its Project's `GetPlanOperation()`,
+   once 6.3's verification passes, THE Server SHALL additionally call
+   `LockManager.GetPlan` and pass the recorded artifact as
+   `jobs.OperationParams.PlanData` and the recorded arguments as its
+   `ExtraArgs` (Requirement 7.5 of the global spec); IF `GetPlan` returns
+   `lock.ErrNoPlan`, THE Server SHALL post an error requiring a new plan
+   and SHALL NOT execute that Target
+5. THE recorded scope SHALL be replayed for **every** mutating Operation,
+   not only the designated apply — a `sync` running unscoped after a
+   scoped plan would change more than was reviewed. THE Server SHALL NOT
+   accept trailing arguments on any non-plan Operation, and SHALL refuse
+   such a trigger naming the arguments it refused
 6. WHEN a plan-operation Target completes with `HandleResult.Success ==
-   true` and non-empty `PlanData`, THE Server SHALL call
-   `LockManager.StorePlanData` with that `PlanData` and `Changes` before
-   considering the Target complete (Requirement 7.3 of the global spec)
-7. WHEN an apply-operation Target (Operation == `GetApplyOperation()`)
-   completes with `HandleResult.Success == true`, THE Server SHALL call
-   `LockManager.ReleaseLock` for that Project (Requirement 7.6 of the
+   true`, THE Server SHALL call `LockManager.StorePlan` with the artifact
+   (which may be empty), the arguments the Operation actually ran with,
+   and `Changes`, before considering the Target complete (Requirement 7.3
+   of the global spec). THE call SHALL NOT be conditioned on the artifact
+   being non-empty — a Plugin whose plan produces none still ran a plan
+7. WHEN any non-plan Target completes with `HandleResult.Success == true`
+   — the apply, a `sync`, or anything else a Plugin exposes — THE Server
+   SHALL call `LockManager.ReleaseLock` for that Project (Requirement 7.6 of the
    global spec) and SHALL note, in that Target's `ProjectResult.Output`
    (Requirement 10), that the Lock was released and the Project is free
    for another PR to plan against — so a release triggered by a successful

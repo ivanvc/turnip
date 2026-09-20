@@ -98,8 +98,11 @@ updated in the same task or the checkpoint cannot pass.
       plan operation stores and keeps the Lock, anything else releases it.
       No new field on `OperationRecord` — `HandleResult` already compares
       `rec.Operation` against `GetPlanOperation()` for the store branch
-    - `IsApply` stays for the replay path in `executeOne`, which genuinely
-      is apply-shaped. It just stops governing release
+    - `IsApply` was expected to stay for the replay path in `executeOne`.
+      Task 6.2 then broadened that fetch to every mutating Operation,
+      which left nothing reading the field at all — so it and its local
+      were removed as dead weight, along with `OperationRecord.PlanData`,
+      which the Job takes from a local rather than from the record
     - This is what stops a successful `sync` leaving the Project locked
       with no route back but a manual unlock
     - _Requirements: 2.5_

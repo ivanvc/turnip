@@ -18,7 +18,7 @@ internal/lock/
   lock.go        // LockManager interface, LockData, LockStatus
   redis.go       // RedisLockManager implementing LockManager
   scripts.go     // embedded Lua scripts for atomic acquire/mutate
-  errors.go      // ErrLockedByOtherPR, ErrNoLock, ErrNoPlanData
+  errors.go      // ErrLockedByOtherPR, ErrNoLock, ErrNoPlan
   doc.go         // updated package doc
 ```
 
@@ -80,8 +80,20 @@ type LockData struct {
     PullRequestURL string               `json:"pull_request_url"`
     LockedAt       time.Time            `json:"locked_at"`
     LockedBy       string               `json:"locked_by"`
+    HasPlan        bool                 `json:"has_plan"`
     PlanData       []byte               `json:"plan_data,omitempty"`
+    PlanArgs       []string             `json:"plan_args,omitempty"`
     PlanSummary    plugin.ChangeSummary `json:"plan_summary,omitzero"`
+}
+
+// PlanRecord is everything a plan leaves behind for a mutating Operation
+// to replay. Data is optional — a Plugin whose plan produces no artifact
+// stores an empty slice, and HasPlan on the Lock rather than len(Data) is
+// what reports that a plan happened (Slice 20 amendment).
+type PlanRecord struct {
+    Data    []byte
+    Args    []string
+    Summary plugin.ChangeSummary
 }
 
 // LockStatus is GetLockStatus's return value.
@@ -102,7 +114,7 @@ lock-local `ChangeSummary` copy, keeping `internal/lock` fully independent
 of `internal/plugin`. Rejected — `internal/plugin` has zero dependencies of
 its own (a true leaf package, same tier as `internal/lock`), so importing
 it costs nothing structurally, and it lets Slice 6 pass a
-`plugin.ExecuteResult.ChangeSummary` straight into `StorePlanData` with no
+`plugin.ExecuteResult.ChangeSummary` straight into `StorePlan` with no
 conversion step.
 
 ## API Surface
@@ -118,15 +130,16 @@ type LockManager interface {
     // Returns false only when a different PR holds the lock.
     AcquireLock(ctx context.Context, projectKey string, prNumber int, pullRequestURL, lockedBy string) (bool, error)
 
-    // StorePlanData attaches plan output to a lock already held by prNumber.
-    // Returns an error if the lock isn't held by prNumber (including "no
-    // lock at all").
-    StorePlanData(ctx context.Context, projectKey string, prNumber int, planData []byte, summary plugin.ChangeSummary) error
+    // StorePlan attaches a plan record to a lock already held by prNumber,
+    // marking the lock as carrying a plan. Returns an error if the lock
+    // isn't held by prNumber (including "no lock at all").
+    StorePlan(ctx context.Context, projectKey string, prNumber int, plan PlanRecord) error
 
-    // GetPlanData retrieves plan data from a lock held by prNumber.
-    // Returns an error if the lock isn't held by prNumber, or if the lock
-    // has no plan data stored yet.
-    GetPlanData(ctx context.Context, projectKey string, prNumber int) ([]byte, plugin.ChangeSummary, error)
+    // GetPlan retrieves the plan record from a lock held by prNumber.
+    // Returns an error if the lock isn't held by prNumber, or if no plan
+    // has been recorded on it yet — a different condition from the
+    // record's Data being empty.
+    GetPlan(ctx context.Context, projectKey string, prNumber int) (PlanRecord, error)
 
     // ReleaseLock releases projectKey's lock. No-op (nil error) if no lock
     // exists. Returns an error if the lock is held by a different PR.
@@ -178,7 +191,7 @@ end
 return 0 -- held by a different PR
 ```
 
-**`compareAndMutateScript`** (used by `StorePlanData` and `ReleaseLock`):
+**`compareAndMutateScript`** (used by `StorePlan` and `ReleaseLock`):
 ```lua
 -- KEYS[1] = "lock:{projectKey}"
 -- ARGV[1] = expected pr_number (string)
@@ -201,10 +214,12 @@ return 1 -- ok
 ```
 
 Return code handling:
-- `StorePlanData`/`GetPlanData` (read via plain `GET`, no script needed for
+- `StorePlan`/`GetPlan` (read via plain `GET`, no script needed for
   reads): `0` or `-1` from a mutate call both map to an error; a `GET` that
-  decodes successfully but has an empty `PlanData` maps to the
-  "no plan data yet" error (Requirement 2.5).
+  decodes successfully but whose `HasPlan` is false maps to the
+  "no plan recorded" error (Requirement 2.5). **Keyed off `HasPlan`, not
+  `len(PlanData)`** — a Plugin whose plan produces no artifact still ran a
+  plan, and inferring otherwise made its apply unreachable (Slice 20).
 - `ReleaseLock`: `1` and `0` both map to success (Requirement 3.2/3.3,
   idempotent); `-1` maps to an error (Requirement 3.4).
 
@@ -219,14 +234,14 @@ mutation (that's what the atomic scripts are for).
 var (
     ErrLockedByOtherPR = errors.New("lock: held by a different PR")
     ErrNoLock          = errors.New("lock: no lock exists for this project")
-    ErrNoPlanData      = errors.New("lock: no plan data stored for this lock")
+    ErrNoPlan          = errors.New("lock: no plan recorded for this lock")
 )
 ```
 
-`StorePlanData`/`GetPlanData`/`ReleaseLock` wrap `ErrLockedByOtherPR` (or
+`StorePlan`/`GetPlan`/`ReleaseLock` wrap `ErrLockedByOtherPR` (or
 `ErrNoLock`, distinguishable via `errors.Is`) with the project key and PR
-number for context; `GetPlanData` returns `ErrNoPlanData` specifically when
-the lock exists, is held by the right PR, but `PlanData` is empty
+number for context; `GetPlan` returns `ErrNoPlan` specifically when the
+lock exists, is held by the right PR, but no plan has been recorded on it
 (Requirement 2.5's "distinguishable from wrong PR").
 
 ## Edge Cases
@@ -235,8 +250,10 @@ the lock exists, is held by the right PR, but `PlanData` is empty
 |---|---|
 | `AcquireLock` called twice in a row by the same PR (e.g. duplicate webhook delivery) | Both succeed; second call is a no-op against the stored value |
 | `AcquireLock` by PR B while PR A holds the lock | Returns `false`, PR A's lock (and any plan data) untouched |
-| `StorePlanData` called after the lock was released (e.g. by manual unlock racing a plan finishing) | Returns `ErrNoLock` |
-| `GetPlanData` called before any `StorePlanData` (lock held, plan still running) | Returns `ErrNoPlanData` |
+| `StorePlan` called after the lock was released (e.g. by manual unlock racing a plan finishing) | Returns `ErrNoLock` |
+| `GetPlan` called before any `StorePlan` (lock held, plan still running) | Returns `ErrNoPlan` |
+| `GetPlan` on a Lock written before `has_plan` existed | Decodes `HasPlan` false, so returns `ErrNoPlan` — the pull request is asked to re-plan rather than replaying an unrecorded scope |
+| `StorePlan` for a Plugin whose plan produced no artifact (Helmfile) | Succeeds, `HasPlan` true, `Data` empty — the fact of the plan is what is recorded |
 | `ReleaseLock` called on a project with no lock | Returns `nil` (idempotent) |
 | `GetLockStatus` on an unlocked project | `&LockStatus{Locked: false}`, `nil` error |
 | Redis/Valkey connection failure mid-call | Propagated as a wrapped error from the underlying `go-redis` call; no partial state assumed |
@@ -257,7 +274,7 @@ target (95%, "Lock manager" per the global design doc's Testing Strategy,
   convention:
   - `// Feature: multi-iac-automation-platform, Property 9: Lock Acquisition Prevents Concurrent Operations` — for a random project key and two distinct random PR numbers, if PR A acquires first, PR B's concurrent `AcquireLock` always fails.
   - `// Feature: multi-iac-automation-platform, Property 10: Lock Release After Operation Completion` — implemented as "lock release following a successful apply," per Requirement 7.6 (see "Property 10 mismatch" above, not the global doc's literal wording): for a random project key, PR that acquires, stores a plan, then calls `ReleaseLock` (modeling "apply succeeded"), `GetLockStatus` afterward reports `Locked: false`.
-  - `// Feature: multi-iac-automation-platform, Property 11: Plan-Apply Lock Consistency` — for a random project key, PR, and random plan bytes, whatever `StorePlanData` stores is exactly what `GetPlanData` returns.
+  - `// Feature: multi-iac-automation-platform, Property 11: Plan-Apply Lock Consistency` — for a random project key, PR, and random plan bytes, whatever `StorePlan` records is exactly what `GetPlan` returns. Since Slice 20 the property covers an **empty** artifact too: a plan that produced no bytes still round-trips as a recorded plan, which is the case that was previously indistinguishable from no plan at all.
   - `// Feature: multi-iac-automation-platform, Property 36: Lock Acquisition Across Instances` — simulate "multiple Server instances" as multiple goroutines sharing one `*redis.Client` (not one `LockManager` value, to avoid any accidental in-process serialization masking a real Redis-level race), all calling `AcquireLock` for the same project key with distinct PR numbers concurrently; assert exactly one succeeds.
 
 No real Redis/Valkey server or Kubernetes/`kind` environment is used in

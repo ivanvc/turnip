@@ -54,11 +54,11 @@ what gets applied.
 
 #### Acceptance Criteria
 
-1. THE LockManager SHALL provide `StorePlanData(ctx, projectKey, prNumber, planData []byte, summary ChangeSummary) error`
-2. `StorePlanData` SHALL succeed only when `projectKey`'s Lock is currently held by `prNumber`; otherwise it SHALL return an error without modifying the Lock
-3. THE LockManager SHALL provide `GetPlanData(ctx, projectKey, prNumber) ([]byte, ChangeSummary, error)`
-4. `GetPlanData` SHALL succeed only when `projectKey`'s Lock is currently held by `prNumber`; otherwise it SHALL return an error and no plan data
-5. IF `projectKey` has no stored plan data (e.g. the Lock was acquired but the plan has not yet completed successfully), THEN `GetPlanData` SHALL return an error distinguishable from "wrong PR" (Requirement 7.5)
+1. THE LockManager SHALL provide `StorePlan(ctx, projectKey, prNumber, plan PlanRecord) error`, where `PlanRecord` carries the plan's `Data`, the `Args` it ran with, and its `Summary`
+2. `StorePlan` SHALL succeed only when `projectKey`'s Lock is currently held by `prNumber`; otherwise it SHALL return an error without modifying the Lock
+3. THE LockManager SHALL provide `GetPlan(ctx, projectKey, prNumber) (PlanRecord, error)`
+4. `GetPlan` SHALL succeed only when `projectKey`'s Lock is currently held by `prNumber`; otherwise it SHALL return an error and no plan record
+5. IF no plan has been recorded on `projectKey`'s Lock (e.g. it was acquired but the plan has not yet completed successfully), THEN `GetPlan` SHALL return an error distinguishable from "wrong PR" (Requirement 7.5). THE recorded-ness of a plan SHALL be tracked explicitly rather than inferred from `Data` being non-empty — a Plugin whose plan produces no artifact still ran a plan, and inferring otherwise made its apply unreachable
 
 ### Requirement 3: Lock release
 
@@ -89,7 +89,7 @@ UI or comment can be built on top of it.
 
 ## Out of Scope
 
-- Deciding *when* to call `AcquireLock`/`StorePlanData`/`ReleaseLock` during the plan/apply/webhook lifecycle — Slice 6 (Server Orchestration)
+- Deciding *when* to call `AcquireLock`/`StorePlan`/`ReleaseLock` during the plan/apply/webhook lifecycle — Slice 6 (Server Orchestration)
 - Posting PR comments about lock conflicts, unlock confirmations, or lock status — Slice 4 (GitHub Client)
 - Parsing the `/turnip unlock` PR comment trigger and authorizing who may issue it — Slice 4 (Comment Parser), Requirement 16
 - Handling PR merged/closed webhook events that should trigger release — Slice 4/6 (webhook handling); this slice only exposes `ReleaseLock` for that code to call

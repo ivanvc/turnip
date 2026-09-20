@@ -78,7 +78,6 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	}
 
 	isPlan := t.Operation == p.GetPlanOperation()
-	isApply := t.Operation == p.GetApplyOperation()
 	key := projectKey(repo.Owner, repo.Name, t.Project.Name)
 
 	// Only the plan chooses a scope, because it is the only Operation whose
@@ -199,9 +198,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		PRURL:          pullRequestURL(repo.Owner, repo.Name, pr.Number),
 		HeadSHA:        pr.HeadSHA,
 		Operation:      t.Operation,
-		IsApply:        isApply,
 		ExtraArgs:      execArgs,
-		PlanData:       planData,
 		TriggeredBy:    t.TriggeredBy,
 		CheckRunID:     checkRunID,
 		StartDeadline:  time.Now().Add(o.startTimeout).Unix(),

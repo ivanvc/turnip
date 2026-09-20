@@ -80,25 +80,39 @@ type ChangeSummary struct {
 
 ### Reconciling `GetOperations()` with global Requirement 13
 
-Global Requirement 13.2 lists only `"diff"`, `"apply"`, `"sync"` as
-Helmfile's supported operations, but 13.7-13.9 describe a `Destroy`
-operation that executes `helmfile destroy` when "explicitly requested" —
-worded as if Destroy is invoked the same way as the other three, not as a
-flag layered on `"apply"` (contrast with Terraform's `-destroy` flag on
-`plan`, Requirement 6). The global design doc's Property 22 settles this by
-example: *"Diff should execute `helmfile diff`, Sync should execute
-`helmfile sync`, Apply should execute `helmfile apply`, and Destroy should
-execute `helmfile destroy`"* — describing four directly-invokable
-operations, not three-plus-a-flag.
+**This section originally reconciled an inconsistency in favour of
+including `destroy`. Slice 20 reversed that, and the reasoning is kept
+here because the reversal answers a different question than the original
+did.**
 
-This slice's Requirement 3.2 therefore includes `"destroy"` in
-`GetOperations()`. *Alternative considered*: treat destroy as an
-`ExtraArgs`-driven variant of `"apply"`, mirroring Terraform. Rejected
-because it contradicts Property 22's explicit per-operation phrasing and
-would require `Execute` to special-case `ExtraArgs` content to pick a
-binary subcommand — string-sniffing arguments to decide behavior is exactly
-the kind of implicit branching the unified interface is meant to avoid
-(Requirement 1.8 / global Requirement 3.5).
+The original reconciliation: global Requirement 13.2 listed only `"diff"`,
+`"apply"`, `"sync"`, but 13.7-13.9 described a `Destroy` operation
+executing `helmfile destroy` "when explicitly requested" — worded as if it
+were invoked like the other three rather than as a flag layered on
+`"apply"` (contrast Terraform's `-destroy` on `plan`). The global design's
+Property 22 appeared to settle it by naming four directly-invokable
+operations. So Requirement 3.2 included `"destroy"` in `GetOperations()`,
+rejecting an `ExtraArgs`-driven variant of `"apply"` because
+string-sniffing arguments to pick a subcommand is the implicit branching
+the unified interface exists to avoid.
+
+That decision settled **how** destroy is invoked. It never asked **whether
+it could be offered at all**, because the guarantee that makes the question
+answerable — a mutating Operation does only what a reviewed plan described
+— arrived with Slice 20.
+
+`destroy` cannot meet it. `helmfile destroy` has no dry-run, and it
+uninstalls every release its selector matches *regardless of `installed:`*,
+so it does not converge to the declared state that `helmfile diff`
+describes. A destroy gated by a diff would inherit a plan describing a
+different operation.
+
+The authority the original leaned on has also been corrected: Property 22
+asserted destroy behaviour while its own scope line validated Requirements
+13.2–13.5, none of which mention destroy — that clause is now dropped, and
+global 13.7/13.9 are amended. Requirement 3.2 here now excludes `destroy`,
+and 3.8 states the refusal. Removal is reviewed instead by marking a
+release `installed: false`, which `diff` reports and `apply` performs.
 
 ### `PlanData` is unused by Helmfile
 
@@ -143,7 +157,7 @@ package) to assert on the exact command and arguments without requiring
 func NewHelmfilePlugin() *HelmfilePlugin
 
 func (p *HelmfilePlugin) Name() string             { return "helmfile" }
-func (p *HelmfilePlugin) GetOperations() []string   { return []string{"diff", "apply", "sync", "destroy"} }
+func (p *HelmfilePlugin) GetOperations() []string   { return []string{"diff", "apply", "sync"} }
 func (p *HelmfilePlugin) GetPlanOperation() string  { return "diff" }
 func (p *HelmfilePlugin) GetApplyOperation() string { return "apply" }
 
@@ -172,7 +186,7 @@ func (p *HelmfilePlugin) Execute(ctx context.Context, operation string, opts Exe
      2.7); non-nil only when `p.run` itself returned an error (couldn't
      start the process).
    - `ChangeSummary`: populated only when `operation == "diff"`, via
-     `parseChangedReleases` (see below); zero-valued for `apply`/`sync`/`destroy`
+     `parseChangedReleases` (see below); zero-valued for `apply`/`sync`
      (those operations don't emit the same diff-shaped output, and the
      global design doesn't ask for a live change count from them —
      Requirement 13.6/13.10 only ask for `diff` output parsing).
@@ -282,7 +296,7 @@ Strategy section):
   migrated 2026-08, see `tasks.md`), ≥100 iterations, tagged per the global
   convention:
   - `// Feature: multi-iac-automation-platform, Property 4: Plugin Result Structure Completeness` — for a random operation among `GetOperations()` and random `ExecuteOptions`, using a fake `commandRunner` that returns randomized stdout/stderr/exitCode, assert the returned `*ExecuteResult` is non-nil and its `Output`/`ExitCode` fields are always populated (never silently dropped).
-  - `// Feature: multi-iac-automation-platform, Property 22: Helmfile Plugin Command Execution` — for each of `"diff"`, `"sync"`, `"apply"`, `"destroy"`, assert `Execute` invokes `helmfile <operation>` (with `--environment` correctly placed when configured), using a fake `commandRunner` to capture the call instead of running a real subprocess.
+  - `// Feature: multi-iac-automation-platform, Property 22: Helmfile Plugin Command Execution` — for each of `"diff"`, `"sync"`, `"apply"`, assert `Execute` invokes `helmfile <operation>` (with `--environment` correctly placed when configured), using a fake `commandRunner` to capture the call instead of running a real subprocess. `"destroy"` is deliberately absent: the Plugin no longer exposes it, and the global Property 22 clause naming it has been dropped (Slice 20).
 
 No integration tests against a real Kubernetes cluster or real `helmfile`
 binary are part of this slice — that belongs to Slice 11 (Integration
