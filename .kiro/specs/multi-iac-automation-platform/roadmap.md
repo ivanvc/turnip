@@ -1256,16 +1256,17 @@ the Server side today.
 "Real-time logs" in v0.18.0 (PR #1937): `GET /jobs/{job-id}` serves an
 xterm.js page, `GET /jobs/{job-id}/ws` the websocket, and the user reaches
 it through the commit status **Details** link rather than the comment
-body. Its mid-run semantics are worth copying exactly — `addChan` drains
-the buffered output into the new channel *before* registering the receiver,
-specifically so backfill cannot interleave with live lines.
+body. Its mid-run semantics name a real hazard — `addChan` drains the
+buffered output into the new channel *before* registering the receiver,
+specifically so backfill cannot interleave with live lines — though the
+transport decision below removes the need to solve it by hand.
 
 What should **not** be copied is where it is stored. Atlantis keeps job
 output in per-process maps, so a browser routed to a replica that did not
 run the job gets `invalid key`; its HA support (Redis locking, external
 plan stores) explicitly does not extend to logs, and its deployment
 manifests still ship `replicas: 1`. turnip is stateless by construction,
-so accumulating into a capped Redis list per Operation gives it
+so accumulating into a capped Redis stream per Operation gives it
 multi-replica streaming that Atlantis cannot offer.
 
 **Nor should its security defaults be copied.** Atlantis's
@@ -1276,19 +1277,65 @@ Plan output routinely discloses infrastructure detail, so viewer
 authorization is a design question here, not a later hardening pass. It
 belongs with the Backlog's stated-security-model entry.
 
-**Open questions, none of them answered yet**:
+**Transport and storage are decided.** Output accumulates in one Redis
+stream per Operation — `XADD` per line, `XREAD BLOCK 0 STREAMS <key> <id>`
+to follow it — and reaches the browser over server-sent events rather than
+a websocket.
+
+These are one decision rather than two, because what makes them fit is a
+shared cursor. An SSE `id:` field carries the stream entry ID; the
+browser's `EventSource` replays it as `Last-Event-ID` on automatic
+reconnect; the Server resumes the `XREAD` from exactly that entry. The
+resume position lives in the stream rather than in a replica's memory, so
+a reconnect landing on a *different* replica continues where it left off.
+That is the property Atlantis structurally cannot offer, and it is why
+this is worth doing differently rather than porting their design.
+
+It also disposes of the ordering hazard noted above instead of
+re-solving it. One `XREAD` cursor that reads history and then blocks for
+more is a single ordered sequence — there is no separate backfill path to
+interleave with live lines, so the bug `addChan` exists to prevent cannot
+be written here.
+
+*Alternative considered*: a capped list plus pub/sub. *Rejected because*
+pub/sub is fire-and-forget — a subscriber that connects late or drops
+briefly loses lines with no way to ask for them again — so it needs the
+list for backfill regardless, and then a hand-written seam between "what
+I read from the list" and "what arrived live". That seam is precisely the
+interleaving bug above, reintroduced by the storage choice.
+
+*Alternative considered*: websockets, as Atlantis uses. *Rejected
+because* this output flows one way only, and SSE reconnects and replays
+its cursor without application code having to manage either.
+
+**This sets a Redis version floor of 5.0**, where streams were introduced.
+The documentation states no floor at all today, so it should be recorded
+once — alongside Slice 27's AUTH/TLS work — rather than rediscovered per
+slice.
+
+**Sizing is arithmetic, not a worry.** Capping each stream with
+`XADD ... MAXLEN ~` at the Runner's own 256 KiB buffer bound costs about
+that per in-flight Operation, so N concurrent Operations cost roughly
+N × 256 KiB until retention expires them. Worth stating because that cap
+is also half the retention answer below.
+
+**Still open**:
 
 - **Retention.** Atlantis clears on pull request close and loses
-  everything on restart. A Redis list with a TTL and a size cap is the
-  obvious turnip shape, but the cap interacts with how much scrollback is
-  worth keeping.
+  everything on restart. `MAXLEN` plus an `EXPIRE` on the stream key is
+  the obvious turnip shape, but the cap interacts with how much scrollback
+  is worth keeping.
 - **Who may view.** GitHub identity would be the principled answer and is
   the most work; a signed, expiring URL in the check run is the cheap one.
 - **Entry point.** The check run's Details link is where Atlantis puts it
   and where a reader already looks; the consolidated comment is the
   alternative.
-- **Transport.** Websockets are what Atlantis uses, but server-sent events
-  are a simpler fit for output that only flows one way.
+
+**This raises what an unauthenticated Redis exposes.** Locks and plan
+artifacts already live there; streaming output adds the full text of every
+Operation, which is the most disclosure-heavy content turnip handles.
+Slice 27 is the mitigation, and is a prerequisite in practice even though
+the dependency column does not say so.
 
 **This is why `HandleLog`'s unread parameter and the Runner's ring buffer
 must not be tidied away** — a dead-code sweep flags both, and deleting
