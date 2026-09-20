@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-
-	"github.com/ivanvc/turnip/internal/plugin"
 )
 
 // RedisLockManager is a LockManager backed by Redis/Valkey.
@@ -49,53 +47,66 @@ func (m *RedisLockManager) AcquireLock(ctx context.Context, projectKey string, p
 	return toInt64(res) == 1, nil
 }
 
-func (m *RedisLockManager) StorePlanData(ctx context.Context, projectKey string, prNumber int, planData []byte, summary plugin.ChangeSummary) error {
+func (m *RedisLockManager) StorePlan(ctx context.Context, projectKey string, prNumber int, plan PlanRecord) error {
 	existing, err := m.getLockData(ctx, projectKey)
 	if err != nil {
 		return err
 	}
 	if existing == nil {
-		return fmt.Errorf("lock: storing plan data for %q (PR #%d): %w", projectKey, prNumber, ErrNoLock)
+		return fmt.Errorf("lock: storing plan for %q (PR #%d): %w", projectKey, prNumber, ErrNoLock)
 	}
 
-	existing.PlanData = planData
-	existing.PlanSummary = summary
+	// HasPlan is set from the fact of a successful plan, never from
+	// whether the Plugin handed back an artifact — that distinction is the
+	// whole point of the field.
+	existing.HasPlan = true
+	existing.PlanArgs = plan.Args
+	existing.PlanData = plan.Data
+	existing.PlanSummary = plan.Summary
 	payload, err := json.Marshal(existing)
 	if err != nil {
-		return fmt.Errorf("lock: marshaling plan data for %q: %w", projectKey, err)
+		return fmt.Errorf("lock: marshaling plan for %q: %w", projectKey, err)
 	}
 
 	res, err := m.client.Eval(ctx, compareAndMutateScript, []string{lockKey(projectKey)}, strconv.Itoa(prNumber), "set", payload).Result()
 	if err != nil {
-		return fmt.Errorf("lock: storing plan data for %q (PR #%d): %w", projectKey, prNumber, err)
+		return fmt.Errorf("lock: storing plan for %q (PR #%d): %w", projectKey, prNumber, err)
 	}
 
 	switch toInt64(res) {
 	case 1:
 		return nil
 	case 0:
-		return fmt.Errorf("lock: storing plan data for %q (PR #%d): %w", projectKey, prNumber, ErrNoLock)
+		return fmt.Errorf("lock: storing plan for %q (PR #%d): %w", projectKey, prNumber, ErrNoLock)
 	default:
-		return fmt.Errorf("lock: storing plan data for %q (PR #%d): %w", projectKey, prNumber, ErrLockedByOtherPR)
+		return fmt.Errorf("lock: storing plan for %q (PR #%d): %w", projectKey, prNumber, ErrLockedByOtherPR)
 	}
 }
 
-func (m *RedisLockManager) GetPlanData(ctx context.Context, projectKey string, prNumber int) ([]byte, plugin.ChangeSummary, error) {
+func (m *RedisLockManager) GetPlan(ctx context.Context, projectKey string, prNumber int) (PlanRecord, error) {
 	data, err := m.getLockData(ctx, projectKey)
 	if err != nil {
-		return nil, plugin.ChangeSummary{}, err
+		return PlanRecord{}, err
 	}
 	if data == nil {
-		return nil, plugin.ChangeSummary{}, fmt.Errorf("lock: getting plan data for %q (PR #%d): %w", projectKey, prNumber, ErrNoLock)
+		return PlanRecord{}, fmt.Errorf("lock: getting plan for %q (PR #%d): %w", projectKey, prNumber, ErrNoLock)
 	}
 	if data.PRNumber != prNumber {
-		return nil, plugin.ChangeSummary{}, fmt.Errorf("lock: getting plan data for %q (PR #%d): %w", projectKey, prNumber, ErrLockedByOtherPR)
+		return PlanRecord{}, fmt.Errorf("lock: getting plan for %q (PR #%d): %w", projectKey, prNumber, ErrLockedByOtherPR)
 	}
-	if len(data.PlanData) == 0 {
-		return nil, plugin.ChangeSummary{}, fmt.Errorf("lock: getting plan data for %q (PR #%d): %w", projectKey, prNumber, ErrNoPlanData)
+	// Tests the recorded fact, not the artifact's length. Keying this off
+	// len(PlanData) is what made a Helmfile apply unreachable: its plan
+	// legitimately produces no bytes, so every apply was refused as though
+	// no plan had ever run.
+	if !data.HasPlan {
+		return PlanRecord{}, fmt.Errorf("lock: getting plan for %q (PR #%d): %w", projectKey, prNumber, ErrNoPlan)
 	}
 
-	return data.PlanData, data.PlanSummary, nil
+	return PlanRecord{
+		Data:    data.PlanData,
+		Args:    data.PlanArgs,
+		Summary: data.PlanSummary,
+	}, nil
 }
 
 func (m *RedisLockManager) ReleaseLock(ctx context.Context, projectKey string, prNumber int) error {
@@ -127,8 +138,12 @@ func (m *RedisLockManager) GetLockStatus(ctx context.Context, projectKey string)
 		PullRequestURL: data.PullRequestURL,
 		LockedAt:       data.LockedAt,
 		LockedBy:       data.LockedBy,
-		HasPlan:        len(data.PlanData) > 0,
-		PlanSummary:    data.PlanSummary,
+		// The third site of the same bug the two gates above carried: this
+		// value decides whether a pull request comment offers an apply, so
+		// deriving it from the artifact's length told every Helmfile
+		// reader there was no plan to apply.
+		HasPlan:     data.HasPlan,
+		PlanSummary: data.PlanSummary,
 	}, nil
 }
 

@@ -71,7 +71,7 @@ func TestProperty_LockReleaseAfterOperationCompletion(t *testing.T) {
 		ok, err := m.AcquireLock(ctx, projectKey, pr, "https://example.com/pr", "alice")
 		require.NoError(t, err)
 		require.True(t, ok)
-		require.NoError(t, m.StorePlanData(ctx, projectKey, pr, planData, plugin.ChangeSummary{Add: 1}))
+		require.NoError(t, m.StorePlan(ctx, projectKey, pr, PlanRecord{Data: planData, Summary: plugin.ChangeSummary{Add: 1}}))
 		require.NoError(t, m.ReleaseLock(ctx, projectKey, pr))
 
 		status, err := m.GetLockStatus(ctx, projectKey)
@@ -94,12 +94,12 @@ func TestProperty_PlanApplyLockConsistency(t *testing.T) {
 		ok, err := m.AcquireLock(ctx, projectKey, pr, "https://example.com/pr", "alice")
 		require.NoError(t, err)
 		require.True(t, ok)
-		require.NoError(t, m.StorePlanData(ctx, projectKey, pr, planData, summary))
+		require.NoError(t, m.StorePlan(ctx, projectKey, pr, PlanRecord{Data: planData, Summary: summary}))
 
-		gotData, gotSummary, err := m.GetPlanData(ctx, projectKey, pr)
+		plan, err := m.GetPlan(ctx, projectKey, pr)
 		require.NoError(t, err)
-		require.Equal(t, planData, gotData)
-		require.Equal(t, summary, gotSummary)
+		require.Equal(t, planData, plan.Data)
+		require.Equal(t, summary, plan.Summary)
 	})
 }
 

@@ -340,6 +340,29 @@ package doc update, then tests (unit, then property).
     implements Terraform meets it rather than rediscovering it
   - _Requirements: 7.3 (global Requirement 10.5)_
 
+- [x] 25. Trailing arguments need no `--` delimiter (2026-09 `plan-scoped-apply` amendment)
+  - The grammar gains an implicit delimiter: one scan over the tokens
+    after `operation` finds the first beginning with `-`. If that token is
+    exactly `--` it is consumed as a delimiter; otherwise it is itself the
+    first argument. Everything before it is a Project name
+  - `indexOf(rest, "--")` is replaced by `indexOfArgStart(rest)`, and the
+    old helper removed rather than left unused
+  - **All three of the new slice's criteria fall out of that one rule**,
+    which is why the implementation is a single scan rather than three
+    branches: the explicit `--` is found by the same scan because it also
+    begins with `-`, and the scan stopping at the first match is what keeps
+    a later `--` an ordinary argument — unchanged behaviour
+  - Motivated by `/turnip diff web -l name=x` previously failing with an
+    unmatched-Project error, which reads as turnip not knowing the Project
+    rather than as a syntax problem. A message cannot fix that; the
+    grammar can
+  - The parser still produces `ExtraArgs` for every operation. It has no
+    Plugin registry and cannot tell a plan from a mutating Operation, so
+    refusing them is `executeOne`'s job, one layer later
+  - Requirement 4.2's `[-- extra args]` wording and `design.md`'s grammar
+    block are amended; the existing `--` parser tests keep passing unchanged
+  - _Requirements: amends 4.2_
+
 ## Task Dependency Graph
 
 ```json

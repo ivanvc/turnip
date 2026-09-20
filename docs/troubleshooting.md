@@ -169,7 +169,7 @@ the operation running.
   operations via comment at all. Ask a maintainer to add you as a
   collaborator (or push a commit instead, which still auto-triggers a
   plan for anyone who can open a PR).
-- **Insufficient permission for apply/destroy/unlock**: these need write
+- **Insufficient permission for apply/sync/unlock**: these need write
   access specifically (not just any collaborator access, e.g. triage or
   read). Ask a maintainer to grant write access, or ask them to run the
   command themselves.

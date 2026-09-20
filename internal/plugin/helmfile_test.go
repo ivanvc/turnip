@@ -31,7 +31,6 @@ func TestHelmfilePlugin_ExecuteInvokesCorrectCommand(t *testing.T) {
 		{"diff", []string{"diff"}},
 		{"apply", []string{"apply"}},
 		{"sync", []string{"sync"}},
-		{"destroy", []string{"destroy"}},
 	}
 
 	for _, tt := range tests {
@@ -95,7 +94,7 @@ func TestHelmfilePlugin_ExtraArgsAppended(t *testing.T) {
 func TestHelmfilePlugin_ChangeSummaryOnlyForDiff(t *testing.T) {
 	diffOutput := []byte("Comparing release=a, chart=charts/a\nsomething changed\n")
 
-	for _, operation := range []string{"apply", "sync", "destroy"} {
+	for _, operation := range []string{"apply", "sync"} {
 		t.Run(operation, func(t *testing.T) {
 			var calls []recordedCall
 			p := &HelmfilePlugin{run: fakeRunner(t, &calls, diffOutput, nil, 0, nil)}
@@ -169,7 +168,7 @@ func TestHelmfilePlugin_OnOutputReachesCommandRunnerUnchanged(t *testing.T) {
 func TestHelmfilePlugin_NameAndOperations(t *testing.T) {
 	p := NewHelmfilePlugin()
 	assert.Equal(t, "helmfile", p.Name())
-	assert.Equal(t, []string{"diff", "apply", "sync", "destroy"}, p.GetOperations())
+	assert.Equal(t, []string{"diff", "apply", "sync"}, p.GetOperations())
 	assert.Equal(t, "diff", p.GetPlanOperation())
 	assert.Equal(t, "apply", p.GetApplyOperation())
 }

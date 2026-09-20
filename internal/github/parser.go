@@ -58,9 +58,16 @@ func ParseTriggers(body string) ([]*TriggerCommand, error) {
 		}
 
 		rest := tokens[2:]
-		if idx := indexOf(rest, "--"); idx >= 0 {
+		if idx := indexOfArgStart(rest); idx >= 0 {
 			cmd.Projects = nonEmpty(rest[:idx])
-			cmd.ExtraArgs = nonEmpty(rest[idx+1:])
+			// An explicit "--" is consumed as the delimiter; any other
+			// "-"-prefixed token is itself the first argument, which is
+			// what lets a scoped trigger be written without a delimiter.
+			if rest[idx] == "--" {
+				cmd.ExtraArgs = nonEmpty(rest[idx+1:])
+			} else {
+				cmd.ExtraArgs = nonEmpty(rest[idx:])
+			}
 		} else {
 			cmd.Projects = nonEmpty(rest)
 		}
@@ -78,9 +85,22 @@ func ParseTriggers(body string) ([]*TriggerCommand, error) {
 	}
 }
 
-func indexOf(tokens []string, target string) int {
+// indexOfArgStart returns the index of the token that begins a trigger
+// line's trailing arguments, or -1 when the line has none.
+//
+// A tool's own flags start with "-", so the first such token is where the
+// Project names stop — which is what lets "/turnip diff web -l name=x"
+// work without a delimiter, where it previously failed as an unmatched
+// Project name. An explicit "--" is found by this same scan because it
+// also begins with "-"; the caller consumes that one instead of passing
+// it through, which is the only difference between the two cases.
+//
+// The scan stops at the first match and nothing after it is re-examined,
+// so a second "--" further along is an ordinary argument — unchanged from
+// the behaviour this rule replaces.
+func indexOfArgStart(tokens []string) int {
 	for i, t := range tokens {
-		if t == target {
+		if strings.HasPrefix(t, "-") {
 			return i
 		}
 	}

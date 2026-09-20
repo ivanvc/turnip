@@ -742,7 +742,7 @@ type LockData struct {
 
 ### Property 22: Helmfile Plugin Command Execution
 
-*For any* Helmfile plugin operation, Diff should execute "helmfile diff", Sync should execute "helmfile sync", Apply should execute "helmfile apply", and Destroy should execute "helmfile destroy".
+*For any* Helmfile plugin operation, Diff should execute "helmfile diff", Sync should execute "helmfile sync", and Apply should execute "helmfile apply".
 
 **Validates: Requirements 13.2, 13.3, 13.4, 13.5**
 

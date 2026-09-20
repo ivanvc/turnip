@@ -10,7 +10,7 @@ import (
 
 	"github.com/ivanvc/turnip/internal/config"
 	"github.com/ivanvc/turnip/internal/github"
-	"github.com/ivanvc/turnip/internal/plugin"
+	"github.com/ivanvc/turnip/internal/lock"
 	"github.com/ivanvc/turnip/internal/rpc"
 )
 
@@ -146,19 +146,99 @@ func TestHandleResult_LockStateFollowsWhatActuallyHappened(t *testing.T) {
 	})
 }
 
+// A Helmfile plan produces no artifact, so while the storage condition
+// tested len(result.PlanData) > 0 nothing was ever recorded for it — and
+// every apply that followed was refused as though no plan had run. The
+// fact of a successful plan must be recorded whatever the tool returned.
+func TestHandleResult_HelmfilePlanWithNoArtifactStillRecordsAPlan(t *testing.T) {
+	var stored *lock.PlanRecord
+	locks := &fakeLockManager{
+		storePlanFunc: func(ctx context.Context, projectKey string, prNumber int, plan lock.PlanRecord) error {
+			stored = &plan
+			return nil
+		},
+	}
+	o, _ := testResultOrchestrator(t, locks)
+	createTestRecord(t, o, "op-helmfile-plan", "diff", false)
+
+	require.NoError(t, o.HandleResult(context.Background(), "op-helmfile-plan", rpc.OperationResult{
+		Success:  true,
+		PlanData: nil,
+		Changes:  rpc.ChangeSummary{Change: 4},
+	}))
+
+	require.NotNil(t, stored, "a successful plan must be recorded even with no artifact")
+	assert.Empty(t, stored.Data, "Helmfile produces none, and that is not the same as no plan")
+	assert.Equal(t, 4, stored.Summary.Change)
+}
+
+// Releasing is not apply-specific: a successful sync mutates real
+// infrastructure and must give the Lock back too. Narrowing this back to
+// rec.IsApply is the regression worth guarding — it reads like the rule,
+// and it strands a Project with no route back but a manual unlock.
+func TestHandleResult_SuccessfulSyncReleasesTheLock(t *testing.T) {
+	var released bool
+	locks := &fakeLockManager{
+		releaseLockFunc: func(ctx context.Context, projectKey string, prNumber int) error {
+			released = true
+			return nil
+		},
+	}
+	o, _ := testResultOrchestrator(t, locks)
+	createTestRecord(t, o, "op-sync", "sync", false)
+
+	got := publishedResult(t, o, "op-sync", rpc.OperationResult{Success: true})
+
+	assert.True(t, released, "a successful sync must release its Lock")
+	assert.False(t, got.Locked, "a released lock must not be offered for unlocking")
+}
+
+// Requirement 1.2: the arguments recorded are the ones the Operation ran
+// with, read from the record the Job was built from rather than
+// re-derived from the trigger line — so whatever turnip normalised is
+// what a later mutating Operation replays.
+func TestHandleResult_RecordsTheOperationsOwnArguments(t *testing.T) {
+	var stored *lock.PlanRecord
+	locks := &fakeLockManager{
+		storePlanFunc: func(ctx context.Context, projectKey string, prNumber int, plan lock.PlanRecord) error {
+			stored = &plan
+			return nil
+		},
+	}
+	o, _ := testResultOrchestrator(t, locks)
+	require.NoError(t, o.records.Create(context.Background(), &OperationRecord{
+		OperationID:   "op-args",
+		ProjectKey:    "owner/repo/helm-a",
+		Project:       config.Project{Name: "helm-a", Tool: "helmfile"},
+		Owner:         "owner",
+		Repo:          "repo",
+		PRNumber:      42,
+		Operation:     "diff",
+		ExtraArgs:     []string{"-l", "name=web"},
+		CheckRunID:    555,
+		StartDeadline: time.Now().Add(5 * time.Minute).Unix(),
+		CreatedAt:     time.Now(),
+	}))
+
+	require.NoError(t, o.HandleResult(context.Background(), "op-args", rpc.OperationResult{Success: true}))
+
+	require.NotNil(t, stored)
+	assert.Equal(t, []string{"-l", "name=web"}, stored.Args)
+}
+
 func TestHandleResult_UnclaimableIsNoop(t *testing.T) {
 	o, _ := testResultOrchestrator(t, &fakeLockManager{})
 	// No record created at all.
 	require.NoError(t, o.HandleResult(context.Background(), "does-not-exist", rpc.OperationResult{Success: true}))
 }
 
-func TestHandleResult_SuccessfulPlan_StoresPlanDataNotReleasesLock(t *testing.T) {
+func TestHandleResult_SuccessfulPlan_StoresPlanNotReleasesLock(t *testing.T) {
 	var stored bool
 	var released bool
 	locks := &fakeLockManager{
-		storePlanDataFunc: func(ctx context.Context, projectKey string, prNumber int, planData []byte, summary plugin.ChangeSummary) error {
+		storePlanFunc: func(ctx context.Context, projectKey string, prNumber int, plan lock.PlanRecord) error {
 			stored = true
-			assert.Equal(t, []byte("plan-data"), planData)
+			assert.Equal(t, []byte("plan-data"), plan.Data)
 			return nil
 		},
 		releaseLockFunc: func(ctx context.Context, projectKey string, prNumber int) error {

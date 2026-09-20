@@ -136,7 +136,7 @@ func newHAOrchestrator(t *testing.T, addr string, client github.GitHubClient) *O
 // wireFakeJobCreator attaches execute_test.go's fakeJobCreator, which
 // publishes its canned result directly (bypassing HandleResult entirely)
 // — fine when a test only cares about the immediate AcquireLock outcome
-// and never needs StorePlanData/ReleaseLock's side effects to have run.
+// and never needs StorePlan/ReleaseLock's side effects to have run.
 func wireFakeJobCreator(t *testing.T, o *Orchestrator, result github.ProjectResult) {
 	t.Helper()
 	o.jobs = &fakeJobCreator{t: t, redis: o.redis, result: result}
@@ -145,7 +145,7 @@ func wireFakeJobCreator(t *testing.T, o *Orchestrator, result github.ProjectResu
 // wireGRPCJobCreator attaches integration_test.go's grpcDrivingJobCreator,
 // driving a real bufconn gRPC round-trip into this instance's own
 // HandleLog/HandleResult — needed whenever a test's assertion depends on
-// HandleResult's real side effects (StorePlanData for a plan,
+// HandleResult's real side effects (StorePlan for a plan,
 // ReleaseLock for an apply), not just the published ProjectResult.
 func wireGRPCJobCreator(t *testing.T, o *Orchestrator, logLine string, result *pb.OperationResult) {
 	t.Helper()
@@ -177,7 +177,7 @@ func haApplyEvent(owner, repo string, prNumber int, author string) *github.Webho
 // an Apply on a *different* instance must succeed exactly as it would if
 // one instance had handled both — instance B has no in-process state from
 // instance A, only whatever the real Redis backend holds (the lock and
-// the plan data StorePlanData wrote to it).
+// the plan record StorePlan wrote to it).
 func TestHA_PlanAndApplyAcrossInstancesMatchSingleInstance(t *testing.T) {
 	addr := realTestRedisAddr(t)
 

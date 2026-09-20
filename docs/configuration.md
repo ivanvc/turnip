@@ -350,7 +350,7 @@ be the tool vendor's own image, needing nothing from it but the tool.
 
 | Tool | Status | Provisioned by | Operations |
 |---|---|---|---|
-| Helmfile | implemented | run-in-image | `diff` (plan), `apply`, `sync`, `destroy` |
+| Helmfile | implemented | run-in-image | `diff` (plan), `apply`, `sync` |
 | Terraform | **not yet implemented** | copy-out | recognized by the config parser (won't reject your config), but no Plugin exists yet to actually run it |
 | Pulumi | **not yet implemented** | copy-out | same as Terraform |
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,7 +81,36 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	isApply := t.Operation == p.GetApplyOperation()
 	key := projectKey(repo.Owner, repo.Name, t.Project.Name)
 
+	// Only the plan chooses a scope, because it is the only Operation whose
+	// output a human reviews. Everything else inherits the scope recorded on
+	// the Lock, so arguments of its own could only contradict what was
+	// reviewed.
+	//
+	// Keyed off !isPlan rather than a list of operation names, so an
+	// Operation a future Plugin adds is covered without anyone remembering
+	// to add it here. Refused before the Lock is touched, alongside the
+	// ServiceAccount and submodule refusals above and for the same reason:
+	// an Operation that was never going to run should leave no Lock, no
+	// check run and no Job behind.
+	//
+	// Refused rather than ignored: a silently discarded argument is
+	// indistinguishable from an honoured one until the infrastructure
+	// changes, by which point the author's belief about what they applied
+	// is wrong with nothing on the page to correct it.
+	if !isPlan && len(t.ExtraArgs) > 0 {
+		return rejectedResult(t, fmt.Sprintf(
+			"%q does not accept arguments (got %s); it replays the scope the plan recorded. Pass arguments to %q instead.",
+			t.Operation, strings.Join(t.ExtraArgs, " "), p.GetPlanOperation(),
+		))
+	}
+
 	var planData []byte
+	// execArgs is what actually reaches the tool: the trigger's own
+	// arguments for a plan, and the scope the plan recorded for everything
+	// else. The refusal above is what makes this unambiguous — for a
+	// non-plan Operation t.ExtraArgs is necessarily empty, so there is
+	// exactly one candidate.
+	execArgs := t.ExtraArgs
 
 	if isPlan {
 		acquired, err := o.locks.AcquireLock(ctx, key, pr.Number, pullRequestURL(repo.Owner, repo.Name, pr.Number), t.TriggeredBy)
@@ -112,16 +142,23 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		if err != nil || !locked {
 			return rejectedResult(t, "no lock (or a different PR's lock) is held; a new plan is required")
 		}
-		if isApply {
-			data, _, err := o.locks.GetPlanData(ctx, key, pr.Number)
-			if err != nil {
-				if errors.Is(err, lock.ErrNoPlanData) {
-					return rejectedResult(t, "no plan data stored; a new plan is required")
-				}
-				return rejectedResult(t, fmt.Sprintf("retrieving plan data: %v", err))
+		// Every mutating Operation replays the recorded plan, not just the
+		// apply: a sync that ran unscoped after a scoped diff would change
+		// more than anyone reviewed. This branch is already the "not a
+		// plan" case, so the fetch needs no further condition.
+		//
+		// The Lock requirement above already existed; what this adds is
+		// that the Lock must carry a recorded plan, which is also what
+		// turns a pre-upgrade Lock into a request to re-plan.
+		plan, err := o.locks.GetPlan(ctx, key, pr.Number)
+		if err != nil {
+			if errors.Is(err, lock.ErrNoPlan) {
+				return rejectedResult(t, "no plan recorded; a new plan is required")
 			}
-			planData = data
+			return rejectedResult(t, fmt.Sprintf("retrieving plan: %v", err))
 		}
+		planData = plan.Data
+		execArgs = plan.Args
 	}
 
 	// checkRunErr is deliberately its own variable, not the shared err:
@@ -163,7 +200,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		HeadSHA:        pr.HeadSHA,
 		Operation:      t.Operation,
 		IsApply:        isApply,
-		ExtraArgs:      t.ExtraArgs,
+		ExtraArgs:      execArgs,
 		PlanData:       planData,
 		TriggeredBy:    t.TriggeredBy,
 		CheckRunID:     checkRunID,
@@ -205,7 +242,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		BaseRef:        pr.BaseRef,
 		GitHubToken:    token,
 		ServerAddr:     o.runnerServerAddr,
-		ExtraArgs:      t.ExtraArgs,
+		ExtraArgs:      execArgs,
 		PlanData:       planData,
 		RunnerImage:    o.runnerImage,
 		ServiceAccount: serviceAccount,

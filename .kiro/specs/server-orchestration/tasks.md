@@ -386,6 +386,35 @@ worked in parallel.
     task 24's check-run note stays plain text deliberately
   - _Requirements: 1.2, 1.3, 1.4 (presentation only; behavior unchanged)_
 
+- [x] 27. Apply exactly what was planned (2026-09 `plan-scoped-apply` amendment)
+  - `HandleResult`'s storage condition drops `len(result.PlanData) > 0`: a
+    successful plan records a `PlanRecord` whatever the tool returned,
+    because Helmfile returns nothing and that is not the same as no plan.
+    The arguments stored are `rec.ExtraArgs` — the Operation's own, read
+    from the record the Job was built from rather than re-derived from the
+    trigger line
+  - **Releasing stops being apply-specific.** `case rec.IsApply` becomes
+    the fall-through, so every successful non-plan Operation discharges the
+    Lock. Previously a successful `sync` left the Project locked with no
+    route back but a manual unlock. Narrowing this back to `IsApply` is the
+    regression worth guarding — it reads like the rule
+  - `executeOne` gains an argument refusal keyed off `!isPlan`, placed
+    before the Lock is touched, beside the ServiceAccount and submodule
+    refusals and for the same reason: an Operation that was never going to
+    run should leave no Lock, check run or Job behind. Refused rather than
+    ignored, since a silently dropped argument is indistinguishable from an
+    honoured one until the infrastructure changes
+  - The plan fetch broadens from `if isApply` to every non-plan Operation,
+    and the recorded `PlanArgs` are substituted into both the
+    `OperationRecord` and `jobs.OperationParams` via one `execArgs` value.
+    The refusal is what makes that substitution unambiguous
+  - **Carries a citation fix.** The comment on the failure path cited
+    "Requirement 6.8", which does not exist — Requirement 6 is *Plan with
+    Destroy Flag* and has five criteria, none about Lock lifecycle. The
+    governing requirement is 7. The wrong citation is what made this
+    behaviour look specified when nothing specified it
+  - _Requirements: no new behaviour beyond `plan-scoped-apply`'s own_
+
 ## Notes
 
 - No new third-party dependencies (design.md's "Dependencies" section);

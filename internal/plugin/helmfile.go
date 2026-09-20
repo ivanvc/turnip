@@ -20,7 +20,7 @@ func NewHelmfilePlugin() *HelmfilePlugin {
 func (p *HelmfilePlugin) Name() string { return "helmfile" }
 
 func (p *HelmfilePlugin) GetOperations() []string {
-	return []string{"diff", "apply", "sync", "destroy"}
+	return []string{"diff", "apply", "sync"}
 }
 
 func (p *HelmfilePlugin) GetPlanOperation() string  { return "diff" }

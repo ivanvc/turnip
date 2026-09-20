@@ -28,6 +28,12 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 17 | Pull Request Comment Output | `comment-output` | Complete | Slices 4, 6 |
 | 18 | Hold a Lock Only When There Is Something to Apply | `lock-release-rules` | Not Started | Slices 3, 6 |
 | 19 | Draft Pull Requests | `draft-pull-requests` | Complete | Slices 4, 6 |
+| 20 | Apply Exactly What Was Planned | `plan-scoped-apply` | Complete | Slices 3, 6 |
+| 21 | What a Bare Command Targets | `project-selection` | Not Started | Slices 1, 6 |
+| 22 | Refuse Tool Arguments That Name an Executable | `tool-argument-policy` | Not Started | Slices 4, 6 |
+| 23 | Authorize on Permission Level, Not Call Success | `collaborator-authorization` | Not Started | Slice 4 |
+| 24 | How the Runner Receives Its GitHub Token | `runner-token-delivery` | Not Started | Slices 5, 6 |
+| 25 | Authenticating the Runner to the Server | `runner-authentication` | Not Started | Slices 5, 6 |
 
 ## Slice Details
 
@@ -394,6 +400,28 @@ contributor wondering why nothing happened), and whether an operator may
 ever opt in for a genuinely credential-free public project. Neither was
 explored — both are decisions for whoever takes this.
 
+**What a 2026-09-19 security review added.** The review confirmed
+everything above, including that the comment path needs the same check.
+It found one thing this entry did not cover, and it is separable from the
+fork question: `internal/runner/clone.go` runs
+`git remote add origin <authenticated URL>`, which persists the GitHub App
+installation token into `.git/config` inside the **shared workspace
+volume** that the tool container also mounts. That defeats the deliberate
+scoping of the token to the clone container — `internal/jobs/build.go`
+keeps `TURNIP_GITHUB_TOKEN` out of the main container's environment
+precisely so the tool never sees it — because any code executing in the
+tool container can simply read it out of the repository it was handed.
+
+The fix is independent of the fork check and worth doing regardless: a
+credential helper or `http.extraHeader` in the clone step, or rewriting
+the remote to a clean URL before the tool container starts.
+
+The review also confirmed a mitigation that **does** hold, worth recording
+so it is not re-litigated: `runner.serviceAccount` cannot be chosen from
+the pull request's own configuration unless an operator opted in, because
+the allowed-overrides default permits nothing. A fork's pull request
+inherits the operator's default ServiceAccount rather than selecting one.
+
 ---
 
 ### Slice 16: Cloning Submodules
@@ -631,10 +659,683 @@ reason.
 
 ---
 
+### Slice 20: Apply Exactly What Was Planned
+
+**Goal**: Make a Helmfile apply do exactly what its diff showed.
+
+**What's wrong today**: the Lock exists to guarantee that an apply does
+what its plan showed. For Terraform that guarantee rides on a plan file —
+the plan is an artifact, the artifact is stored, and applying it cannot
+touch anything the plan did not. **Helmfile has no such artifact, and
+turnip stores nothing in its place.** `HelmfilePlugin.Execute` returns
+`PlanData: nil`, so a Helmfile Lock carries a change summary and an empty
+byte slice. What actually decided the scope of that diff — the arguments
+— is discarded the moment the Operation finishes.
+
+Arguments do reach the tool (`args = append(args, opts.ExtraArgs...)`),
+and they reach *any* Operation: `executeOne` forwards `ExtraArgs`
+unconditionally, with no branch on plan versus apply. So a scoped diff
+genuinely runs scoped, and the apply after it genuinely runs unscoped:
+
+| Sequence | Result today |
+|---|---|
+| scoped diff, then bare apply | applies **everything** — the widest possible blast radius |
+| scoped diff, then differently-scoped apply | applies a scope **nobody reviewed** |
+| bare diff, then scoped apply | applies less than planned — harmless, still not what was approved |
+
+The second is the dangerous one: it looks deliberate, reads plausibly in
+the pull request thread, and nothing marks the applied scope as one that
+was never diffed.
+
+**This is not a missing feature.** It is the Lock's central guarantee
+silently not holding for Helmfile, and failing toward doing *more* than
+was reviewed rather than less.
+
+**The reasoning**: the arguments are the artifact. Where Terraform stores
+a plan file, Helmfile stores the arguments that produced the diff —
+because for Helmfile those arguments *are* the description of what was
+examined.
+
+**Delivers**: a successful plan stores its trailing arguments in the Lock
+beside the plan data; an apply replays them; an apply **refuses**
+arguments of its own rather than ignoring them; and `--` becomes
+optional, the first `-`-prefixed token starting the arguments.
+
+**Prior art**: Atlantis' `apply` accepts no extra Terraform arguments, for
+precisely this reason — it applies a stored plan file, so an argument
+could only contradict it. turnip reaches the same rule from the opposite
+direction: it has no plan file, so the arguments must *be* the stored
+scope.
+
+**The decision worth reading** is refusing rather than ignoring an
+argument on apply. A silently discarded argument is indistinguishable
+from an honoured one until the infrastructure changes, and the author's
+belief about what they applied would be wrong with nothing on the page to
+correct it.
+
+**Explicitly out of scope**: teaching turnip which flags affect scope —
+the no-arguments rule exists precisely so that no per-tool knowledge of
+flag semantics is needed, where a list of "scope-affecting flags" would
+need updating every time a tool gained one; Terraform and Pulumi plan
+artifacts, which are Slice 7's to decide, so this slice must not assume a
+plan artifact exists; and validating at apply time that stored arguments
+still match anything — the Lock records what was planned, the tool
+reports what it finds.
+
+**Global requirements covered**: implements the unimplemented substance of
+**Requirement 7.5** — "WHEN an apply Operation is triggered, THE Server
+SHALL verify the Lock is held by the current PR and retrieve the plan data
+from the Lock" — which turnip satisfies literally (it retrieves the bytes)
+but not in effect, since for Helmfile the bytes are empty and the scope is
+not retrieved at all. Extends **Requirement 6.2**'s extra-argument
+handling from the `-destroy` flag to arguments generally, and makes
+**Requirement 6.5** — apply "uses the plan from the lock" — true for
+Helmfile, where today it holds only for tools that have a plan file.
+
+It also **amends Requirements 13.7 and 13.9**, which mandated Helmfile
+destroy support. Both are rewritten in place: 13.7 now states that the
+Plugin does not expose destroy and why, and 13.9 that a trigger naming it
+is rejected as unrecognized. **Requirement 13.2 needs no change** — it
+already listed only `diff`, `apply` and `sync`, and becomes correct as
+written. Global design **Property 22** drops its destroy clause, after
+which its "Validates: Requirements 13.2–13.5" line matches what it
+actually claims.
+
+---
+
+### Slice 21: What a Bare Command Targets
+
+**Goal**: Make `/turnip plan` mean what the pull request actually touched.
+
+**What's wrong today**: two paths choose which Projects an Operation runs
+for, and they disagree. The automatic plan filters —
+`MatchProjects(cfg.Projects, modifiedFiles)` selects only Projects whose
+`whenModified` globs match the pull request's changed files. A comment
+trigger does not: `resolveTargets` starts from *every* configured Project
+and narrows only when the trigger names some. So `/turnip plan` means
+every Project in the repository, regardless of what the pull request
+touched.
+
+**Invisible with one Project and painful with eight.** It is not merely
+slow. A plan acquires a Lock per Project and holds it until applied or
+released, so one person typing four words locks the entire repository
+against everyone else. Under today's lock rules a failed or no-change plan
+among those keeps its Lock too, so the locks outlive the mistake.
+
+A bare apply is noisy for the same reason: it targets every configured
+Project, and `executeOne` rejects each one holding no Lock — so applying
+one planned Project among eight produces one apply and seven refusals.
+
+**Delivers**: a bare plan targets the Modified_Set, using the same
+matching the automatic plan uses rather than a parallel implementation of
+it; a bare apply targets only the Projects this pull request holds a plan
+for, reporting *once* when there are none rather than once per configured
+Project; `*` targets everything deliberately; and the configuration parser
+rejects a Project named `*` or beginning with `-`, so a name that could
+never be addressed fails when it is written rather than when someone tries
+to plan it.
+
+**Prior art**: Atlantis' bare `atlantis plan` re-runs the autoplan set —
+*"runs plan on the projects that were modified as determined by the
+`when_modified` config"* — and its bare `atlantis apply` applies *"all
+unapplied plans from this pull request"*. Both defaults are narrow, and
+its `-p`/`-d` flags are how you reach past them. turnip has the opposite
+default and no way to ask for the narrower thing, which is the gap this
+slice closes.
+
+**Why `*` rather than `all`**: `all` is a plausible Project name, so it
+could only become a selector by stealing a name someone might legitimately
+use. `*` cannot collide once the parser rejects it as a name — which is
+why that rejection is part of this slice rather than a tidy-up after it.
+
+**Explicitly out of scope**: selecting Projects by directory —
+`narrowByName` matches `Project.Name` only and Atlantis' `-d` has no
+turnip equivalent, a real gap but one about *addressing* Projects rather
+than about what a bare command defaults to; and changing the automatic
+plan, which already filters correctly. This slice brings the comment path
+into line with it, not the reverse.
+
+**Global requirements covered**: the two halves stand differently, as in
+Slice 18.
+
+*The bare apply half **amends Requirement 5.3***, which says a detected
+apply trigger "SHALL trigger apply Operations for all Projects configured
+in turnip.yaml" — written when every configured Project was the only
+selection turnip had. Requirement 5.4's named-Project clause is extended
+rather than amended, since `*` is a new selector standing beside a name.
+
+*The bare plan half fills a gap.* Requirement 4 governs the automatic plan
+only, Requirement 5 governs apply, and Requirement 6.1 mentions a
+comment-triggered plan solely to carry `-destroy`. No numbered criterion
+says which Projects a comment-triggered plan targets, so nothing is
+overturned.
+
+**Relationship to Slice 18**: they compound without depending on each
+other. Slice 18 decides which outcomes release a Lock; this slice reduces
+how many Locks a careless command takes in the first place.
+
+**Sequencing — worth taking before Slice 20.** Both change
+`resolveTargets`: this slice changes which Projects it returns, Slice 20
+changes what it does with the tokens after them. This is the larger
+structural change of the two, so taking it second would mean reworking
+Slice 20's argument handling around it.
+
+---
+
+### Slice 22: Refuse Tool Arguments That Name an Executable
+
+**Goal**: Stop a pull request comment's trailing arguments from choosing
+which binary the Runner executes.
+
+**What's wrong today**: trailing arguments travel from the comment to the
+tool's argv with **no filtering at any hop** —
+`internal/github/parser.go` captures everything after `--` verbatim, and
+`target.go` → `execute.go` → `internal/jobs/build.go` (as JSON in
+`TURNIP_EXTRA_ARGS`) → `internal/runner/config.go` → `run.go` →
+`internal/plugin/helmfile.go` are each a pure pass-through. The only
+allow/deny machinery turnip has, `TURNIP_ALLOWED_OVERRIDES`, governs
+`turnip.yaml` fields and not comment arguments.
+
+**The exposure is narrower than it first looks, and sharper.** No shell is
+involved — `exec.CommandContext` takes an argv slice — so shell
+metacharacters are inert. The problem is that several helmfile flags name
+a *path that helmfile then executes or reads*:
+
+| Flag | Where registered | Effect |
+|---|---|---|
+| `-b`, `--helm-binary` | root persistent flag | names the executable helmfile invokes; run during `helmexec` init, before any chart resolution |
+| `--post-renderer` | the `diff` subcommand itself | names an executable helm invokes |
+| `--args`, `--diff-args` | the `diff` subcommand | raw argument pass-through into `helm` |
+| `-f`, `--file`, `--state-values-file` | root / subcommand | read a path — but see the correction below before treating this like the rows above |
+
+Being a *root persistent* flag is what makes the first one reachable:
+Cobra merges parent persistent flags into a subcommand's flag set, so it
+parses **after** the operation name, which is where the attacker-controlled
+tail lands. `plugin-helmfile/tasks.md` records the opposite assumption —
+"global flag, must precede the subcommand" — and that assumption is what
+left this open. The second entry reaches the same outcome without
+depending on persistent-flag behaviour at all, so the fix cannot rest on
+disproving the first.
+
+These names are from helmfile's public CLI reference at the pinned
+version, not privileged information; they are written down here because a
+blocklist or allowlist cannot be authored without them.
+
+**Correction: `-f` does not belong with the rows above it.** An earlier
+draft of this entry listed it as a danger alongside the
+executable-naming flags, and that was wrong. `-f` is *the* mechanism for
+pointing helmfile at a state file that is not at the default name in the
+working directory, which real repositories routinely need — a repository
+whose state files sit at its root, or which keeps one file per
+environment, cannot run at all without it. Blanket-blocking it would
+refuse legitimate configuration rather than an attack.
+
+The distinction that matters is not the flag but **where the value comes
+from**. A path supplied by repository configuration is reviewed alongside
+the code it selects; a path typed into a pull request comment is not. That
+is a source rule, not a flag rule, and it is the reason this slice has to
+decide *who may supply arguments* rather than just *which arguments
+exist*. The executable-naming flags in the rows above are different in
+kind: they grant code execution regardless of who supplies them.
+
+**Authorization does not help.** `target.go` requires write permission
+only when the Operation is not the Plugin's plan Operation, and Helmfile's
+plan Operation is `diff` — so the *least*-privileged trigger is exactly
+the one that carries arguments.
+
+**Prior art**: Atlantis ships `--blocked-extra-args`, defaulting to
+`-chdir,--chdir,-plugin-dir,--plugin-dir`, for precisely this class.
+
+**Configured defaults are the other half of the same rule.** Many
+repositories cannot run at all without arguments: where a Project's state
+file is not at the default name in its working directory, helmfile needs
+`-f` on *every* invocation, and making a human type that into every
+comment is both hostile and unreviewable. So this slice decides two
+things, not one — which arguments a *comment* may carry, and which a
+*repository* may configure. Three decisions, taken 2026-09-19:
+
+**Repository-supplied, never server-side.** A state file path describes
+the repository's own layout, so an operator pinning it centrally would be
+describing someone else's directory structure. It belongs in
+`turnip.yaml` and nowhere else — unlike `runner.serviceAccount`, where the
+Server supplies a default and the repository overrides it.
+
+**Not gated, but jailed.** Naming a file inside your own repository grants
+nothing: turnip chooses the flag, the repository chooses only which of its
+own files that flag names. By turnip's own rule — gates belong on what
+*grants capability* — this needs no `TURNIP_ALLOWED_OVERRIDES` entry. What
+it needs is containment, so that `../../../../../etc/passwd` does not
+resolve.
+
+The jail is the **workspace**, not the Project directory. A repository
+with per-environment directories and one shared state file at its root is
+a legitimate layout, and confining to the Project directory would refuse
+it; escaping the clone is the line that matters, because that is where pod
+internals begin. Enforce it twice — at validation on the Server, so the
+failure arrives as a comment naming the offending value, and again in the
+Runner before invoking, since the Runner receives this through an
+environment variable and should not trust it.
+
+A lexical check (`filepath.IsLocal` on the cleaned, workspace-relative
+path) is proportionate. Its limit, stated rather than glossed: a symlink
+committed inside the repository could point outside it, and only symlink
+resolution would catch that — but the same commit could run arbitrary code
+anyway, so the lexical check is not the weakest link. This is the same
+invariant the Backlog records for `Project.directory`; they should share
+one helper.
+
+**A typed key, not a raw list.** `with.file` beside the existing
+`with.environment`, with the Plugin translating each into the right flag
+in the right position. turnip picks the flag; the repository supplies only
+a value — which is what makes the previous decision safe by construction,
+since there is no way to smuggle an executable-naming flag through a field
+whose only use is a path. Requirement 18.3 set this precedent already with
+`workspace` and `backendConfig` for Terraform, and `With` is *already* a
+free-form `map[string]string` that reaches the Plugin, so this needs no
+schema change at all — only another key read in
+`internal/plugin/helmfile.go`.
+
+An Atlantis-style raw `extra_args` list was considered and rejected for
+now: it is precisely the surface this slice exists to restrict, and since
+`turnip.yaml` is read from the pull request's own head commit it is no
+more trusted than a comment. If a need appears that a typed key cannot
+express, it goes through this policy rather than around it.
+
+**`--helm-binary` is gated, not banned.** Refusing it outright would be
+wrong — there are real reasons to point helmfile at a helm build other
+than the one the tool image ships, a merged-but-unreleased fix being the
+obvious one. So it belongs in `TURNIP_ALLOWED_OVERRIDES` beside
+`runner.serviceAccount`: refused by default, available to an operator who
+has decided their repositories may do it. That is the same judgement
+`runner.serviceAccount` already encodes — the setting grants capability,
+so a gate sits on it, but the capability is legitimate.
+
+Note what this does *not* cover: running a forked **helmfile** rather than
+a forked **helm**. That is an image question, not a flag question, and no
+flag reaches it — see the Backlog.
+
+**Delivers**: validation of trailing arguments on the **Server**, before
+the Job is built, so a refusal reaches the pull request rather than
+failing opaquely in a pod. An allowlist per tool is preferable to a
+blocklist — a blocklist has to be re-audited every time a tool adds a
+flag, which is the same maintenance trap turnip rejected for tool
+versions. A plausible Helmfile allowlist to start from is `-l`/`--selector`,
+`--set`, `--context` and `--concurrency`: enough for the scoped-diff
+workflow Slice 20 is built around, and nothing that names a path. Also to
+decide: whether trailing arguments should require write permission even on
+a plan, since today only the Operation *name* is authorized, never its
+arguments.
+
+**Relationship to Slice 20**: they compose, and neither substitutes for
+the other. Slice 20 makes the plan the only Operation that accepts
+arguments, which shrinks the surface but does not close it — a plan still
+takes them, and the plan is the lowest-privilege trigger there is.
+
+**Rated HIGH** in the 2026-09-19 security review, with the caveat that
+turnip's only current deployment is a private repository where every
+commenter already has repository access.
+
+---
+
+### Slice 23: Authorize on Permission Level, Not Call Success
+
+**Goal**: Make the collaborator gate test what GitHub actually answered.
+
+**What's wrong today**: `Authorizer.IsCollaborator`
+(`internal/github/authorize.go`) discards the permission string and
+returns true whenever the API call merely *succeeds*. It asks
+`GET /repos/{owner}/{repo}/collaborators/{username}/permission`, whose
+documented values include `none` — and `none` is a value in a **200
+response body**, which cannot be observed on a 404.
+
+**The premise is written down, and it is wrong.**
+`github-integration/design.md` justifies the single cached call with the
+claim that "GitHub's API returns 404 for a non-collaborator on that
+endpoint". That 204/404 behaviour belongs to the *other* endpoint,
+`/collaborators/{username}` — which this codebase already implements
+correctly as `Client.IsCollaborator` and never calls from the Authorizer.
+The tests encode the same assumption, which is why they pass: the
+non-collaborator fixture is an *error*, and nothing asserts that a `none`
+permission yields false.
+
+**What it reaches**: the collaborator check is the only gate on the
+comment path, and the write-permission check is skipped for plan
+Operations. Apply, sync and unlock stay protected. A plan does not — and a
+plan carries both project selection (any Project in `turnip.yaml`, not
+only ones the pull request touched) and trailing arguments, which is where
+this compounds with Slice 22.
+
+**Scope honestly**: latent on a private repository, where anyone able to
+comment already has read access and would pass a correct check anyway. It
+matters on the first public installation, and it is an unambiguous
+violation of global Requirement 16.1/16.2 either way.
+
+**Delivers**: the Authorizer asking the endpoint that answers the
+question; rejection of `none` and of unrecognized values; the design
+decision *corrected* rather than quietly edited, since a wrong premise
+left in place is what produced this; and regression tests for the `none`
+case in both `authorize_test.go` and `comment_test.go`.
+
+**Do not fix it with a rank comparison.** On a public repository the
+permission endpoint may report `read` for any user at all, since public
+repositories grant universal pull access — so `>= read` would still admit
+the attacker. The fix is the endpoint, not the threshold.
+
+---
+
+### Slice 24: How the Runner Receives Its GitHub Token
+
+**Goal**: Stop the GitHub App installation token being readable by anything
+that can read a Pod.
+
+**What's wrong today**: `internal/jobs/build.go` hands the token to the
+clone container as a literal environment value —
+`corev1.EnvVar{Name: "TURNIP_GITHUB_TOKEN", Value: op.GitHubToken}` — and
+turnip creates no Kubernetes Secret anywhere. A search of the Job path
+finds no `secretKeyRef` and no `EnvFrom`; the only secret the codebase
+handles is the Server's own webhook secret, read from the Server's
+environment.
+
+**The consequence is a collapsed privilege boundary.** A literal env value
+is a field of the Job and Pod objects, so the token is readable by anyone
+who can `get pod` or `get job` in the Runner's namespace, shows up in
+`kubectl describe` and `kubectl get -o yaml`, and sits in etcd in
+cleartext unless the cluster has encryption-at-rest configured for that
+resource. Pod-read is granted far more freely than secret-read —
+monitoring agents, debugging access, operators — so a `secretKeyRef` would
+put the credential behind a permission an operator grants deliberately,
+where today it rides one they grant casually.
+
+**The existing intent is right and must survive the fix.** The code
+comment records that only the clone reads the token, "so the container
+that runs the tool has no business carrying it", and the token is
+correctly absent from the main container's environment. That scoping is
+sound; it is the *delivery mechanism* that leaks, not the placement.
+
+**Three surfaces carry the same token, and this slice should own all
+three** rather than fixing the one that happens to be in front of us:
+
+| Surface | Where | Who can read it |
+|---|---|---|
+| Job/Pod spec env value | `internal/jobs/build.go` | anything with pod or job read in the namespace; etcd |
+| `.git/config` in the workspace | `internal/runner/clone.go`'s `git remote add` | any code running in the tool container — recorded in Slice 15 |
+| `OperationStart` gRPC message | `internal/runner/reporter.go` | plaintext pod-to-pod traffic, on the clone-failure path only |
+
+**Delivers**: a delivery mechanism that keeps the credential out of a
+widely-readable API object. Three candidates, and they are not
+interchangeable:
+
+| # | Option | Closes pod-read | Closes tool-container read | Available today |
+|---|---|---|---|---|
+| A | per-Job Secret via `secretKeyRef`, deleted with the Job | yes | no | yes |
+| B | fetched over gRPC instead of handed over | yes | no | **no** — see below |
+| C | never persisted: credential helper or `http.extraHeader` in the clone step | n/a | **yes** | yes |
+
+**C is not an alternative to A or B** — it addresses where the token ends
+up rather than how it arrives, and it is the only one of the three that
+closes a surface reachable from a pull request. A and B both defend
+against someone who already has cluster access. Do C regardless of which
+delivery option wins.
+
+**B is blocked on Slice 25.** The existing RPC is client-streaming
+(`rpc ExecuteOperation(stream ExecuteOperationRequest) returns
+(ExecuteOperationResponse)`), so there is no server-to-client channel to
+push a credential down — that part is only a proto change. The real
+obstacle is that the endpoint authenticates nothing, so a credential-fetch
+call could only be keyed on the operation id, which is itself a plaintext
+env value on the pod (`TURNIP_OPERATION_ID`). That trades "pod-read yields
+the token" for "pod-read yields the id, which yields the token" — an
+indirection, not a fix. Slice 25 is what makes B coherent.
+
+**Recommended order**: C first (smallest, and the only one a pull request
+can reach), then A as the delivery change, with B as the end state once
+Slice 25 lands.
+
+**Free either way**: `github_token` is field 8 on `OperationStart`, flows
+Runner→Server, and the Server never reads it. Delete it.
+
+**On the RBAC objection to A**: adding `secrets: create/delete` to the
+Server's Role looks like an escalation and mostly is not — anything that
+can create a Pod in a namespace can already mount any Secret in that
+namespace into it, so Job-create already implies Secret-read. The genuine
+costs are lifecycle: an `ownerReference` so the Secret dies with the Job,
+and a decision about orphans if garbage collection misses one.
+
+**What does not help**: the token already being short-lived. A GitHub App
+installation token expires in about an hour, but the exposure window *is*
+the Job's lifetime — precisely the interval in which the token is live. Expiry
+bounds the damage afterwards; it does not reduce the exposure.
+
+**Provenance**: the 2026-09-19 security review rejected a related finding
+about the token crossing plaintext gRPC, and in doing so observed that the
+Pod spec is the cheaper read — "retrievable without touching the network
+at all". That observation, not the rejected finding, is what this slice
+acts on.
+
+---
+
+### Slice 25: Authenticating the Runner to the Server
+
+**Goal**: Let the Server know *which* Runner it is talking to, so an
+Operation's results can only come from the Pod that actually ran it.
+
+**What's wrong today**: `internal/rpc.NewServer` is a bare
+`grpc.NewServer()` — no credentials, no interceptors — and the Runner
+dials with `insecure.NewCredentials()`. The Server identifies an Operation
+solely by the `operation_id` the client sends, which it looks up in Redis
+(`MarkStarted`, `ClaimForResult`). So the id is a **bearer capability**,
+and it is handed to the Pod as a plaintext environment value
+(`TURNIP_OPERATION_ID`, `internal/jobs/build.go`) — readable by anything
+with pod-read in the namespace.
+
+**This is worth doing on its own merits, not just as a prerequisite.** Any
+Pod that can reach the Server and knows an id can stream log lines and a
+*final result* for that Operation. That means a forged success carrying
+attacker-chosen output posted to the pull request, and a Lock released as
+though an apply had completed. It is the one gap that lets a third party
+write to a pull request's record of what happened.
+
+**The mechanism**: an audience-scoped projected ServiceAccount token.
+`internal/jobs/build.go` adds a `ServiceAccountToken` projection to the
+Pod's existing volumes with an explicit `audience` and a short expiry; the
+Runner sends it as gRPC metadata; the Server validates it with a
+`TokenReview`, checking that audience.
+
+**Why the explicit audience matters**: every Pod already automounts a
+token at `/var/run/secrets/kubernetes.io/serviceaccount/token`, but its
+audience is the API server. Sending *that* to the Server would let the
+Server replay it and act as the Runner's ServiceAccount. An
+audience-scoped token is worthless anywhere but here.
+
+**The check binds to the Pod, not the ServiceAccount — and that is the
+decision worth recording, because the obvious rule is wrong.** turnip lets
+an operator, and where `TURNIP_ALLOWED_OVERRIDES` permits a repository,
+choose `runner.serviceAccount`. A rule like "the SA must be
+`turnip-runner`" breaks the moment anyone uses that feature, and where a
+repository chooses the SA it would let the repository influence which
+identities the Server accepts.
+
+The SA-agnostic rule is: *is this token from the one Pod belonging to the
+Job created for this Operation?* Every piece already exists:
+
+| Step | Mechanism |
+|---|---|
+| Operation → Job | `turnip.ivan.vc/operation-id` label (`internal/jobs/labels.go`) |
+| Job → Pod | `batch.kubernetes.io/job-name` selector (`internal/jobs/status.go`) |
+| exactly one Pod | `BackoffLimit: 0` on every Runner Job |
+| permission to look | `pods` get/list, already in the Server's Role |
+
+Nothing about the ServiceAccount enters the decision, so the override
+feature stays orthogonal. **No change to anyone's ServiceAccount is
+needed** either: the projection is a field of the Pod spec turnip already
+writes, not of the SA object. The resemblance to EKS Pod Identity/IRSA —
+where the SA genuinely *is* annotated — is misleading, because that is a
+cloud identity system rather than a Kubernetes-native one.
+
+**Open question to settle before implementing**: whether `TokenReview`
+returns the Pod name and uid in `UserInfo.Extra` for bound tokens on the
+Kubernetes versions turnip targets. If it does, the binding is exact. If
+not, the fallback is for the Runner to send its Pod name via the downward
+API, with the Server checking the token's audience and SA, that the named
+Pod is the Operation's Pod, and that the Pod's SA matches the token's —
+weaker, since a co-resident Pod running as the same SA could claim another
+Pod's name, but still SA-agnostic and far stronger than an unauthenticated
+id.
+
+**Where it goes**: a `grpc.StreamInterceptor`, not a check inside the
+handler. `NewServer` takes no options today, so there is exactly one place
+to add it, and it then fails closed for any RPC added later.
+
+**Encryption is a separate axis.** One-way TLS — the Server presents a
+certificate, the Runner verifies it — encrypts the channel without any
+client PKI. Full mTLS would authenticate too, but a client certificate
+delivered by environment value or Secret is itself a credential with the
+delivery problem Slice 24 exists to solve, and issuing per-Job
+certificates needs something to authenticate the request, which lands back
+on this token. SPIFFE/SPIRE resolves that properly, at the cost of a large
+new infrastructure dependency turnip does not otherwise require.
+
+**Amendments**: Slice 5 `grpc-runner` (the service gains an interceptor
+and a metadata contract, and `NewServer`'s signature changes), Slice 6 for
+the Server-side wiring, and `deploy/base/role.yaml` for one new verb —
+`create` on `authentication.k8s.io/tokenreviews`.
+
+**Unblocks Slice 24's option B**, which is circular without it.
+
+---
+
 ## Backlog (not yet sliced)
 
 Recorded so they aren't rediscovered the hard way. None of these has a
 spec directory, and none is scheduled.
+
+### Contain `Project.directory` to the workspace
+
+`internal/config/validate.go` checks only that `directory` is non-empty.
+The value becomes the tool subprocess's working directory through
+`filepath.Join(dir, cfg.ProjectDir)` in `internal/runner/run.go`, and
+`filepath.Join` *cleans* `..` segments without *containing* them — joining
+the workspace root with `../../etc` yields `/etc`. Nothing in the
+repository applies `filepath.IsLocal` or any equivalent check.
+
+**Deliberately not a security slice.** The 2026-09-19 review examined this
+and rejected it as a vulnerability, correctly: `turnip.yaml` is read from
+the pull request's own head commit, so anyone who can set `directory` can
+already run code in the Runner pod by other means, and the escape on its
+own yields "no state file found" rather than any file's contents. It grants
+an attacker nothing they do not already have.
+
+**Worth doing as robustness anyway**, for two reasons that have nothing to
+do with attackers. A Project pointing outside the repository fails with a
+confusing tool error naming a path nobody wrote, instead of a clear
+configuration error on the pull request. And `stripWorkspacePath` stops
+matching once the working directory leaves the workspace, so absolute
+pod-internal paths appear in the comment where repository-relative ones
+should.
+
+Shape: reject `filepath.IsAbs`, and anything where
+`!filepath.IsLocal(filepath.Clean(p.Directory))`, during validation — so
+the failure arrives when the file is written rather than when a Job runs.
+A two-line check plus tests, restoring the invariant that a Project
+addresses something inside its own repository.
+
+**Slice 22 needs the identical invariant** for its `with.file` key, jailed
+to the workspace rather than to the Project directory. Whichever lands
+first should expose the helper the other uses — two independent
+containment checks is how they drift apart.
+
+### Running a tool build turnip does not ship
+
+`internal/jobs/versions.go` hardcodes one image template per tool —
+helmfile's is `ghcr.io/helmfile/helmfile:v%s` — and `uses: <tool>@<version>`
+substitutes only the version into it. There is no per-Project image field
+in the schema, and the Server's only image setting,
+`TURNIP_RUNNER_IMAGE`, names turnip's own Runner image rather than any
+tool's. So a build that is not one of the vendor's published releases is
+not expressible anywhere in turnip today.
+
+The motivating case is real and was hit in practice: needing a fix that is
+merged upstream but not yet released, during a period when the vendor's
+releases were infrequent. The only workaround is to wait for the vendor's
+cadence — which is the bottleneck the per-tool vendor-image design was
+adopted to remove, reappearing one layer down.
+
+**Distinct from the `--helm-binary` gate in Slice 22**, and the two are
+easy to confuse. That flag selects the *helm* binary helmfile shells out
+to; it cannot change which *helmfile* runs. A forked helmfile is an image
+question, and no argument policy reaches it.
+
+**Gating is not optional here, and an allowed-overrides entry is not
+enough.** An arbitrary image is arbitrary code running with the Runner's
+identity — the plainest capability grant turnip could offer. Note why this
+is stronger than `runner.serviceAccount`'s gate: permitting that field
+lets a repository choose among the ServiceAccounts that *happen to exist
+in one namespace*, which is bounded by what an operator already created.
+Permitting a free-form image string is unbounded — anything published
+anywhere. So the shape should be a **Server-side allowlist of permitted
+images**, with a repository at most selecting from it, rather than a
+boolean that turns "any image" on.
+
+**It also needs an explicit security disclosure, and that is a
+requirement of the feature, not documentation polish.** The warning has to
+say plainly that enabling this runs code turnip did not build and cannot
+vouch for, with the Runner's cloud and cluster credentials, and that doing
+so is the operator's decision and the operator's risk. Default off,
+refused unless deliberately enabled, and documented as designed-to-be-
+dangerous.
+
+The point of writing it down is not ceremony. A feature that grants code
+execution *by design* attracts vulnerability reports unless the project
+has already said, in public and in advance, that this is the intended
+behaviour and where the line sits. That requires somewhere to say it —
+which turnip does not have yet. See the Backlog entry below on a stated
+security model; it should land **before** this feature, not with it.
+
+Adjacent to this Backlog's floating-tool-version entry, which asks which
+*version* resolves rather than which image supplies it.
+
+### A stated security model, so opt-in danger is not reported as a vulnerability
+
+turnip has **no `SECURITY.md`** — not at the root, not under `.github/`,
+not in `docs/`. The only security prose in the repository is two
+paragraphs in `docs/configuration.md` about helmfile `prepare` hooks
+running during a plan.
+
+The gating convention itself is in good shape: both
+`TURNIP_ALLOWED_OVERRIDES` paths are documented, each explains *why* its
+gate exists, and the default permits nothing. What is missing is the other
+half — nothing anywhere says what it means for an operator to **open** one
+of those gates. `runner.serviceAccount`'s documentation explains why the
+gate is there; it never says that turning it on is a deliberate
+acceptance of risk rather than a supported-and-safe configuration.
+
+**This is needed already, not when some future feature lands.**
+`runner.serviceAccount` ships today and can be enabled today. Slice 22
+adds `--helm-binary` on the same pattern, the custom-image entry above
+adds a third, and Slice 15 leaves open whether an operator may ever opt
+into fork pull requests. That is a category, not a series of one-offs.
+
+What it should contain:
+
+- **The threat model in one paragraph**: `turnip.yaml` and the IaC code
+  are read from the pull request's own head commit, and the tool executes
+  in a Pod holding cloud and cluster credentials. Anyone who can get code
+  into a pull request that turnip plans can run it.
+- **The list of opt-ins that grant code execution by design**, each named,
+  each default-off, each with what enabling it costs.
+- **What turnip does consider a vulnerability** — a gate that fails open,
+  a default that grants more than documented, a leak reachable with no
+  opt-in at all — so a reporter can tell the difference without having to
+  re-derive the reasoning.
+
+**Prior art**: Atlantis documents `--allow-fork-prs` with an explicit
+SECURITY WARNING saying that enabling it lets anyone who can open a pull
+request cause arbitrary code to run, and keeps a security page framing the
+whole threat model. That is the shape — the warning is only load-bearing
+because there is a stated model behind it.
+
+Worth doing before turnip has users rather than after the first report
+arrives, and it is mostly writing rather than code.
 
 ### Azure Workload Identity needs Runner *pod* labels
 

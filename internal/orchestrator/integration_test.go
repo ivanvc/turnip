@@ -19,7 +19,7 @@ import (
 	"github.com/ivanvc/turnip/internal/github"
 	pb "github.com/ivanvc/turnip/internal/grpc/turnip/v1"
 	"github.com/ivanvc/turnip/internal/jobs"
-	"github.com/ivanvc/turnip/internal/plugin"
+	"github.com/ivanvc/turnip/internal/lock"
 	"github.com/ivanvc/turnip/internal/rpc"
 )
 
@@ -124,8 +124,8 @@ func TestIntegration_CommentTriggeredApplyFlowEndToEnd(t *testing.T) {
 	var released bool
 	locks := &fakeLockManager{
 		isLockedByPRFunc: func(ctx context.Context, projectKey string, prNumber int) (bool, error) { return true, nil },
-		getPlanDataFunc: func(ctx context.Context, projectKey string, prNumber int) ([]byte, plugin.ChangeSummary, error) {
-			return []byte("plan-data"), plugin.ChangeSummary{}, nil
+		getPlanFunc: func(ctx context.Context, projectKey string, prNumber int) (lock.PlanRecord, error) {
+			return lock.PlanRecord{Data: []byte("plan-data")}, nil
 		},
 		releaseLockFunc: func(ctx context.Context, projectKey string, prNumber int) error {
 			released = true

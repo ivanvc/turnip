@@ -69,6 +69,27 @@ func TestResolveTargets_ToolFiltering(t *testing.T) {
 	assert.ElementsMatch(t, []string{"helm-a", "helm-b"}, names)
 }
 
+// destroy is no longer a Helmfile operation, because no plan can describe
+// what it would remove. A trigger naming it is refused by the same path
+// any unknown operation takes — and producing no Target is what makes
+// "no Lock, no check run, no Job" true, rather than a separate guard
+// anyone could forget.
+func TestResolveTargets_DestroyIsNotAHelmfileOperation(t *testing.T) {
+	cfg := testConfig()
+	authorizer := github.NewAuthorizer(&fakeAuthClient{permission: "write"})
+
+	targets, rejected, err := resolveTargets(context.Background(), cfg, testRegistry(),
+		&github.TriggerCommand{Tool: "helmfile", Operation: "destroy"}, "o", "r", "author", authorizer)
+
+	require.NoError(t, err)
+	assert.Empty(t, targets, "no Target means no Lock, no check run and no Job")
+	require.Len(t, rejected, 2, "one refusal per Helmfile Project")
+	for _, r := range rejected {
+		assert.False(t, r.Success)
+		assert.Contains(t, r.Output, "not recognized")
+	}
+}
+
 func TestResolveTargets_TurnipTargetsEveryTool(t *testing.T) {
 	cfg := testConfig()
 	authorizer := github.NewAuthorizer(&fakeAuthClient{permission: "write"})

@@ -39,19 +39,19 @@ for drafts, so it isn't worth looking for one.
 Comment on the PR:
 
 ```
-/turnip <operation> [project...] [-- extra args]
+/turnip <operation> [project...] [args...]
 ```
 
 or scope it to one tool by using the tool's own name instead of `turnip`:
 
 ```
-/helmfile <operation> [project...] [-- extra args]
+/helmfile <operation> [project...] [args...]
 ```
 
 The difference: `/turnip ...` considers every project in `turnip.yaml`;
 `/helmfile ...` (or `/terraform`, `/pulumi`) only considers projects
 whose `tool` field matches. `<operation>` must be one the tool actually
-supports (Helmfile: `diff`, `apply`, `sync`, `destroy`); naming a project
+supports (Helmfile: `diff`, `apply`, `sync`); naming a project
 list is optional — omit it to target every matching project at once.
 
 Examples:
@@ -60,12 +60,31 @@ Examples:
 /turnip plan
 /turnip plan web
 /helmfile apply web api
-/turnip apply web -- --auto-approve
+/helmfile diff web -l name=ingress
 /turnip plan -- --context=diff
 ```
 
-Anything after `--` is passed straight through to the tool's own CLI
-(`extra args` in the table above) — turnip doesn't interpret it.
+Arguments are passed straight through to the tool's own CLI — turnip
+doesn't interpret them. **The first argument beginning with `-` is where
+the project names stop**, so a `--` separator is optional; write one if
+you prefer, and a second `--` further along is passed through verbatim.
+
+**Only the plan operation takes arguments.** `apply` and `sync` replay the
+scope the plan recorded, so they accept none of their own and refuse a
+trigger that supplies any, naming what they refused. That is what makes an
+apply match the diff you reviewed — the two cannot disagree, because only
+one of them chose a scope.
+
+### Removing a release
+
+There is no `destroy` for Helmfile. `helmfile destroy` has no dry-run and
+uninstalls everything its selector matches regardless of `installed:`, so
+no plan could show you what it would remove — and turnip only runs what a
+plan described.
+
+To remove a release, mark it `installed: false`. `diff` reports it as a
+pending removal and `apply` carries it out, reviewed like any other
+change.
 
 You can put more than one trigger line in a single comment; each runs in
 order (one finishes before the next starts), and a malformed line (e.g.
@@ -114,7 +133,7 @@ Practically:
   collaborator (any permission level, including read-only) — a
   non-collaborator's comment gets a reply explaining that, and nothing
   runs.
-- **Anything beyond a plan** — apply, sync, destroy, unlock — additionally
+- **Anything beyond a plan** — apply, sync, unlock — additionally
   requires write access to the repository. A collaborator without write
   access gets a reply naming the specific permission gap.
 

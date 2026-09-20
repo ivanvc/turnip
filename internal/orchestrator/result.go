@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ivanvc/turnip/internal/github"
+	"github.com/ivanvc/turnip/internal/lock"
 	"github.com/ivanvc/turnip/internal/metrics"
 	"github.com/ivanvc/turnip/internal/plugin"
 	"github.com/ivanvc/turnip/internal/rpc"
@@ -110,16 +111,37 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 	if result.Success {
 		p, ok := o.plugins[rec.Project.Tool]
 		switch {
-		case ok && rec.Operation == p.GetPlanOperation() && len(result.PlanData) > 0:
+		case ok && rec.Operation == p.GetPlanOperation():
 			summary := plugin.ChangeSummary{
 				Add:     int(result.Changes.Add),
 				Change:  int(result.Changes.Change),
 				Destroy: int(result.Changes.Destroy),
 			}
-			if err := o.locks.StorePlanData(ctx, rec.ProjectKey, rec.PRNumber, result.PlanData, summary); err != nil {
-				slog.ErrorContext(ctx, "storing plan data", "operation_id", operationID, "error", err)
+			// Recorded because the plan succeeded, not because the tool
+			// produced an artifact — Helmfile never does, and keying this
+			// off len(result.PlanData) is what made its apply unreachable.
+			//
+			// The arguments stored are the Operation's own, taken from the
+			// record the Job was built from rather than re-derived from the
+			// trigger line, so whatever turnip normalised is what a later
+			// mutating Operation replays.
+			if err := o.locks.StorePlan(ctx, rec.ProjectKey, rec.PRNumber, lock.PlanRecord{
+				Data:    result.PlanData,
+				Args:    rec.ExtraArgs,
+				Summary: summary,
+			}); err != nil {
+				slog.ErrorContext(ctx, "storing plan", "operation_id", operationID, "error", err)
 			}
-		case rec.IsApply:
+		default:
+			// Every successful Operation that is not the plan discharges the
+			// Lock: apply, sync, and anything else a Plugin exposes.
+			// Narrowing this back to rec.IsApply is the regression worth
+			// guarding — it reads like the rule, and it silently strands a
+			// Project after a successful sync.
+			//
+			// An unregistered tool cannot reach here. executeOne rejects one
+			// before any record exists, so the !ok case never releases a
+			// Lock for a Plugin turnip does not have.
 			if err := o.locks.ReleaseLock(ctx, rec.ProjectKey, rec.PRNumber); err != nil {
 				slog.ErrorContext(ctx, "releasing lock", "operation_id", operationID, "error", err)
 			} else {
@@ -128,12 +150,20 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 			}
 		}
 	}
-	// A failed or timed-out Operation triggers no Lock mutation
-	// (Requirement 6.8): a failed plan leaves the Lock held with no new
-	// plan data, a failed apply leaves the Lock held rather than released.
-	// Slice 18 revisits the first of those — a failed plan holds a Lock
-	// that protects nothing — and pr.Locked will follow it without this
-	// code changing, because it reports the state rather than deducing it.
+	// A failed or timed-out Operation triggers no Lock mutation: a failed
+	// plan leaves the Lock held with no plan recorded, and a failed apply
+	// leaves it held rather than released, because the infrastructure may
+	// be partly changed and another PR must not apply on top of it.
+	//
+	// The governing requirement is 7 (Redis/Valkey-Based Locking). An
+	// earlier comment here cited "Requirement 6.8", which does not exist —
+	// Requirement 6 is Plan with Destroy Flag and has five criteria, none
+	// about Lock lifecycle. The wrong citation is what made this behaviour
+	// look specified when nothing specified it.
+	//
+	// Slice 18 revisits the first case — a failed plan holds a Lock that
+	// protects nothing — and pr.Locked will follow it without this code
+	// changing, because it reports the state rather than deducing it.
 
 	if err := o.records.Delete(ctx, operationID); err != nil {
 		slog.ErrorContext(ctx, "deleting operation record", "operation_id", operationID, "error", err)

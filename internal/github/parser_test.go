@@ -118,6 +118,41 @@ func TestParseTriggers_MultipleWellFormedLinesBatchIntoOneComment(t *testing.T) 
 	assert.Equal(t, []string{"project-2"}, got[1].Projects)
 }
 
+// A tool's own flags begin with "-", so the first such token is where the
+// Project names stop. That is what lets a scoped trigger be written the
+// way it would be typed in a shell, where it previously failed with an
+// unmatched-Project error that read as turnip not knowing the Project.
+//
+// The explicit "--" keeps working because it is found by the same scan —
+// being exactly "--" is the only thing that makes it consumed rather than
+// passed through.
+func TestParseTriggers_ArgumentsNeedNoDelimiter(t *testing.T) {
+	tests := []struct {
+		name         string
+		body         string
+		wantProjects []string
+		wantArgs     []string
+	}{
+		{"short flag, no delimiter", "/turnip diff web -l name=x", []string{"web"}, []string{"-l", "name=x"}},
+		{"the delimiter form is equivalent", "/turnip diff web -- -l name=x", []string{"web"}, []string{"-l", "name=x"}},
+		{"no projects and no delimiter", "/turnip diff -l name=x", nil, []string{"-l", "name=x"}},
+		{"long flag", "/turnip diff --selector name=x", nil, []string{"--selector", "name=x"}},
+		{"several projects before the first flag", "/turnip diff web api -l name=x", []string{"web", "api"}, []string{"-l", "name=x"}},
+		{"projects only, no arguments", "/turnip diff web api", []string{"web", "api"}, nil},
+		{"an explicit delimiter is consumed, not passed through", "/turnip diff -- --selector x", nil, []string{"--selector", "x"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseTriggers(tt.body)
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Equal(t, tt.wantProjects, got[0].Projects)
+			assert.Equal(t, tt.wantArgs, got[0].ExtraArgs)
+		})
+	}
+}
+
 func TestParseTriggers_MalformedLineDoesNotDiscardWellFormedOnes(t *testing.T) {
 	got, err := ParseTriggers("/turnip plan project-1\n/turnip\n/turnip plan project-2")
 

@@ -201,9 +201,9 @@ This document specifies requirements for rewriting the multi-IaC automation plat
 4. WHEN "apply" operation is executed, THE Helmfile_Plugin SHALL execute "helmfile apply"
 5. WHEN "sync" operation is executed, THE Helmfile_Plugin SHALL execute "helmfile sync"
 6. THE Helmfile_Plugin SHALL parse helmfile diff output to identify changed releases
-7. THE Helmfile_Plugin SHALL support destroy operations via "helmfile destroy" when explicitly requested
+7. THE Helmfile_Plugin SHALL NOT expose destroy as an Operation — `helmfile destroy` has no dry-run and uninstalls every release its selector matches regardless of `installed:`, so it does not converge to the state `helmfile diff` describes and no plan can say what it would remove
 8. WHEN Apply is called, THE Helmfile_Plugin SHALL execute "helmfile apply"
-9. WHEN Destroy is called, THE Helmfile_Plugin SHALL execute "helmfile destroy"
+9. WHERE a trigger names destroy for a Helmfile Project, THE Server SHALL reject it as an unrecognized Operation; a release is removed instead by marking it `installed: false`, which diff reports as a pending removal and apply performs
 10. THE Helmfile_Plugin SHALL parse helmfile diff output to identify changed releases
 
 ### Requirement 14: Ephemeral Runner Pod Lifecycle

@@ -17,15 +17,14 @@ import (
 	"github.com/ivanvc/turnip/internal/github"
 	"github.com/ivanvc/turnip/internal/jobs"
 	"github.com/ivanvc/turnip/internal/lock"
-	"github.com/ivanvc/turnip/internal/plugin"
 )
 
 // fakeLockManager is a scriptable lock.LockManager. Every method defaults
 // to a harmless zero behavior unless its corresponding func field is set.
 type fakeLockManager struct {
 	acquireLockFunc   func(ctx context.Context, projectKey string, prNumber int, url, lockedBy string) (bool, error)
-	storePlanDataFunc func(ctx context.Context, projectKey string, prNumber int, planData []byte, summary plugin.ChangeSummary) error
-	getPlanDataFunc   func(ctx context.Context, projectKey string, prNumber int) ([]byte, plugin.ChangeSummary, error)
+	storePlanFunc     func(ctx context.Context, projectKey string, prNumber int, plan lock.PlanRecord) error
+	getPlanFunc       func(ctx context.Context, projectKey string, prNumber int) (lock.PlanRecord, error)
 	releaseLockFunc   func(ctx context.Context, projectKey string, prNumber int) error
 	getLockStatusFunc func(ctx context.Context, projectKey string) (*lock.LockStatus, error)
 	isLockedByPRFunc  func(ctx context.Context, projectKey string, prNumber int) (bool, error)
@@ -37,17 +36,17 @@ func (f *fakeLockManager) AcquireLock(ctx context.Context, projectKey string, pr
 	}
 	return true, nil
 }
-func (f *fakeLockManager) StorePlanData(ctx context.Context, projectKey string, prNumber int, planData []byte, summary plugin.ChangeSummary) error {
-	if f.storePlanDataFunc != nil {
-		return f.storePlanDataFunc(ctx, projectKey, prNumber, planData, summary)
+func (f *fakeLockManager) StorePlan(ctx context.Context, projectKey string, prNumber int, plan lock.PlanRecord) error {
+	if f.storePlanFunc != nil {
+		return f.storePlanFunc(ctx, projectKey, prNumber, plan)
 	}
 	return nil
 }
-func (f *fakeLockManager) GetPlanData(ctx context.Context, projectKey string, prNumber int) ([]byte, plugin.ChangeSummary, error) {
-	if f.getPlanDataFunc != nil {
-		return f.getPlanDataFunc(ctx, projectKey, prNumber)
+func (f *fakeLockManager) GetPlan(ctx context.Context, projectKey string, prNumber int) (lock.PlanRecord, error) {
+	if f.getPlanFunc != nil {
+		return f.getPlanFunc(ctx, projectKey, prNumber)
 	}
-	return []byte("plan-data"), plugin.ChangeSummary{}, nil
+	return lock.PlanRecord{Data: []byte("plan-data")}, nil
 }
 func (f *fakeLockManager) ReleaseLock(ctx context.Context, projectKey string, prNumber int) error {
 	if f.releaseLockFunc != nil {
@@ -214,6 +213,114 @@ func testHelmfileTarget() Target {
 var testRepo = github.Repository{Owner: "owner", Name: "repo", URL: "https://github.com/owner/repo"}
 var testPR = github.PullRequest{Number: 42, HeadSHA: "abc123", BaseRef: "main"}
 
+// jobEnvValue reads one environment value off a built Job, searching both
+// the init and main containers — the Job's own environment is the only
+// place a replayed scope is observable end to end.
+func jobEnvValue(t *testing.T, job *batchv1.Job, name string) string {
+	t.Helper()
+	spec := job.Spec.Template.Spec
+	for _, c := range spec.InitContainers {
+		for _, env := range c.Env {
+			if env.Name == name {
+				return env.Value
+			}
+		}
+	}
+	for _, c := range spec.Containers {
+		for _, env := range c.Env {
+			if env.Name == name {
+				return env.Value
+			}
+		}
+	}
+	t.Fatalf("no %s on the built Job", name)
+	return ""
+}
+
+// The case that was impossible before this slice. A Helmfile plan records
+// no artifact, so the apply that follows must still run. Asserted as
+// behaviour rather than as a mock expectation, because mock expectations
+// handing back bytes the real plugin never produces are exactly what hid
+// this bug for the life of the project.
+func TestExecuteOne_ApplyAfterAPlanWithNoArtifactRuns(t *testing.T) {
+	locks := &fakeLockManager{
+		getPlanFunc: func(ctx context.Context, projectKey string, prNumber int) (lock.PlanRecord, error) {
+			return lock.PlanRecord{Args: []string{"-l", "name=web"}}, nil
+		},
+	}
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
+	o, _ := testOrchestrator(t, locks, jobsClient)
+
+	target := testHelmfileTarget()
+	target.Operation = "apply"
+	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
+
+	assert.True(t, result.Success, "an apply must not be refused merely because its plan produced no bytes")
+	assert.Equal(t, 1, jobsClient.createCount())
+}
+
+// Every mutating Operation replays the scope the plan recorded, not just
+// the apply: a sync running unscoped after a scoped diff would change more
+// than anyone reviewed.
+func TestExecuteOne_MutatingOperationReplaysTheRecordedScope(t *testing.T) {
+	locks := &fakeLockManager{
+		getPlanFunc: func(ctx context.Context, projectKey string, prNumber int) (lock.PlanRecord, error) {
+			return lock.PlanRecord{Args: []string{"-l", "name=web"}}, nil
+		},
+	}
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
+	o, _ := testOrchestrator(t, locks, jobsClient)
+
+	target := testHelmfileTarget()
+	target.Operation = "sync"
+	o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
+
+	job := jobsClient.lastCreatedJob()
+	require.NotNil(t, job, "a sync with a recorded plan must reach a Job")
+	assert.Contains(t, jobEnvValue(t, job, "TURNIP_EXTRA_ARGS"), "name=web")
+}
+
+// Only the plan chooses a scope. Table-driven so an Operation a future
+// Plugin adds is not silently exempt, and asserted by absence of side
+// effects — asserting the message alone would pass with the guard placed
+// after the Lock, the check run or the Job.
+func TestExecuteOne_MutatingOperationsRefuseArguments(t *testing.T) {
+	for _, operation := range []string{"apply", "sync"} {
+		t.Run(operation, func(t *testing.T) {
+			jobsClient := &fakeJobCreator{t: t}
+			o, _ := testOrchestrator(t, &fakeLockManager{}, jobsClient)
+			client := &fakeExecuteClient{}
+
+			target := testHelmfileTarget()
+			target.Operation = operation
+			target.ExtraArgs = []string{"-l", "name=web"}
+			result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+
+			assert.False(t, result.Success)
+			assert.Contains(t, result.Output, "does not accept arguments")
+			assert.Contains(t, result.Output, "-l name=web", "the refusal names what it refused")
+			assert.Zero(t, jobsClient.createCount(), "no Job for an Operation that never ran")
+			assert.Zero(t, client.updateCheckRunCalled, "and no check run either")
+		})
+	}
+}
+
+// The other half of the same rule, guarding against an over-broad refusal:
+// a plan still accepts arguments, because it is the Operation whose output
+// a human reviews.
+func TestExecuteOne_PlanStillAcceptsArguments(t *testing.T) {
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
+	o, _ := testOrchestrator(t, &fakeLockManager{}, jobsClient)
+
+	target := testHelmfileTarget()
+	target.ExtraArgs = []string{"-l", "name=web"}
+	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
+
+	assert.True(t, result.Success)
+	require.Equal(t, 1, jobsClient.createCount())
+	assert.Contains(t, jobEnvValue(t, jobsClient.lastCreatedJob(), "TURNIP_EXTRA_ARGS"), "name=web")
+}
+
 func TestExecuteOne_PlanLockConflictIsRejected(t *testing.T) {
 	locks := &fakeLockManager{
 		acquireLockFunc: func(ctx context.Context, projectKey string, prNumber int, url, lockedBy string) (bool, error) {
@@ -301,8 +408,8 @@ func TestExecuteOne_ApplyWithoutLockIsRejected(t *testing.T) {
 
 func TestExecuteOne_ApplyWithoutPlanDataIsRejected(t *testing.T) {
 	locks := &fakeLockManager{
-		getPlanDataFunc: func(ctx context.Context, projectKey string, prNumber int) ([]byte, plugin.ChangeSummary, error) {
-			return nil, plugin.ChangeSummary{}, lock.ErrNoPlanData
+		getPlanFunc: func(ctx context.Context, projectKey string, prNumber int) (lock.PlanRecord, error) {
+			return lock.PlanRecord{}, lock.ErrNoPlan
 		},
 	}
 	o, _ := testOrchestrator(t, locks, &fakeJobCreator{t: t})

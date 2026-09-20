@@ -151,6 +151,32 @@ all three, then the package doc update, then tests (unit against
     - Verify `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...` reports 0 issues repo-wide
     - _Requirements: (maintenance amendment, no behavioral change)_
 
+- [x] 18. Record a plan, not a byte slice (2026-09 `plan-scoped-apply` amendment)
+  - `LockData` gains `HasPlan bool` — deliberately without `omitempty`,
+    since it is the only field that survives the round trip when a plan
+    ran with no arguments — and `PlanArgs []string`, the scope it ran with
+  - `StorePlanData`/`GetPlanData` become `StorePlan`/`GetPlan`, taking and
+    returning a `PlanRecord{Data, Args, Summary}`. A record absorbs what
+    Slice 7's Terraform and Pulumi plans will want to add; a widening
+    parameter list would pay the same churn every time
+  - `ErrNoPlanData` becomes `ErrNoPlan`. The condition changed from "the
+    stored bytes are empty" to "no plan was recorded", and the old name
+    described a Plugin whose plan produces no artifact as having no plan
+    at all
+  - **The rule this replaces was wrong in three places, not two.** "Empty
+    `PlanData` means no plan data" lived in `GetPlanData`, in the storage
+    condition upstream, and — found only during implementation — in
+    `GetLockStatus`, which derives `LockStatus.HasPlan` and so decides
+    whether a pull request comment offers an apply at all. Fixing only the
+    first two would have made an apply reachable while every comment kept
+    saying there was no plan to apply. All three now test the recorded
+    fact; the Data Model and Edge Cases sections are amended to match
+  - A Lock written before this amendment decodes with `HasPlan` false, so
+    its pull request is asked to re-plan rather than having an unrecorded
+    scope replayed on its behalf. No backfill and no version field — the
+    condition clears itself on the next plan
+  - _Requirements: amends 2.5 and the "empty plan data" rule in the Data Model_
+
 ## Notes
 
 - No GitHub, gRPC, or Kubernetes dependencies are introduced — this slice

@@ -30,12 +30,12 @@ func TestFullLifecycleSequence(t *testing.T) {
 	require.True(t, ok)
 
 	summary := plugin.ChangeSummary{Add: 1, Change: 2, Destroy: 3}
-	require.NoError(t, m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), summary))
+	require.NoError(t, m.StorePlan(ctx, projectKey, 1, PlanRecord{Data: []byte("plan-bytes"), Summary: summary}))
 
-	data, gotSummary, err := m.GetPlanData(ctx, projectKey, 1)
+	plan, err := m.GetPlan(ctx, projectKey, 1)
 	require.NoError(t, err)
-	assert.Equal(t, "plan-bytes", string(data))
-	assert.Equal(t, summary, gotSummary)
+	assert.Equal(t, "plan-bytes", string(plan.Data))
+	assert.Equal(t, summary, plan.Summary)
 
 	status, err := m.GetLockStatus(ctx, projectKey)
 	require.NoError(t, err)
@@ -59,16 +59,16 @@ func TestAcquireLock_IdempotentSamePR(t *testing.T) {
 	ok, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.NoError(t, m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{Add: 1}))
+	require.NoError(t, m.StorePlan(ctx, projectKey, 1, PlanRecord{Data: []byte("plan-bytes"), Summary: plugin.ChangeSummary{Add: 1}}))
 
 	// Re-acquire (e.g. a retried webhook) must not disturb the stored plan.
 	ok, err = m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	data, _, err := m.GetPlanData(ctx, projectKey, 1)
+	plan, err := m.GetPlan(ctx, projectKey, 1)
 	require.NoError(t, err)
-	assert.Equal(t, "plan-bytes", string(data), "plan data must survive idempotent re-acquire")
+	assert.Equal(t, "plan-bytes", string(plan.Data), "plan data must survive idempotent re-acquire")
 }
 
 func TestAcquireLock_DifferentPRFails(t *testing.T) {
@@ -79,19 +79,19 @@ func TestAcquireLock_DifferentPRFails(t *testing.T) {
 	ok, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.NoError(t, m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{Add: 1}))
+	require.NoError(t, m.StorePlan(ctx, projectKey, 1, PlanRecord{Data: []byte("plan-bytes"), Summary: plugin.ChangeSummary{Add: 1}}))
 
 	ok, err = m.AcquireLock(ctx, projectKey, 2, "https://example.com/pr/2", "bob")
 	require.NoError(t, err)
 	assert.False(t, ok, "PR 1 already holds the lock")
 
-	// PR 1's lock and plan data must be untouched.
-	data, _, err := m.GetPlanData(ctx, projectKey, 1)
+	// PR 1's lock and plan must be untouched.
+	plan, err := m.GetPlan(ctx, projectKey, 1)
 	require.NoError(t, err)
-	assert.Equal(t, "plan-bytes", string(data), "unaffected by failed PR 2 acquire")
+	assert.Equal(t, "plan-bytes", string(plan.Data), "unaffected by failed PR 2 acquire")
 }
 
-func TestStorePlanData_WrongPRFails(t *testing.T) {
+func TestStorePlan_WrongPRFails(t *testing.T) {
 	ctx := context.Background()
 	m, _ := newTestManager(t)
 	const projectKey = "owner/repo/project"
@@ -99,22 +99,22 @@ func TestStorePlanData_WrongPRFails(t *testing.T) {
 	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
 	require.NoError(t, err)
 
-	err = m.StorePlanData(ctx, projectKey, 2, []byte("plan-bytes"), plugin.ChangeSummary{})
+	err = m.StorePlan(ctx, projectKey, 2, PlanRecord{Data: []byte("plan-bytes")})
 	require.ErrorIs(t, err, ErrLockedByOtherPR)
 
-	_, _, err = m.GetPlanData(ctx, projectKey, 1)
-	assert.ErrorIs(t, err, ErrNoPlanData, "lock must be untouched")
+	_, err = m.GetPlan(ctx, projectKey, 1)
+	assert.ErrorIs(t, err, ErrNoPlan, "lock must be untouched")
 }
 
-func TestStorePlanData_NoLockFails(t *testing.T) {
+func TestStorePlan_NoLockFails(t *testing.T) {
 	ctx := context.Background()
 	m, _ := newTestManager(t)
 
-	err := m.StorePlanData(ctx, "owner/repo/project", 1, []byte("plan-bytes"), plugin.ChangeSummary{})
+	err := m.StorePlan(ctx, "owner/repo/project", 1, PlanRecord{Data: []byte("plan-bytes")})
 	assert.ErrorIs(t, err, ErrNoLock)
 }
 
-func TestStorePlanData_AfterReleaseFails(t *testing.T) {
+func TestStorePlan_AfterReleaseFails(t *testing.T) {
 	ctx := context.Background()
 	m, _ := newTestManager(t)
 	const projectKey = "owner/repo/project"
@@ -123,24 +123,24 @@ func TestStorePlanData_AfterReleaseFails(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, m.ReleaseLock(ctx, projectKey, 1))
 
-	err = m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{})
+	err = m.StorePlan(ctx, projectKey, 1, PlanRecord{Data: []byte("plan-bytes")})
 	assert.ErrorIs(t, err, ErrNoLock)
 }
 
-func TestGetPlanData_WrongPRFails(t *testing.T) {
+func TestGetPlan_WrongPRFails(t *testing.T) {
 	ctx := context.Background()
 	m, _ := newTestManager(t)
 	const projectKey = "owner/repo/project"
 
 	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
 	require.NoError(t, err)
-	require.NoError(t, m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{}))
+	require.NoError(t, m.StorePlan(ctx, projectKey, 1, PlanRecord{Data: []byte("plan-bytes")}))
 
-	_, _, err = m.GetPlanData(ctx, projectKey, 2)
+	_, err = m.GetPlan(ctx, projectKey, 2)
 	assert.ErrorIs(t, err, ErrLockedByOtherPR)
 }
 
-func TestGetPlanData_NoPlanYetFails(t *testing.T) {
+func TestGetPlan_NoPlanYetFails(t *testing.T) {
 	ctx := context.Background()
 	m, _ := newTestManager(t)
 	const projectKey = "owner/repo/project"
@@ -148,8 +148,65 @@ func TestGetPlanData_NoPlanYetFails(t *testing.T) {
 	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
 	require.NoError(t, err)
 
-	_, _, err = m.GetPlanData(ctx, projectKey, 1)
-	assert.ErrorIs(t, err, ErrNoPlanData, "distinguishable from wrong-PR")
+	_, err = m.GetPlan(ctx, projectKey, 1)
+	assert.ErrorIs(t, err, ErrNoPlan, "distinguishable from wrong-PR")
+}
+
+// TestStorePlan_RecordsAPlanWithNoArtifact is the Helmfile shape: a plan
+// that succeeds and produces no bytes. Before HasPlan existed this stored
+// nothing retrievable, so every apply that followed was refused as though
+// no plan had run.
+func TestStorePlan_RecordsAPlanWithNoArtifact(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestManager(t)
+	const projectKey = "owner/repo/project"
+
+	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
+
+	summary := plugin.ChangeSummary{Change: 4}
+	require.NoError(t, m.StorePlan(ctx, projectKey, 1, PlanRecord{Args: []string{"-l", "name=web"}, Summary: summary}))
+
+	plan, err := m.GetPlan(ctx, projectKey, 1)
+	require.NoError(t, err, "a plan with no artifact is still a plan")
+	assert.Empty(t, plan.Data)
+	assert.Equal(t, []string{"-l", "name=web"}, plan.Args)
+	assert.Equal(t, summary, plan.Summary)
+
+	status, err := m.GetLockStatus(ctx, projectKey)
+	require.NoError(t, err)
+	assert.True(t, status.HasPlan, "the comment must be able to offer an apply")
+}
+
+// TestStorePlan_RecordsAbsentArguments pins Requirement 1.3: a plan that
+// ran with no arguments is distinguishable from no plan at all.
+func TestStorePlan_RecordsAbsentArguments(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestManager(t)
+	const projectKey = "owner/repo/project"
+
+	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
+	require.NoError(t, m.StorePlan(ctx, projectKey, 1, PlanRecord{}))
+
+	plan, err := m.GetPlan(ctx, projectKey, 1)
+	require.NoError(t, err)
+	assert.Empty(t, plan.Args)
+}
+
+// TestGetPlan_LegacyLockHasNoPlan covers the migration: a Lock written
+// before has_plan existed decodes with the field false, so its pull
+// request is asked to re-plan rather than replaying an unrecorded scope.
+func TestGetPlan_LegacyLockHasNoPlan(t *testing.T) {
+	ctx := context.Background()
+	m, mr := newTestManager(t)
+	const projectKey = "owner/repo/project"
+
+	legacy := `{"pr_number":1,"pull_request_url":"https://example.com/pr/1","locked_by":"alice","plan_data":"cGxhbg=="}`
+	require.NoError(t, mr.Set(lockKey(projectKey), legacy))
+
+	_, err := m.GetPlan(ctx, projectKey, 1)
+	assert.ErrorIs(t, err, ErrNoPlan, "a pre-upgrade lock must ask for a re-plan")
 }
 
 func TestReleaseLock_NoLockIsNoop(t *testing.T) {
@@ -192,7 +249,7 @@ func TestGetLockStatus_LockedWithPlan(t *testing.T) {
 	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
 	require.NoError(t, err)
 	summary := plugin.ChangeSummary{Add: 4, Change: 5, Destroy: 6}
-	require.NoError(t, m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), summary))
+	require.NoError(t, m.StorePlan(ctx, projectKey, 1, PlanRecord{Data: []byte("plan-bytes"), Summary: summary}))
 
 	status, err := m.GetLockStatus(ctx, projectKey)
 	require.NoError(t, err)
@@ -243,17 +300,17 @@ func TestConnectionFailurePropagates(t *testing.T) {
 
 	_, err := m.AcquireLock(ctx, projectKey, 1, "https://example.com/pr/1", "alice")
 	require.NoError(t, err)
-	require.NoError(t, m.StorePlanData(ctx, projectKey, 1, []byte("plan-bytes"), plugin.ChangeSummary{}))
+	require.NoError(t, m.StorePlan(ctx, projectKey, 1, PlanRecord{Data: []byte("plan-bytes")}))
 
 	mr.Close()
 
 	_, err = m.AcquireLock(ctx, projectKey, 2, "https://example.com/pr/2", "bob")
 	require.Error(t, err)
 
-	err = m.StorePlanData(ctx, projectKey, 1, []byte("more-bytes"), plugin.ChangeSummary{})
+	err = m.StorePlan(ctx, projectKey, 1, PlanRecord{Data: []byte("more-bytes")})
 	require.Error(t, err)
 
-	_, _, err = m.GetPlanData(ctx, projectKey, 1)
+	_, err = m.GetPlan(ctx, projectKey, 1)
 	require.Error(t, err)
 
 	err = m.ReleaseLock(ctx, projectKey, 1)

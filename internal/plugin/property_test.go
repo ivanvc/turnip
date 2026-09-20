@@ -34,7 +34,7 @@ func TestProperty_PluginResultStructureCompleteness(t *testing.T) {
 // Feature: multi-iac-automation-platform, Property 22: Helmfile Plugin Command Execution
 func TestProperty_HelmfilePluginCommandExecution(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		operation := rapid.SampledFrom([]string{"diff", "apply", "sync", "destroy"}).Draw(t, "operation")
+		operation := rapid.SampledFrom([]string{"diff", "apply", "sync"}).Draw(t, "operation")
 		environment := rapid.SampledFrom([]string{"", "staging", "production"}).Draw(t, "environment")
 
 		var gotName string

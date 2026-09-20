@@ -166,6 +166,38 @@ property).
   - [x] 16.3 Checkpoint - Full re-verification
     - `go build ./internal/plugin/...`, `go vet ./internal/plugin/...`, `go test -race ./internal/plugin/... -cover` all pass
 
+- [x] 17. Stop exposing `destroy` (2026-09 `plan-scoped-apply` amendment)
+  - `GetOperations()` returns `["diff", "apply", "sync"]`. `Execute` needed
+    no change: it already rejects any operation outside that slice, so the
+    removal closes the path on its own, and `target.go`'s
+    `operationRecognized` refuses the trigger with a comment and creates no
+    Lock, check run or Job
+  - **Why the reversal.** Slice 20 gives every mutating Operation a
+    reviewed plan to inherit, and `destroy` cannot have one:
+    `helmfile destroy` has no `--dry-run` (its flag set as of v1.8.0 is
+    `--args`, `--cascade`, `--concurrency`, `--skip-charts`,
+    `--deleteWait`, `--deleteTimeout`), and it uninstalls every release its
+    selector matches *regardless of `installed:`*, so it does not converge
+    to the state `helmfile diff` describes. A destroy gated by a diff would
+    inherit a plan describing a different operation
+  - **Nothing is lost**: marking a release `installed: false` routes the
+    removal through the ordinary `diff` → `apply` loop, and `helmfile diff`
+    reports it as `<name> (<chart>) DELETED`
+  - **This reverses this slice's own "Reconciling `GetOperations()` with
+    global Requirement 13" decision, deliberately.** That decision settled
+    *how* destroy is invoked — a peer operation rather than a flag on
+    `apply` — and never asked whether it could be offered at all, because
+    the plan/apply review-loop guarantee did not exist yet. Its stated
+    authority, global design Property 22, asserts destroy behaviour while
+    its own scope line validates Requirements 13.2–13.5, none of which
+    mention destroy
+  - Requirements 3.2 and 3.8 are amended; the reconciliation section
+    records the reversal and why the question it answered was a different
+    one. Tests updated rather than deleted (`helmfile_test.go` lines 34,
+    98, 172 and `property_test.go`'s sampled-operation set), so `apply` and
+    `sync` keep being exercised
+  - _Requirements: amends 3.2 and 3.8_
+
 ## Notes
 
 - No new external dependencies — `gopter` is already a direct dependency from Slice 1; the command seam uses only `os/exec` and `context` from the standard library.
