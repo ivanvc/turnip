@@ -27,15 +27,33 @@ type fakeCommentEventClient struct {
 	permission string
 	files      map[string][]byte
 	pr         *github.PullRequest
+	modified   []string
 
-	mu     sync.Mutex
-	posted []string
+	mu            sync.Mutex
+	posted        []string
+	modifiedCalls int
 }
 
 func (f *fakeCommentEventClient) postedComments() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.posted...)
+}
+
+// GetModifiedFiles counts its calls: a bare plan's file listing is
+// memoised per event, and the count is how that is asserted rather than
+// inferred.
+func (f *fakeCommentEventClient) GetModifiedFiles(ctx context.Context, owner, repo string, prNumber int) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.modifiedCalls++
+	return f.modified, nil
+}
+
+func (f *fakeCommentEventClient) modifiedFetches() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.modifiedCalls
 }
 
 func (f *fakeCommentEventClient) GetCollaboratorPermission(ctx context.Context, owner, repo, username string) (string, error) {
@@ -239,6 +257,82 @@ func TestHandleIssueComment_UnlockNeverCreatesJobOrRecord(t *testing.T) {
 // client before calling HandleIssueComment, since the real method always
 // reconstructs its GitHubClient via o.installationClient rather than
 // accepting one directly.
+// Three Projects, so "one reply rather than one refusal per Project" is
+// demonstrated rather than merely asserted on a set of one.
+const multiProjectTurnipYAML = `
+schemaVersion: v1alpha2
+projects:
+  - name: helm-a
+    directory: a
+    uses: helmfile
+    whenModified:
+      - "a/**"
+  - name: helm-b
+    directory: b
+    uses: helmfile
+    whenModified:
+      - "b/**"
+  - name: helm-c
+    directory: c
+    uses: helmfile
+    whenModified:
+      - "c/**"
+`
+
+// The memoised seam, end to end: three bare plans in one comment ask the
+// same unchanging question, and must cost one file listing rather than
+// three.
+func TestHandleIssueComment_BarePlansFetchModifiedFilesOnce(t *testing.T) {
+	o := testCommentOrchestrator(t, &fakeLockManager{})
+	client := &fakeCommentEventClient{
+		permission: "write",
+		files:      map[string][]byte{"turnip.yaml": []byte(multiProjectTurnipYAML)},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		modified:   []string{"a/main.tf"},
+	}
+
+	require.NoError(t, callHandleIssueComment(o, client,
+		commentEvent("/turnip diff\n/turnip diff\n/turnip diff", "alice")))
+
+	assert.Equal(t, 1, client.modifiedFetches(), "the listing is fetched once per event, not once per command")
+}
+
+// A trigger that names its Projects never consults the Modified_Set, so it
+// must not pay for the call at all.
+func TestHandleIssueComment_NamedProjectsFetchNoModifiedFiles(t *testing.T) {
+	o := testCommentOrchestrator(t, &fakeLockManager{})
+	client := &fakeCommentEventClient{
+		permission: "write",
+		files:      map[string][]byte{"turnip.yaml": []byte(multiProjectTurnipYAML)},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		modified:   []string{"a/main.tf"},
+	}
+
+	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip diff helm-a", "alice")))
+
+	assert.Equal(t, 0, client.modifiedFetches())
+}
+
+// The regression this slice exists to prevent, counted rather than read:
+// a bare apply against three configured Projects holding no plan produces
+// one reply, where it used to produce one refusal per Project.
+func TestHandleIssueComment_BareApplyWithNoPlansRepliesOnce(t *testing.T) {
+	// fakeLockManager's default GetLockStatus reports a Lock held by PR 99
+	// with no plan recorded, so this pull request holds nothing to apply.
+	o := testCommentOrchestrator(t, &fakeLockManager{})
+	client := &fakeCommentEventClient{
+		permission: "write",
+		files:      map[string][]byte{"turnip.yaml": []byte(multiProjectTurnipYAML)},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc"},
+	}
+
+	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip apply", "alice")))
+
+	posted := client.postedComments()
+	require.Len(t, posted, 1, "one answer for the command, not one refusal per configured project")
+	assert.Contains(t, posted[0], "No project has a plan from this pull request")
+}
+
 func callHandleIssueComment(o *Orchestrator, client github.GitHubClient, event *github.WebhookEvent) error {
 	o.installationClient = func(id int64) github.GitHubClient { return client }
 	return o.HandleIssueComment(context.Background(), event)

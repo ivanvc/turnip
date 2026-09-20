@@ -98,7 +98,7 @@ This document specifies requirements for rewriting the multi-IaC automation plat
 
 1. WHEN a PR comment is created, THE Server SHALL parse the comment body for trigger patterns
 2. THE Server SHALL recognize "/{tool name,turnip} apply" as the apply trigger pattern
-3. WHEN "/turnip apply" or "/terraform apply" is detected, THE Server SHALL trigger apply Operations for all Projects configured in turnip.yaml
+3. WHEN "/turnip apply" or "/terraform apply" is detected with no Project named, THE Server SHALL trigger apply Operations for the Projects whose Lock this pull request holds with a plan recorded
 4. WHERE a specific Project is named (e.g., "/turnip apply project-name"), THE Server SHALL trigger apply only for that Project
 5. THE Server SHALL post a comment with apply results for each executed Project
 

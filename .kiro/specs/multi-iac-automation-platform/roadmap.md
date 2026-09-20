@@ -29,7 +29,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 18 | Hold a Lock Only When There Is Something to Apply | `lock-release-rules` | Not Started | Slices 3, 6 |
 | 19 | Draft Pull Requests | `draft-pull-requests` | Complete | Slices 4, 6 |
 | 20 | Apply Exactly What Was Planned | `plan-scoped-apply` | Complete | Slices 3, 6 |
-| 21 | What a Bare Command Targets | `project-selection` | Not Started | Slices 1, 6 |
+| 21 | What a Bare Command Targets | `project-selection` | Complete | Slices 1, 6 |
 | 22 | Refuse Tool Arguments That Name an Executable | `tool-argument-policy` | Not Started | Slices 4, 6 |
 | 23 | Authorize on Permission Level, Not Call Success | `collaborator-authorization` | Not Started | Slice 4 |
 | 24 | How the Runner Receives Its GitHub Token | `runner-token-delivery` | Not Started | Slices 5, 6 |
@@ -38,6 +38,8 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 27 | Authenticated and Encrypted Redis | `redis-tls-auth` | Not Started | Slices 3, 10 |
 | 28 | Seeing and Dropping Locks Without Hunting for the PR | `lock-admin-ui` | Not Started | Slices 3, 4 |
 | 29 | Move the Webhook Off the Root Path | `webhook-path` | Not Started | Slices 4, 10 |
+| 30 | Scheduling: Concurrency and Execution Order | `operation-scheduling` | Not Started | Slices 6, 7 |
+| 31 | Runner Pod Placement: Node Selectors and Tolerations | `runner-pod-placement` | Not Started | Slices 5, 13 |
 
 ## Slice Details
 
@@ -1636,10 +1638,226 @@ alongside its actual feature.
 
 ---
 
+### Slice 30: Scheduling — Concurrency and Execution Order
+
+**Goal**: Let a repository control how its Operations are scheduled — how
+many run at once, and which must finish before others start. turnip offers
+neither today: `executeTargets` starts a goroutine per Target and waits
+for all of them (`internal/orchestrator/execute.go:30-48`), with no cap
+and no ordering.
+
+**The motivating scale is Terraform workspaces**, and it is worth being
+precise about why, because the obvious worry is the wrong one.
+
+A workspace is already expressible: `with.workspace` is a documented
+Terraform setting (`docs/configuration.md:165`) carried in `Project.With`
+(`internal/config/config.go:61`). So N workspaces are N Projects. Each has
+its own `name`, therefore its own `projectKey`, therefore its own Lock;
+and each Runner is a separate Pod with a separate clone. **Nothing
+contends.** Two workspaces of one configuration hold independent state and
+are safe to run together.
+
+What fans out is *cost*. A repository with a dozen environments turns one
+comment into a dozen simultaneous Kubernetes Jobs, each pulling providers
+and talking to an API with its own rate limits. The reason to serialise is
+cluster capacity and provider throttling, not correctness — which also
+means the control belongs where capacity is known.
+
+**Strand 1 — a concurrency cap, not a boolean.** Atlantis spells this
+`parallel_plan` / `parallel_apply`. A maximum-concurrent-Operations
+integer is strictly more expressive and subsumes both, since 1 is
+serialisation. Where it is configured is a real decision: cluster capacity
+is the operator's knowledge (a Server-side setting), while which Projects
+may safely overlap is the repository's (turnip.yaml). Most likely both,
+with the operator's value acting as a ceiling the repository cannot raise.
+
+*Where the cap is **enforced** is a separate decision from where it is
+configured, and the two obvious answers are not equivalent.* turnip can
+hold back Job creation itself (a semaphore in `executeTargets`), or create
+every Job and let Kubernetes admit them gradually through a ResourceQuota
+or a queueing controller.
+
+**The second breaks the timeout sweep, and it is worth spelling out
+because it would be discovered the hard way.** `StartDeadline` is stamped
+when the Operation Record is created — `time.Now().Add(o.startTimeout)` at
+`internal/orchestrator/execute.go:204` — which is *before* the Job exists.
+The clock therefore starts when turnip decides to run something, not when
+the cluster admits it. `sweepOnce`
+(`internal/orchestrator/sweep.go:32`) claims every Record past that
+deadline which never reported a start, and `reportTimeout` completes its
+check run as **failed**, posts a failure result, and deliberately does not
+release the Lock (`internal/orchestrator/sweep.go:89-92`).
+
+So a Job queued behind a Kubernetes-side cap for longer than the start
+timeout is reported as a failure, strands its Lock, and may then still run
+— because nothing cancels it. `timeoutDiagnostic` already renders exactly
+this shape ("Pod still %s after 5 minutes",
+`internal/orchestrator/sweep.go:112`), which shows the condition is
+recognisable; it is simply classified as failure today, correctly, because
+today nothing queues Jobs on purpose.
+
+That makes an in-process semaphore the cheaper enforcement point. Choosing
+Kubernetes admission instead is defensible, but it requires making
+`StartDeadline` relative to admission rather than creation, which is a
+change to the sweep's contract and not a configuration detail.
+
+*One caveat on scope, whichever is chosen.* A semaphore in `executeTargets`
+caps concurrency **per replica, per event**: the Server is stateless and
+horizontally scaled, so two comments landing on two replicas each get
+their own budget. A genuinely global cap needs the count to live in Redis
+— which is the same state question Strand 3 raises, and the reason these
+two strands are one slice rather than two.
+
+**Strand 2 — execution order groups.** Lower-numbered groups run to
+completion before higher ones; Projects within a group still run together.
+
+The evidence for prioritising the integer form: a survey of a real
+multi-repository Atlantis deployment found ordering declared on **353 of
+387 projects** — near-universal, in every case to make one foundational
+project finish before its dependants start. That same deployment used
+`depends_on` nowhere, and used the `workflows` concept (which turnip
+deliberately omits) for nothing at all. Ordering is the larger gap, and
+the integer form is both simpler to schedule and evidently sufficient.
+
+This was deliberately kept out of `project-schema-v1alpha2`: the schema
+half is trivial and the behaviour is not, and adding the key first would
+ship a field that parses and does nothing — the failure this platform has
+already been bitten by twice.
+
+**Strand 3 — the hard part, which is neither of the above.** Both strands
+lengthen the life of the detached goroutine `HandleIssueComment` spawns.
+Eight Projects run in parallel take as long as the slowest; serialised
+they take the sum. The Server is stateless by construction, so a replica
+that restarts mid-run already loses the run and lets the sweep time its
+Operations out — ordering introduces no new *class* of failure, but it
+multiplies the window, and an ordered run interrupted halfway leaves
+earlier groups applied and later groups not.
+
+That is a deliberate decision to take, not a detail to discover: either
+accept it and say so plainly in the documentation, or move scheduling
+state into Redis where a surviving replica could resume it. The second is
+a much larger slice than the first.
+
+**This amends global Requirement 17.1**, which currently reads that the
+Server "SHALL execute Operations for all Projects in parallel" — written
+when parallel was the only scheduling turnip had. Rewritten in place per
+the convention that the global spec carries no amendment markers, with the
+amendment recorded here.
+
+**Open questions**:
+
+- **What an ordered group does when an earlier Project fails.** Atlantis
+  makes this configurable (`abort_on_execution_order_fail`); a default
+  that continues into dependants after a foundational failure is hard to
+  defend, but aborting silently strands work too.
+- **Whether a cap applies per repository or per Server.** A per-repository
+  cap does not protect a cluster from ten repositories each staying under
+  their own limit.
+
+---
+
+### Slice 31: Runner Pod Placement — Node Selectors and Tolerations
+
+**Goal**: Let an operator place Runner Pods on a node pool chosen for the
+job — larger nodes for a heavy state refresh, a pool whose egress
+addresses a provider allowlists, or on-demand capacity where the default
+pool is spot. A selector steers the Pod; a toleration admits it to a pool
+reserved behind a taint.
+
+**What is missing**: `RunnerSpec` carries `serviceAccount` and `env` and
+nothing else (`internal/config/config.go:79-91`), and `internal/jobs` sets
+no scheduling field anywhere. The Backlog's Azure Workload Identity entry
+needs the same pod template opened for *metadata*; this slice opens it for
+*scheduling*, and whichever lands first pays for the seam.
+
+**Decision 1 — Server configuration, not `turnip.yaml`, to begin with.**
+turnip.yaml is read from the pull request's own head commit, so anything
+settable there is settable by whoever opens the pull request. Placement is
+exactly the class of setting where that matters, so the first form is
+operator-controlled, matching the precedent the Azure entry sets for pod
+labels.
+
+**Decision 2 — the two fields do not classify alike, and the slice records
+why even while both are operator-only.** The rule is the one
+`runner.serviceAccount` established: gate what grants capability, leave
+alone what does not.
+
+| Field | Grants capability? |
+|---|---|
+| `tolerations` | **Yes.** A toleration is precisely what admits a Pod to a tainted pool an operator reserved for something else |
+| `nodeSelector` | **Usually not.** Labels are not access control; without a matching toleration a selector can only make scheduling *fail*, not reach anywhere new |
+| `nodeSelector`, on a cluster granting identity per node pool | **Yes.** With EKS node roles or GKE node service accounts, landing on a pool *is* a credential grant |
+
+That last row is why this is written down now rather than when someone
+asks for a per-Project override: the answer depends on a property of the
+cluster, not of turnip, so the gate cannot be decided once and forgotten.
+
+**Decision 3 — an unschedulable Pod must not be discovered by timeout.**
+A selector matching no node leaves the Pod Pending; after `o.startTimeout`
+the sweep claims it, completes the check run as failed, and deliberately
+leaves its Lock held (`internal/orchestrator/sweep.go:89-92`). So today a
+mistyped label costs five minutes and strands a Lock, and the pull request
+is told only "Pod still Pending after 5 minutes".
+
+That is survivable but poor, and this slice is what makes it *likely* —
+before it, nothing turnip wrote could render a Pod unschedulable.
+Detecting `PodScheduled=False` with reason `Unschedulable` and failing
+fast with the scheduler's own message is the obvious answer; it is real
+work, and belongs here rather than being left for whoever hits it.
+
+**Encoding**: tolerations are structured (`key`, `operator`, `value`,
+`effect`, `tolerationSeconds`), so JSON is the natural form and matches
+what the Azure entry reasons its way to for annotations. A node selector
+is a flat label map where values cannot contain commas, so `k=v,k=v` would
+also work — but one encoding for both is worth more than saving a few
+characters on the simpler field.
+
+**Out of scope**:
+
+- **Affinity** — Backlog, by scope decision. Node, pod and anti-pod
+  affinity with required and preferred forms is a large permanent surface,
+  and a selector plus tolerations covers the motivating case.
+- **Per-Project overrides.** Decision 2 records the gating rule this would
+  need; applying it is a later slice, and interacts with the Backlog's
+  top-level `runner:` block, where list-valued fields raise a merge
+  question (append or replace) that neither `serviceAccount` nor `env`
+  answers.
+- **Pod labels and annotations** — the Azure Workload Identity entry.
+
+---
+
 ## Backlog (not yet sliced)
 
 Recorded so they aren't rediscovered the hard way. None of these has a
 spec directory, and none is scheduled.
+
+### Matching Projects by directory rather than name
+
+Slice 21 globs over Project *names*, which covers a repository that names
+its Projects for their paths — `gcp/project`, `aws/project` — with no
+second addressing mechanism and no code beyond the pattern matching it
+already performs. That is why this is a note rather than a slice: naming a
+Project for its directory is the cheaper answer and needs nothing built.
+
+It remains a real gap for a repository that names Projects something other
+than their directory. `Project.Directory` is not addressable at all, so
+`env/gcp/*` selects nothing however the files are laid out.
+
+Two findings worth keeping if it is ever picked up:
+
+- **Atlantis' `-d` spelling cannot be copied.** `indexOfArgStart`
+  (`internal/github/parser.go:101`) stops Project names at the first
+  `-`-prefixed token and hands the rest to the tool — a rule chosen in
+  Slice 20 and documented at `docs/usage.md:68` — so `-d env/gcp/*` would
+  reach the tool as arguments and select nothing. A positional,
+  path-shaped selector needs no parser change at all, which is the shape
+  Slice 21's patterns already use.
+- **Names and directories overlap rather than partition.** A Project's
+  name defaults to its directory (`internal/config/parse.go:129`), so one
+  token can be both a valid name and a valid path pattern. Any
+  directory-matching feature has to state precedence, and "exact name
+  first" carries a trap: adding a Project can then silently change what an
+  existing pattern selects.
 
 ### Contain `Project.directory` to the workspace
 
@@ -1799,6 +2017,28 @@ are arbitrary strings and can — Azure's own
 reserved prefix should stop an operator silently overwriting the keys
 turnip uses for correlation.
 
+### Runner Pod affinity
+
+Slice 31 adds `nodeSelector` and `tolerations`, which together cover the
+dedicated node-pool case: a selector steers, a toleration admits. Affinity
+is deliberately left out of it.
+
+`affinity` is node affinity, pod affinity and pod anti-affinity, each with
+a required and a preferred form. Supporting it wholesale means embedding a
+sizeable piece of the Kubernetes API in turnip's own configuration surface
+and tracking it as that API moves — a large, permanent cost for capability
+nothing has yet asked for.
+
+Worth picking up when something needs what a selector cannot express:
+spreading Runners across zones, or keeping two Runners off one node.
+(Topology spread constraints may be the better answer to the first of
+those, and are a much smaller surface — worth comparing before assuming
+affinity is the tool.)
+
+The gating question Slice 31 settles applies here unchanged: a node
+affinity term is capability-granting in exactly the circumstance a node
+selector is, which is a cluster that grants identity per node pool.
+
 ### Expose the workspace path as a variable rather than a literal
 
 Slice 12 fixes the Runner's workspace at `/turnip/src`, which repositories
@@ -1855,32 +2095,6 @@ failure rather than a correct choice.
 
 Worth doing when a consumer asks to stop pinning, not before: the
 concrete-version path has to keep working either way.
-
-### Cross-project execution ordering
-
-turnip executes every matched Project in parallel (global Requirement
-17.1) and offers no way to say one must finish before another starts.
-
-This looked minor until it was measured. A survey of a real
-multi-repository Atlantis deployment found ordering declared on **353 of
-387 projects** — near-universal — in every case to make one foundational
-project complete before the projects that depend on it start. By contrast
-the same survey found the `workflows` concept, which turnip deliberately
-does not implement, doing no real work at all. Ordering is the larger gap
-of the two, and was the one nobody had written down.
-
-Atlantis spells it two ways: `execution_order_group`, an integer bucket
-where lower runs first, and `depends_on`, naming specific projects. The
-surveyed deployment used the integer form exclusively and `depends_on`
-nowhere — worth weighing, since the integer form is far simpler to
-schedule and evidently sufficient in practice.
-
-Deliberately left out of `project-schema-v1alpha2`: the schema half is
-trivial, but the behaviour is not — `executeTargets` would need to run
-groups in sequence while keeping projects within a group parallel, and
-decide what an ordered group does when an earlier project fails. Adding
-the key before the behaviour would ship a field that parses and does
-nothing, which is the failure this platform has now been bitten by twice.
 
 ### Per-repository server-side configuration
 

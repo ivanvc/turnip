@@ -105,6 +105,79 @@ projects:
 	assert.True(t, found, "no duplicate-name ValidationError found in %v", verrs)
 }
 
+func TestParse_UnaddressableProjectNamesRejected(t *testing.T) {
+	tests := []struct {
+		name        string
+		projectName string
+		wantIn      string
+	}{
+		{name: "bare star", projectName: `"*"`, wantIn: `cannot contain "*"`},
+		{name: "star within a name", projectName: `"gcp/*"`, wantIn: `cannot contain "*"`},
+		{name: "leading dash", projectName: `"-infra"`, wantIn: `cannot begin with "-"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := []byte("schemaVersion: v1alpha2\nprojects:\n  - name: " + tt.projectName +
+				"\n    directory: infra/vpc\n    uses: terraform\n")
+
+			_, err := Parse(data)
+			require.Error(t, err)
+			verrs := asValidationErrors(t, err)
+
+			found := false
+			for _, v := range verrs {
+				if v.Field == "name" && strings.Contains(v.Message, tt.wantIn) {
+					found = true
+				}
+			}
+			assert.True(t, found, "no name ValidationError containing %q in %v", tt.wantIn, verrs)
+		})
+	}
+}
+
+// A Project with no name takes its directory (applyDefaults), so an
+// unaddressable directory produces an unaddressable name. This test is
+// what fails if applyDefaults and validate are ever reordered, which is
+// the assumption the checks in validate.go are written against.
+func TestParse_DefaultedNameFromDirectoryStillRejected(t *testing.T) {
+	data := []byte("schemaVersion: v1alpha2\nprojects:\n  - directory: \"-infra\"\n    uses: terraform\n")
+
+	_, err := Parse(data)
+	require.Error(t, err)
+	verrs := asValidationErrors(t, err)
+
+	found := false
+	for _, v := range verrs {
+		if v.Field == "name" && strings.Contains(v.Message, `cannot begin with "-"`) {
+			found = true
+		}
+	}
+	assert.True(t, found, "a name defaulted from an unaddressable directory was accepted: %v", verrs)
+}
+
+// Path-shaped names are the convention this reservation must not break:
+// "gcp/project" contains a separator but no "*", and a repository that
+// names Projects for their directories depends on it being accepted.
+func TestParse_PathShapedProjectNamesAccepted(t *testing.T) {
+	data := []byte(`
+schemaVersion: v1alpha2
+projects:
+  - name: gcp/project
+    directory: env/gcp/project
+    uses: terraform
+  - name: aws/project
+    directory: env/aws/project
+    uses: terraform
+`)
+
+	cfg, err := Parse(data)
+	require.NoError(t, err)
+	require.Len(t, cfg.Projects, 2)
+	assert.Equal(t, "gcp/project", cfg.Projects[0].Name)
+	assert.Equal(t, "aws/project", cfg.Projects[1].Name)
+}
+
 func TestParse_MultipleSimultaneousViolations(t *testing.T) {
 	data := []byte(`
 schemaVersion: v1alpha2

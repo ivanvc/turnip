@@ -83,7 +83,26 @@ func validate(c *Config) error {
 
 		errs = append(errs, validateUses(p, ref)...)
 
+		// Names a trigger line could never address are rejected here, where
+		// the file is written, rather than when someone tries to select the
+		// Project and gets silence. Both checks run against the effective
+		// name: applyDefaults has already copied directory into an empty
+		// name by this point, so a directory named "-infra" is caught too.
 		if p.Name != "" {
+			if strings.Contains(p.Name, "*") {
+				errs = append(errs, &ValidationError{
+					ProjectRef: ref,
+					Field:      "name",
+					Message:    fmt.Sprintf(`project name %q cannot contain "*": a trigger reads a token containing "*" as a pattern, so this project could never be named directly`, p.Name),
+				})
+			}
+			if strings.HasPrefix(p.Name, "-") {
+				errs = append(errs, &ValidationError{
+					ProjectRef: ref,
+					Field:      "name",
+					Message:    fmt.Sprintf(`project name %q cannot begin with "-": a trigger reads the first "-" token as the start of tool arguments`, p.Name),
+				})
+			}
 			if seenNames[p.Name] {
 				errs = append(errs, &ValidationError{
 					ProjectRef: ref,

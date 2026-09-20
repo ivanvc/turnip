@@ -11,14 +11,20 @@ import (
 // 10: the plan-kind group is minimized-then-reposted (Decision 4, gated
 // by o.minimizeOutdatedPlanComments), the apply-kind group is always
 // posted fresh and never tracked or minimized.
-func (o *Orchestrator) postResults(ctx context.Context, client github.GitHubClient, repo github.Repository, prNumber int, results []github.ProjectResult) {
+// notices are command-level caveats rendered above the verdict. They
+// describe the trigger's selection rather than any one Project, so they
+// attach to the plan-kind comment when there is one and the apply-kind
+// comment otherwise — never both, since one event's selection should not
+// be reported twice.
+func (o *Orchestrator) postResults(ctx context.Context, client github.GitHubClient, repo github.Repository, prNumber int, results []github.ProjectResult, notices ...string) {
 	planResults, applyResults := o.partitionByKind(results)
 
 	if len(planResults) > 0 {
-		o.postPlanResults(ctx, client, repo, prNumber, planResults)
+		o.postPlanResults(ctx, client, repo, prNumber, planResults, notices...)
+		notices = nil
 	}
 	if len(applyResults) > 0 {
-		o.postApplyResults(ctx, client, repo, prNumber, applyResults)
+		o.postApplyResults(ctx, client, repo, prNumber, applyResults, notices...)
 	}
 }
 
@@ -44,7 +50,7 @@ func (o *Orchestrator) isPlanResult(r github.ProjectResult) bool {
 	return ok && p.GetPlanOperation() == r.Operation
 }
 
-func (o *Orchestrator) postPlanResults(ctx context.Context, client github.GitHubClient, repo github.Repository, prNumber int, results []github.ProjectResult) {
+func (o *Orchestrator) postPlanResults(ctx context.Context, client github.GitHubClient, repo github.Repository, prNumber int, results []github.ProjectResult, notices ...string) {
 	if o.minimizeOutdatedPlanComments {
 		if rec, err := o.records.GetPlanCommentRecord(ctx, repo.Owner, repo.Name, prNumber); err != nil {
 			slog.ErrorContext(ctx, "reading plan comment record", "owner", repo.Owner, "repo", repo.Name, "pr_number", prNumber, "error", err)
@@ -63,7 +69,7 @@ func (o *Orchestrator) postPlanResults(ctx context.Context, client github.GitHub
 		// Requirement 10.6. No fallback scan is performed.
 	}
 
-	bodies := github.BuildConsolidatedComment(results)
+	bodies := github.BuildConsolidatedComment(results, notices...)
 	nodeIDs := postBodies(ctx, client, repo, prNumber, bodies)
 
 	if o.minimizeOutdatedPlanComments {
@@ -77,8 +83,8 @@ func (o *Orchestrator) postPlanResults(ctx context.Context, client github.GitHub
 // never updated in place (Requirement 10.7): an apply is a permanent
 // record of what happened to real infrastructure, not a superseded
 // prediction the way an older plan is.
-func (o *Orchestrator) postApplyResults(ctx context.Context, client github.GitHubClient, repo github.Repository, prNumber int, results []github.ProjectResult) {
-	bodies := github.BuildConsolidatedComment(results)
+func (o *Orchestrator) postApplyResults(ctx context.Context, client github.GitHubClient, repo github.Repository, prNumber int, results []github.ProjectResult, notices ...string) {
+	bodies := github.BuildConsolidatedComment(results, notices...)
 	postBodies(ctx, client, repo, prNumber, bodies)
 }
 

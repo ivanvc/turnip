@@ -24,26 +24,32 @@ const minReserve = 128
 // renders that summary while the section is collapsed — so a reader scans
 // a run without expanding anything, which is the job the table used to do
 // (global Requirements 10.2 and 17.3, amended for this).
-func BuildConsolidatedComment(results []ProjectResult) []string {
+// notices are command-level caveats — a selector that matched nothing —
+// rendered as a GitHub warning alert above the verdict, because they
+// change how the verdict should be read. They are variadic so that the
+// many callers with nothing to say stay unchanged.
+func BuildConsolidatedComment(results []ProjectResult, notices ...string) []string {
 	if len(results) == 0 {
 		return nil
 	}
 
-	verdict := buildVerdictLine(results)
+	// head is what opens the first body: the notice alert, when there is
+	// one, followed by the verdict line it qualifies.
+	head := buildNoticeBlock(notices) + buildVerdictLine(results)
 	footer := buildFooter(results)
-	reserve := reserveFor(verdict, footer)
+	reserve := reserveFor(head, footer)
 
 	var pieces []section
 	for _, r := range results {
 		pieces = append(pieces, splitDetailSection(r, reserve)...)
 	}
 
-	groups := packSections(verdict, pieces)
+	groups := packSections(head, pieces)
 
 	bodies := make([]string, len(groups))
 	lastGroup := len(groups) - 1
 	for i, group := range groups {
-		header := verdict + "\n\n"
+		header := head + "\n\n"
 		if i > 0 {
 			header = fmt.Sprintf("_(continued %d/%d)_\n\n", i+1, len(groups))
 		}
@@ -84,14 +90,18 @@ func (s section) render() string {
 // piece must assume is unavailable to it, regardless of which body it
 // lands in.
 //
-// Both the verdict line (which opens the first body) and the footer
-// (which closes the last) are counted, because a piece does not know
-// which body it ends up in and the two can land on the same one. A
-// continuation header is a short "_(continued N/M)_" line, always smaller
-// than that pair, so reserving against them is the conservative choice
-// everywhere.
-func reserveFor(verdict, footer string) int {
-	return max(len(verdict)+len(footer), minReserve)
+// Both the head (which opens the first body — the notice alert, if any,
+// and the verdict line) and the footer (which closes the last) are
+// counted, because a piece does not know which body it ends up in and the
+// two can land on the same one. A continuation header is a short
+// "_(continued N/M)_" line, always smaller than that pair, so reserving
+// against them is the conservative choice everywhere.
+//
+// Counting the notice here is what stops a warning from costing an output
+// section: without it the head grows, body 0 overshoots, and clampBody
+// drops a section to make room.
+func reserveFor(head, footer string) int {
+	return max(len(head)+len(footer), minReserve)
 }
 
 // splitDetailSection renders r as one or more self-contained <details>
@@ -188,6 +198,35 @@ func assembleBody(header string, sections []section, footer string, dropped int)
 	return b.String()
 }
 
+// buildNoticeBlock renders command-level caveats as a GitHub warning
+// alert. Every line carries the "> " prefix, including the marker line,
+// and nothing is nested inside the block — a code fence or <details>
+// indented into the blockquote degrades the whole alert into literal
+// "[!WARNING]" text (see configErrorComment, which learned this first).
+//
+// Inline backticks are safe: they are a span, not a nested element. So is
+// the caller's text generally, because selector tokens come from
+// strings.Fields and therefore contain no newline that could escape the
+// blockquote.
+//
+// WARNING rather than CAUTION: a selector that matched nothing is the
+// author's to fix and leaves nothing in a bad state.
+func buildNoticeBlock(notices []string) string {
+	if len(notices) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("> [!WARNING]\n")
+	for _, n := range notices {
+		b.WriteString("> ")
+		b.WriteString(n)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
 func omissionNote(dropped int) string {
 	if dropped == 1 {
 		return "_(1 earlier section omitted — this comment reached GitHub's size limit)_"
@@ -223,12 +262,13 @@ func cutWithinSection(header string, s section, footer string, dropped int) stri
 
 // packSections greedily groups pieces into comment bodies, keeping each
 // body's total content under maxCommentLength. The first group's budget
-// accounts for the verdict line; later groups start fresh (their
-// continuation header is small enough not to need accounting for here).
-func packSections(verdict string, pieces []section) [][]section {
+// accounts for the head (notice alert, if any, plus the verdict line);
+// later groups start fresh (their continuation header is small enough not
+// to need accounting for here).
+func packSections(head string, pieces []section) [][]section {
 	var groups [][]section
 	var current []section
-	currentLen := len(verdict)
+	currentLen := len(head)
 
 	for _, piece := range pieces {
 		size := len(piece.render())

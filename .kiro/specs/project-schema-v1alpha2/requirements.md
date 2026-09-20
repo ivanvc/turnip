@@ -83,10 +83,10 @@ describes today, matching Slice 12's precedent of shipping `env` with
   be required, `uses:` is the natural slot for them, as it is in the
   syntax this schema borrows from — so nothing here forecloses it.
 - **Cross-project execution ordering** — a real gap the same survey
-  surfaced, recorded in `roadmap.md`'s Backlog. Deliberately given no
-  schema key here: it needs sequencing logic in the orchestrator, and a
-  key that parses but does nothing is the silent-failure class
-  Requirement 5 exists to remove.
+  surfaced, now Slice 30 in `roadmap.md`. Deliberately given no schema
+  key here: it needs sequencing logic in the orchestrator, and a key that
+  parses but does nothing is the silent-failure class Requirement 5
+  exists to remove.
 - **Migrating consuming repositories.** Ordering is a deployment concern
   and, unlike the `schemaVersion` migration, no file value is accepted by
   both the old and new Server at once (see Requirement 6.5).

@@ -48,11 +48,56 @@ or scope it to one tool by using the tool's own name instead of `turnip`:
 /helmfile <operation> [project...] [args...]
 ```
 
-The difference: `/turnip ...` considers every project in `turnip.yaml`;
-`/helmfile ...` (or `/terraform`, `/pulumi`) only considers projects
+The difference: `/turnip ...` considers projects using any tool;
+`/helmfile ...` (or `/terraform`, `/pulumi`) considers only projects
 whose `tool` field matches. `<operation>` must be one the tool actually
-supports (Helmfile: `diff`, `apply`, `sync`); naming a project
-list is optional — omit it to target every matching project at once.
+supports (Helmfile: `diff`, `apply`, `sync`).
+
+## Which projects a command targets
+
+Naming projects is optional. What you get when you omit them depends on
+the operation:
+
+| Trigger | Targets |
+|---|---|
+| `/turnip diff` | the projects whose `whenModified` patterns match this pull request's changed files — the same set the automatic plan picks |
+| `/turnip apply` | the projects this pull request has already planned |
+| `/turnip diff web` | `web`, whether or not the pull request touched it |
+| `/turnip diff *` | every project |
+| `/turnip diff gcp/*` | every project whose **name** matches the pattern |
+
+A plan that matches nothing, and an apply with nothing planned, each get a
+single reply saying so — not one refusal per configured project.
+
+**Patterns match names, not directories.** They use the same glob syntax
+as `whenModified`: `*` matches within one path segment and `**` crosses
+segments, so `gcp/*` reaches a project named `gcp/project` but not
+`gcp/team/project`, where `gcp/**` reaches both. A pattern matching
+nothing is reported at the top of the results comment and the rest of the
+command still runs — so a mistyped `gpc/*` tells you, rather than quietly
+doing less than you asked.
+
+**`*` on its own is a reserved word, not a pattern.** It means *every*
+project, which matters because a `*` pattern stops at a `/` and would skip
+projects named for their path. It cannot be combined with other
+selectors: a trigger either names projects or asks for all of them.
+
+A project name cannot contain `*` or begin with `-` — turnip rejects such
+a name when it parses the configuration file, rather than leaving you to
+discover that nothing can select it. A name containing whitespace parses
+but can never be addressed either, since a trigger line is split on
+spaces; avoid it.
+
+**Wrap a trigger carrying two `*` characters in backticks when you type
+it.** Markdown renders the text between two asterisks as italics and eats
+them, so a comment reading `/turnip diff gcp/* aws/*` displays as
+something other than what you wrote. Backticks make the comment show what
+you typed; turnip receives the raw text either way, so this affects
+whether *you* can check the command, not whether it works.
+
+**Very large pull requests.** GitHub lists at most 3000 changed files, so
+beyond that the matched set may be incomplete. turnip says so in the
+results comment when it happens; `*` targets every project regardless.
 
 Examples:
 

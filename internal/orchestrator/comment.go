@@ -65,6 +65,20 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 	}
 
 	repo := event.Repository
+	// Assembled once, then asked about each command in turn — see
+	// selection's own comment for why this is a value rather than a
+	// parameter list.
+	sel := &selection{
+		cfg:         cfg,
+		plugins:     o.plugins,
+		owner:       owner,
+		repo:        repoName,
+		author:      event.Comment.Author,
+		prNumber:    pr.Number,
+		authorizer:  authorizer,
+		locks:       o.locks,
+		modifiedSet: memoModifiedFiles(client, owner, repoName, pr.Number),
+	}
 	// targetGroups preserves per-TriggerCommand grouping: each command's
 	// Targets must finish executing (Requirement 6's Lock semantics)
 	// before the next command's begin, so a "diff" followed by "apply" on
@@ -75,6 +89,10 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 	var targetGroups [][]Target
 	var preResults []github.ProjectResult
 	var replies []string
+	// selectionNotices are command-level caveats — a pattern that matched
+	// nothing — which ride at the top of the consolidated comment rather
+	// than generating a notification of their own.
+	var selectionNotices []string
 
 	if hasMalformed {
 		replies = append(replies, malformedTriggerReply(malformed))
@@ -87,11 +105,36 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 			continue
 		}
 
-		targets, rejected, err := resolveTargets(ctx, cfg, o.plugins, cmd, owner, repoName, event.Comment.Author, authorizer)
+		targets, rejected, notices, err := sel.resolve(ctx, cmd)
+		// Notices are collected before the error check: an empty selection
+		// still has something worth saying, and a truncated file listing is
+		// most relevant precisely when nothing matched.
+		selectionNotices = append(selectionNotices, notices...)
 		if err != nil {
 			var unmatched *UnmatchedProjectError
 			if errors.As(err, &unmatched) {
 				replies = append(replies, fmt.Sprintf("Project %q not found in turnip.yaml.", unmatched.Name))
+				continue
+			}
+			var mixed *MixedSelectorError
+			if errors.As(err, &mixed) {
+				replies = append(replies, fmt.Sprintf(
+					"`*` cannot be combined with other selectors (got %s) — a trigger either names projects or asks for all of them.",
+					strings.Join(mixed.Others, ", ")))
+				continue
+			}
+			var noModified *NoModifiedProjectsError
+			if errors.As(err, &noModified) {
+				replies = append(replies, fmt.Sprintf(
+					"No project matched the files this pull request changes. Run `/%s %s *` to target every project.",
+					noModified.Tool, noModified.Operation))
+				continue
+			}
+			var noPlanned *NoPlannedProjectsError
+			if errors.As(err, &noPlanned) {
+				replies = append(replies, fmt.Sprintf(
+					"No project has a plan from this pull request to apply. Plan first, or name a project explicitly with `/%s %s <project>`.",
+					noPlanned.Tool, noPlanned.Operation))
 				continue
 			}
 			return err
@@ -100,6 +143,14 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 			targetGroups = append(targetGroups, targets)
 		}
 		preResults = append(preResults, rejected...)
+	}
+
+	// A notice has nowhere to ride when nothing ran, so it becomes a reply
+	// of its own — the same reasoning that makes UnmatchedProjectError
+	// standalone: there is no result row to attach it to.
+	if len(targetGroups) == 0 && len(preResults) == 0 && len(selectionNotices) > 0 {
+		replies = append(replies, strings.Join(selectionNotices, "\n"))
+		selectionNotices = nil
 	}
 
 	for _, reply := range replies {
@@ -113,15 +164,38 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 	}
 
 	prInfo := github.PullRequest{Number: pr.Number, HeadSHA: pr.HeadSHA, BaseRef: pr.BaseRef, HeadRef: pr.HeadRef}
-	go func(groups [][]Target, results []github.ProjectResult) {
+	go func(groups [][]Target, results []github.ProjectResult, notices []string) {
 		detached := context.WithoutCancel(ctx)
 		for _, targets := range groups {
 			results = append(results, o.executeTargets(detached, client, repo, prInfo, event.Installation.ID, targets)...)
 		}
-		o.postResults(detached, client, repo, prInfo.Number, results)
-	}(targetGroups, preResults)
+		o.postResults(detached, client, repo, prInfo.Number, results, notices...)
+	}(targetGroups, preResults, selectionNotices)
 
 	return nil
+}
+
+// memoModifiedFiles returns a lookup that fetches the pull request's
+// changed files at most once per event, caching the error alongside the
+// result so a failing fetch is not retried once per command.
+//
+// Deliberately mutex-free: HandleIssueComment resolves commands one after
+// another, which is what makes a plain closure safe here. Running commands
+// concurrently would turn this into a race — noted at the seam rather than
+// left to be discovered.
+func memoModifiedFiles(client github.GitHubClient, owner, repo string, prNumber int) func(context.Context) ([]string, error) {
+	var (
+		files  []string
+		err    error
+		called bool
+	)
+	return func(ctx context.Context) ([]string, error) {
+		if !called {
+			called = true
+			files, err = client.GetModifiedFiles(ctx, owner, repo, prNumber)
+		}
+		return files, err
+	}
 }
 
 // handleUnlock implements Requirement 5: resolve candidates (5.1),
