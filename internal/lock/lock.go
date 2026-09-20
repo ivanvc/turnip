@@ -46,6 +46,18 @@ type PlanRecord struct {
 }
 
 // LockStatus is GetLockStatus's return value.
+//
+// HasPlan and PlanSummary have no reader today: both callers of
+// GetLockStatus use only Locked and PRNumber, and the comment renderer
+// decides what to offer from its own ProjectResult. They are populated
+// anyway because Requirement 4.3 specifies that a Lock's status reports
+// the holding PR, its URL, the lock time, and — when present — the stored
+// plan's ChangeSummary, for the lock-status surface Requirement 4's user
+// story describes.
+//
+// Recorded here because a dead-code sweep will flag them again and the
+// obvious move is deletion, which would quietly drop a specified
+// contract. They are ahead of their consumer, not left behind by one.
 type LockStatus struct {
 	Locked         bool
 	PRNumber       int

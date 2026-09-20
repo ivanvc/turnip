@@ -1021,6 +1021,16 @@ permission endpoint may report `read` for any user at all, since public
 repositories grant universal pull access — so `>= read` would still admit
 the attacker. The fix is the endpoint, not the threshold.
 
+**And do not let `Client.IsCollaborator` be tidied away before this
+lands.** A dead-code sweep flags it as test-only and correctly so: nothing
+in production calls it today. But it is the *right* implementation — the
+204/404 endpoint that actually answers "is this person a collaborator" —
+and this slice's entire fix is to start calling it. Deleting it as dead
+would remove the correct code and leave the broken code in place, which is
+the worst available outcome. Recorded here because the finding and the fix
+live in different places, and whoever runs the sweep may not be whoever
+reads this slice.
+
 ---
 
 ### Slice 24: How the Runner Receives Its GitHub Token
@@ -1091,8 +1101,19 @@ indirection, not a fix. Slice 25 is what makes B coherent.
 can reach), then A as the delivery change, with B as the end state once
 Slice 25 lands.
 
-**Free either way**: `github_token` is field 8 on `OperationStart`, flows
-Runner→Server, and the Server never reads it. Delete it.
+**Free either way, and larger than the credential.** `OperationStart`
+declares twelve fields; the Server reads exactly one of them —
+`payload.Start.GetOperationId()` at `internal/rpc/server.go:83`. The other
+eleven, `github_token` among them, are populated by
+`internal/runner/reporter.go` on every stream open and discarded on
+arrival. Deleting the token field is the security-relevant part; deleting
+the rest is the reason the message exists at all being re-examined.
+
+Note the reporter re-sends the whole message on **every** reconnect, and
+`reportOnce` retries on a fifteen-minute budget — so this is not a
+one-off cost, and it is the same payload that carries the credential.
+Verified by counting the proto's fields against the Server's reads, not
+inherited from a report.
 
 **On the RBAC objection to A**: adding `secrets: create/delete` to the
 Server's Role looks like an escalation and mostly is not — anything that
