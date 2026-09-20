@@ -83,6 +83,21 @@ func (s *scriptedServer) streamAt(i int) []*pb.ExecuteOperationRequest {
 	return s.streams[i]
 }
 
+// waitForStreamCount blocks until srv has registered at least n streams.
+//
+// A stream's slot is assigned by its own handler goroutine (see
+// ExecuteOperation above), which is not ordered against the client call
+// that opened it returning. A test that opens a second stream without
+// waiting therefore races the two handlers for index 0, and streamAt's
+// indices stop meaning "first" and "second" — the failure looks like
+// dropped log lines rather than a reordering, which is what made this
+// worth a helper instead of a sleep.
+func waitForStreamCount(t *testing.T, srv *scriptedServer, n int) {
+	t.Helper()
+	require.Eventually(t, func() bool { return srv.streamCount() >= n }, 5*time.Second, time.Millisecond,
+		"server never registered %d stream(s)", n)
+}
+
 func dialScriptedServer(t *testing.T, srv *scriptedServer) pb.OperationServiceClient {
 	t.Helper()
 
@@ -259,6 +274,11 @@ func TestReporter_ReportReconnectsAndResendsFullBufferWithResumedTrue(t *testing
 	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
 
 	require.NoError(t, r.Connect(context.Background()))
+	// Pin the first stream to index 0 before anything opens a second one;
+	// without this the reconnect's handler can register first and the
+	// assertions below inspect the wrong stream.
+	waitForStreamCount(t, srv, 1)
+
 	r.LogLine("stdout", "line one")
 	r.LogLine("stderr", "line two")
 

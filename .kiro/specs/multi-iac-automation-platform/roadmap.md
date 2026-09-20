@@ -1665,30 +1665,6 @@ decide what an ordered group does when an earlier project fails. Adding
 the key before the behaviour would ship a field that parses and does
 nothing, which is the failure this platform has now been bitten by twice.
 
-### Flaky reporter reconnect test — or a real dropped-log bug
-
-`TestReporter_ReportReconnectsAndResendsFullBufferWithResumedTrue` fails
-intermittently. It asserts that the entire buffered log history is resent
-after a dropped connection, and sometimes observes two lines where three
-were produced.
-
-Confirmed pre-existing rather than introduced by any recent slice: it
-reproduces at `12f77c3` and passes repeatedly against the working tree, so
-it is timing-dependent rather than a regression.
-
-Worth resolving because the two explanations differ in seriousness. If the
-test is racing its own fixture, it is noise that will eventually be
-dismissed as "just the flaky one" and stop being read. If the reporter
-genuinely resends a partial buffer, then log lines are silently lost when a
-Runner reconnects mid-operation — and the pull request would show a plan
-missing lines with nothing to indicate anything went missing, which is the
-worse failure mode because it looks like success.
-
-Reproduce with `go test ./internal/runner/ -run
-TestReporter_ReportReconnectsAndResendsFullBufferWithResumedTrue -count=20`.
-Start by deciding which of the two it is; only then decide whether the fix
-belongs in the reporter or the test.
-
 ### Per-repository server-side configuration
 
 turnip's Server configuration is global: one value applies to every
