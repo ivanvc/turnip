@@ -36,7 +36,7 @@ deployment.
    certificate for that hostname. See
    [`docs/configuration.md`](configuration.md#setting-up-the-github-app)'s
    Webhook URL section for the exact shape this feeds into
-   (`https://<your-hostname>/`).
+   (`https://<your-hostname>/github/webhook`).
 4. **A GitHub App** — installed on whichever repositories should trigger
    turnip. You'll need its App ID, its private key (PEM), and a webhook
    secret you choose yourself. See
@@ -162,9 +162,34 @@ The port-forward check above only proves the Pod itself works — it says
 nothing about the public ingress from Prerequisites #3. Confirm that
 separately, from outside the cluster: `curl -i https://<your-hostname>/healthz`
 should also return `200`. Once it does, go set the GitHub App's Webhook
-URL to `https://<your-hostname>/` and check **Active**
+URL to `https://<your-hostname>/github/webhook` and check **Active**
 (`docs/configuration.md`'s Webhook section) — that's the last piece
 needed for GitHub to actually start delivering events.
+
+### Upgrading an installation created before the webhook moved
+
+turnip used to serve webhooks at the root path. If your GitHub App still
+points at `https://<your-hostname>/`, its deliveries will start returning
+404 as soon as you deploy a version with this change — the root path is no
+longer served at all.
+
+**There is no ordering that avoids a short gap.** Updating the App first
+sends deliveries to a path the running Server does not yet serve; deploying
+first leaves the App pointing at a path the new Server no longer serves.
+Either way the window is however long the two steps are apart.
+
+The gap is recoverable, so keep it short rather than trying to eliminate
+it:
+
+1. Deploy the new version.
+2. Change the App's **Webhook URL** to
+   `https://<your-hostname>/github/webhook`.
+3. Redeliver anything that failed in between — GitHub keeps recent
+   deliveries under the App's **Advanced** tab, each with a **Redeliver**
+   button.
+
+A delivery that 404s is not retried by GitHub on its own, so step 3 is how
+a pull request that was opened mid-window gets its plan.
 
 ## Optional: the Grafana dashboard
 

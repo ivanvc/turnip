@@ -9,6 +9,19 @@ import (
 	"github.com/ivanvc/turnip/internal/metrics"
 )
 
+// WebhookPath is where the Server serves GitHub webhook deliveries.
+//
+// It is published — an operator types it into the GitHub App's settings —
+// so it is defined once and referenced, never spelled out at a call site.
+// Two literals that must agree are exactly what a constant is for, and
+// here the cost of them disagreeing lands on an operator rather than
+// being caught by a compiler.
+//
+// Namespaced by forge rather than by resource (`/webhook`) so that a
+// second forge, or another GitHub-specific endpoint such as an OAuth
+// callback, needs no further migration of a published URL.
+const WebhookPath = "/github/webhook"
+
 // EventHandler reacts to parsed, signature-verified webhook events. Slice 6
 // implements this interface; NewWebhookHandler only dispatches to it.
 type EventHandler interface {

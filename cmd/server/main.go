@@ -78,15 +78,11 @@ func run(cfg orchestrator.Config) error {
 	)
 
 	pingRedis := func(ctx context.Context) error { return redisClient.Ping(ctx).Err() }
-	mux := http.NewServeMux()
-	mux.Handle("GET /healthz", health.Healthz())
-	mux.Handle("GET /readyz", health.Readyz(pingRedis))
-	mux.Handle("GET /metrics", metrics.Handler())
-	mux.Handle("/", github.NewWebhookHandler([]byte(cfg.GitHubWebhookSecret), orch))
+	webhook := github.NewWebhookHandler([]byte(cfg.GitHubWebhookSecret), orch)
 
 	httpServer := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: mux,
+		Handler: newMux(webhook, pingRedis),
 	}
 
 	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)
@@ -118,6 +114,31 @@ func run(cfg orchestrator.Config) error {
 		},
 		orch.Run,
 	)
+}
+
+// newMux builds the Server's HTTP routes.
+//
+// Separated from run so that routing is testable: run dials Redis and
+// Kubernetes and then blocks, none of which a routing assertion should
+// require. The parameters are deliberately narrow — a constructed handler
+// and the readiness probe's dependency — so a test can pass a stub that
+// records whether it was called, which is the only way to assert that an
+// unmatched path does *not* reach the webhook handler.
+func newMux(webhook http.Handler, ready func(context.Context) error) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle("GET /healthz", health.Healthz())
+	mux.Handle("GET /readyz", health.Readyz(ready))
+	mux.Handle("GET /metrics", metrics.Handler())
+	// Registered at an exact path, with its method: the handler performs
+	// no method check of its own, so without "POST " a GET here would
+	// reach signature validation and be answered 401 rather than 405.
+	//
+	// Nothing is registered at "/". ServeMux answers 404 for anything
+	// unmatched, so the *absence* of a route is what produces it —
+	// registering a "/" handler to make that visible would reintroduce
+	// the catch-all it was meant to document.
+	mux.Handle("POST "+github.WebhookPath, webhook)
+	return mux
 }
 
 // kubernetesConfig loads an in-cluster config when available, falling

@@ -37,7 +37,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 26 | Real-Time Operation Output | `operation-output-stream` | Not Started | Slices 5, 6 |
 | 27 | Authenticated and Encrypted Redis | `redis-tls-auth` | Not Started | Slices 3, 10 |
 | 28 | Seeing and Dropping Locks Without Hunting for the PR | `lock-admin-ui` | Not Started | Slices 3, 4 |
-| 29 | Move the Webhook Off the Root Path | `webhook-path` | Not Started | Slices 4, 10 |
+| 29 | Move the Webhook Off the Root Path | `webhook-path` | Complete | Slices 4, 10 |
 | 30 | Scheduling: Concurrency and Execution Order | `operation-scheduling` | Not Started | Slices 6, 7 |
 | 31 | Runner Pod Placement: Node Selectors and Tolerations | `runner-pod-placement` | Not Started | Slices 5, 13 |
 
@@ -557,11 +557,40 @@ The apply asymmetry is the substance of the slice: today's blanket "a
 failed or timed-out Operation triggers no Lock mutation" is correct for a
 failed apply and wrong for a failed plan.
 
+**This is worth more than lock hygiene, and the reason is worth stating.**
+A repository with a fleet of near-identical environments — the same
+components deployed to many clusters, differing only in values — cannot
+narrow its blast radius with `whenModified` at all. The coupling there is
+*true*: an edit to a shared component genuinely affects every environment
+that deploys it, so every one of them must plan, and no pattern should
+prevent that.
+
+What is wrong in that situation is not which Projects planned but what
+happens afterwards. The edit usually renders identically for most of
+them, so most of those plans find nothing to apply — and today each one
+still holds a Lock until a human clears it. `whenModified` cannot fix
+this, because path matching can only remove coupling that was false. This
+slice can, because it decides from the plan's own result rather than from
+where a file sits.
+
+Measured on a real repository of that shape: a shared helmfile read by six
+environments carried 50 releases, of which **34 were unconditional** and
+only **3** were guarded by environment name — the remainder guarded by
+value-derived capability checks that cannot become file layout without
+freezing today's values into the directory tree. Restructuring was
+attempted there on one environment, approved, and abandoned as not worth
+merging. That is the case this slice answers and restructuring does not.
+
 **Open question, to settle before implementing**: is applying a no-change
 plan genuinely inert? For Helmfile it should be, but `apply` can run
 hooks that `diff` does not, so "nothing to apply" may not mean "applying
 does nothing". If a no-change apply has effects someone might want, the
 no-changes row above becomes a judgement rather than a deduction.
+
+That question is best settled empirically, and a Helmfile deployment with
+many similar environments exercises the no-change path constantly — so it
+should be answered with evidence from one rather than reasoned about in
+the abstract.
 
 **Implementable as stated**: the cases are already distinguishable where
 the decision is made. `HandleResult` runs only when `ClaimForResult`
@@ -2038,6 +2067,89 @@ affinity is the tool.)
 The gating question Slice 31 settles applies here unchanged: a node
 affinity term is capability-granting in exactly the circumstance a node
 selector is, which is a cluster that grants identity per node pool.
+
+### `whenModified` cannot see through a symlink
+
+Matching is textual, and it happens before any clone exists. The Server
+asks GitHub which files a pull request changed and glob-matches those path
+strings (`projectMatches`, `internal/config/match.go`); nothing in
+`internal/config` touches a filesystem or a repository tree.
+
+git makes that consequential twice over. A symlink is a blob of mode
+120000 whose content is its target path, so editing the target never
+modifies the link and the link's own path never appears in the diff. And
+git stores a symlinked directory as a *single* entry rather than expanding
+it. So where `env/prod/modules` links to `shared/modules`, editing
+`shared/modules/main.tf` produces exactly one changed path —
+`shared/modules/main.tf` — and a Project whose patterns cover only
+`env/prod/**` matches nothing and never replans.
+
+The Runner clones with real `git` (`internal/runner/clone.go`), so the
+link resolves normally at execution. The gap is entirely in *selection*:
+by the time a filesystem exists, the decision not to run has been made.
+
+**The workaround costs one line and should be documented rather than
+engineered around** — name both paths:
+
+```yaml
+whenModified:
+  - "env/prod/**"
+  - "shared/modules/**"
+```
+
+**The asymmetry that makes this a trap rather than an inconvenience.** A
+symlink is itself a tracked entry, so *adding or removing* one changes a
+path inside the linking directory and does trigger that Project. Only
+*edits to the link's target* go unnoticed. A layout of this shape
+therefore works on the day it is built and silently stops noticing a
+shared component the first time someone edits it — for exactly those
+Projects whose patterns nobody remembered to extend. It fails by omission,
+producing no error and no output to read.
+
+**The shape this arises in is not exotic.** One Project per environment,
+each environment directory linking several shared component directories,
+is a natural way to stop a pull request planning every environment at
+once — which is the problem `whenModified` exists to solve. It needs one
+pattern per linked component per Project, and the count grows with
+environments times components.
+
+**What resolving it automatically would take.** turnip would fetch the
+repository tree at the head SHA, find every mode-120000 entry, read each
+target blob, and then answer the *reverse* question: is this changed path
+reachable through a link covered by some Project's patterns? That is a
+recursive tree call per event — cacheable per head SHA — plus resolution
+logic that has to handle links to links, links pointing outside the
+repository, and links whose targets do not exist.
+
+**The cost this removes is boilerplate, and that is the stronger argument
+for it.** Adding one shared component to one environment means three
+edits: create the link, register it with the tool, and extend the
+Project's patterns. The first two fail loudly — a missing link or an
+unregistered file breaks on the next run. The third fails silently. So
+turnip owns exactly one third of the boilerplate and it is the third that
+produces no error when forgotten, which is a poor split to leave in place.
+
+*A warn-only variant is not the cheap escape it first appears.* To report
+that a linked directory is covered by no pattern, turnip must still find
+the link and read its target — the same tree walk and the same blob
+reads. What it buys is not a smaller mechanism but a weaker obligation: a
+warning may be best-effort and skipped when an API call fails, whereas
+resolution that silently changes which Projects run has to be reliable, or
+it trades one invisible failure for another.
+
+*What is genuinely cheap, and available now, is generating the
+configuration.* A repository whose Projects are derived by walking its own
+tree — emitting each Project's patterns from the links actually present —
+makes the third edit a build artefact rather than a thing to remember.
+That is the established answer in this ecosystem (the Terragrunt and
+Atlantis world generates its configuration for the same reason), it needs
+nothing from turnip, and it should be the recommendation until resolution
+exists.
+
+Where a tool-native mechanism exists it sidesteps the question entirely:
+Terraform's `source = "../../shared/modules"` is the idiomatic answer for
+modules, though it has no counterpart for a helmfile that simply lives in
+a shared directory.
 
 ### Expose the workspace path as a variable rather than a literal
 

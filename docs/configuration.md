@@ -39,7 +39,7 @@ projects:
 | `projects[].name` | no | defaults to `directory`; must be unique across the file once defaulted |
 | `projects[].directory` | **yes** | the tool's working directory, relative to the repo root |
 | `projects[].uses` | **yes** | what to run: `<tool>` or `<tool>@<version>` — see below |
-| `projects[].whenModified` | no | a list of glob patterns (full `**` support — [doublestar](https://github.com/bmatcuk/doublestar) syntax); a PR whose changed files match none of a project's patterns never triggers it |
+| `projects[].whenModified` | no | a list of glob patterns (full `**` support — [doublestar](https://github.com/bmatcuk/doublestar) syntax), matched against the paths GitHub reports as changed; a PR whose changed files match none of a project's patterns never triggers it. Matching is textual and **does not follow symlinks** — git records a change under the file's real path, so a project reached through a symlinked directory must also list the link target (e.g. both `env/prod/**` and `shared/modules/**`) |
 | `projects[].with` | no | how to call it: configuration the tool itself reads — see below |
 | `projects[].runner` | no | where it runs: settings for the Runner Pod — see below |
 
@@ -449,20 +449,29 @@ leave the Setup URL blank and the checkbox unchecked.
   only requires the URL field when Active is checked, and you can come
   back to this same settings page to check Active and fill in the real
   URL once it exists.
-- **Webhook URL**: `https://<your-hostname>/` — the root path (`/`),
-  not `/webhook` or any other sub-path; `<your-hostname>` is a real,
-  publicly-resolvable DNS name that routes HTTPS traffic to the
-  `turnip-server` Service's HTTP port (`8080` by default,
-  `TURNIP_HTTP_ADDR`). **turnip provisions none of this for you** —
-  `deploy/base` has no Ingress, Gateway API, or LoadBalancer Service in
-  it, only a plain `ClusterIP` Service (`deploy/base/service.yaml`).
-  You need your own Ingress/Gateway/LoadBalancer resource (whatever
-  your cluster already uses for exposing HTTP services) routing to that
-  Service, plus a DNS record and a TLS certificate for the hostname —
-  e.g. `https://turnip.example.com/` if your ingress controller fronts
-  that hostname and forwards to `turnip-server:8080`. None of that is
-  part of this repository; it's entirely your own cluster's ingress
+- **Webhook URL**: `https://<your-hostname>/github/webhook` — that exact
+  path, not the root and not a sub-path beneath it. The Server serves
+  webhook deliveries there and nowhere else; every other path returns
+  404. `<your-hostname>` is a real, publicly-resolvable DNS name that
+  routes HTTPS traffic to the `turnip-server` Service's HTTP port (`8080`
+  by default, `TURNIP_HTTP_ADDR`). **turnip provisions none of this for
+  you** — `deploy/base` has no Ingress, Gateway API, or LoadBalancer
+  Service in it, only a plain `ClusterIP` Service
+  (`deploy/base/service.yaml`). You need your own
+  Ingress/Gateway/LoadBalancer resource (whatever your cluster already
+  uses for exposing HTTP services) routing to that Service, plus a DNS
+  record and a TLS certificate for the hostname — e.g.
+  `https://turnip.example.com/github/webhook` if your ingress controller
+  fronts that hostname and forwards to `turnip-server:8080`. None of that
+  is part of this repository; it's entirely your own cluster's ingress
   setup.
+
+  The path is namespaced by forge on purpose. It leaves `/github/` free
+  for other GitHub-specific endpoints, and leaves the rest of the server's
+  paths free for surfaces that should *not* be publicly reachable — which
+  is also why giving the webhook its own path matters: an Ingress can
+  route on it, so you can expose this one path and keep everything else
+  internal.
 - **Webhook secret**: type in a secret you generate yourself (e.g.
   `openssl rand -hex 32`) — this exact value is what
   `TURNIP_GITHUB_WEBHOOK_SECRET` must match, so generate it first and
