@@ -20,19 +20,25 @@ type fakePlugin struct {
 	operations     []string
 	planOperation  string
 	applyOperation string
+
+	// actsWithoutChanges is settable because Helmfile answers true and is
+	// the only real Plugin, so a fake is the only way to exercise the
+	// false branch — the one that releases a Lock on a no-change plan.
+	actsWithoutChanges bool
 }
 
 func (f *fakePlugin) Name() string              { return f.name }
 func (f *fakePlugin) GetOperations() []string   { return f.operations }
 func (f *fakePlugin) GetPlanOperation() string  { return f.planOperation }
 func (f *fakePlugin) GetApplyOperation() string { return f.applyOperation }
+func (f *fakePlugin) ActsWithoutChanges() bool  { return f.actsWithoutChanges }
 func (f *fakePlugin) Execute(ctx context.Context, operation string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
 	panic("not used by target_test.go")
 }
 
 func testRegistry() PluginRegistry {
 	return PluginRegistry{
-		"helmfile": &fakePlugin{name: "helmfile", operations: []string{"diff", "apply", "sync"}, planOperation: "diff", applyOperation: "apply"},
+		"helmfile": &fakePlugin{name: "helmfile", operations: []string{"diff", "apply", "sync"}, planOperation: "diff", applyOperation: "apply", actsWithoutChanges: true},
 		"pulumi":   &fakePlugin{name: "pulumi", operations: []string{"preview", "up"}, planOperation: "preview", applyOperation: "up"},
 	}
 }
@@ -319,7 +325,11 @@ func TestResolveTargets_TriggerTable(t *testing.T) {
 				getLockStatusFunc: func(_ context.Context, key string) (*lock.LockStatus, error) {
 					for name, held := range heldPlans {
 						if key == projectKey("o", "r", name) {
-							return &lock.LockStatus{Locked: held, PRNumber: 42, HasPlan: held}, nil
+							state := lock.StatePlanning
+							if held {
+								state = lock.StatePlanReady
+							}
+							return &lock.LockStatus{Locked: held, PRNumber: 42, State: state}, nil
 						}
 					}
 					return &lock.LockStatus{}, nil

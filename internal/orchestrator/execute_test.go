@@ -28,6 +28,116 @@ type fakeLockManager struct {
 	releaseLockFunc   func(ctx context.Context, projectKey string, prNumber int) error
 	getLockStatusFunc func(ctx context.Context, projectKey string) (*lock.LockStatus, error)
 	isLockedByPRFunc  func(ctx context.Context, projectKey string, prNumber int) (bool, error)
+
+	acquireForPlanFunc func(ctx context.Context, projectKey string, prNumber int, url, lockedBy string) (bool, lock.Transition, error)
+	applyFunc          func(ctx context.Context, projectKey string, prNumber int, ev lock.Event, plan *lock.PlanRecord) (lock.Transition, error)
+
+	// states models just enough of a real Lock for the transition table to
+	// be exercised rather than restated. An unseen key is StatePlanning:
+	// that is what a Lock looks like immediately after a plan was
+	// dispatched, which is the situation every test reaching HandleResult
+	// is actually in.
+	mu      sync.Mutex
+	states  map[string]lock.LockState
+	applied []lock.Event
+}
+
+func (f *fakeLockManager) AcquireForPlan(ctx context.Context, projectKey string, prNumber int, url, lockedBy string) (bool, lock.Transition, error) {
+	if f.acquireForPlanFunc != nil {
+		return f.acquireForPlanFunc(ctx, projectKey, prNumber, url, lockedBy)
+	}
+	// Honour a test that only scripted the older acquire, so existing
+	// contention tests keep meaning what they meant.
+	if f.acquireLockFunc != nil {
+		ok, err := f.acquireLockFunc(ctx, projectKey, prNumber, url, lockedBy)
+		if err != nil || !ok {
+			return ok, lock.Transition{}, err
+		}
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	from, seen := f.state(projectKey)
+	if !seen {
+		f.setState(projectKey, lock.StatePlanning)
+		return true, lock.Transition{To: lock.StatePlanning}, nil
+	}
+	tr, _ := lock.ApplyEvent(from, lock.EventPlanDispatched)
+	f.setState(projectKey, tr.To)
+	return true, tr, nil
+}
+
+func (f *fakeLockManager) Apply(ctx context.Context, projectKey string, prNumber int, ev lock.Event, plan *lock.PlanRecord) (lock.Transition, error) {
+	if f.applyFunc != nil {
+		return f.applyFunc(ctx, projectKey, prNumber, ev, plan)
+	}
+
+	// A test that scripted which Projects this pull request holds keeps
+	// deciding that: a Lock this PR does not hold has no transition to
+	// take, which is what the close path reads as "skip".
+	if f.isLockedByPRFunc != nil {
+		held, err := f.isLockedByPRFunc(ctx, projectKey, prNumber)
+		if err != nil || !held {
+			return lock.Transition{}, err
+		}
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.applied = append(f.applied, ev)
+	from, _ := f.state(projectKey)
+	tr, ok := lock.ApplyEvent(from, ev)
+	if !ok {
+		return tr, nil
+	}
+
+	// The older injection points still witness the effects, so tests
+	// written against them keep asserting what they meant — a Lock was
+	// released, a plan was recorded — rather than which entry point did
+	// it, which is this slice's business and not theirs.
+	if tr.Released {
+		if f.releaseLockFunc != nil {
+			if err := f.releaseLockFunc(ctx, projectKey, prNumber); err != nil {
+				return lock.Transition{}, err
+			}
+		}
+		delete(f.states, projectKey)
+		return tr, nil
+	}
+
+	if plan != nil && f.storePlanFunc != nil {
+		if err := f.storePlanFunc(ctx, projectKey, prNumber, *plan); err != nil {
+			return lock.Transition{}, err
+		}
+	}
+	f.setState(projectKey, tr.To)
+	return tr, nil
+}
+
+// state reports the modelled state and whether the key was known. Callers
+// hold f.mu.
+func (f *fakeLockManager) state(projectKey string) (lock.LockState, bool) {
+	s, ok := f.states[projectKey]
+	if !ok {
+		return lock.StatePlanning, false
+	}
+	return s, true
+}
+
+// appliedEvents returns the edges this fake was asked to take, so a test
+// can witness which one the orchestrator classified rather than inferring
+// it from the state that resulted.
+func (f *fakeLockManager) appliedEvents() []lock.Event {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]lock.Event(nil), f.applied...)
+}
+
+func (f *fakeLockManager) setState(projectKey string, s lock.LockState) {
+	if f.states == nil {
+		f.states = make(map[string]lock.LockState)
+	}
+	f.states[projectKey] = s
 }
 
 func (f *fakeLockManager) AcquireLock(ctx context.Context, projectKey string, prNumber int, url, lockedBy string) (bool, error) {
@@ -58,7 +168,18 @@ func (f *fakeLockManager) GetLockStatus(ctx context.Context, projectKey string) 
 	if f.getLockStatusFunc != nil {
 		return f.getLockStatusFunc(ctx, projectKey)
 	}
-	return &lock.LockStatus{Locked: true, PRNumber: 99}, nil
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// A key this fake has modelled reports the state it modelled. One it
+	// has not reports StatePlanReady, which is what a Lock carrying a
+	// usable plan looks like — the situation every test that reaches a
+	// mutating Operation without first running a plan is describing.
+	state, seen := f.state(projectKey)
+	if !seen {
+		state = lock.StatePlanReady
+	}
+	return &lock.LockStatus{Locked: true, PRNumber: 99, State: state}, nil
 }
 func (f *fakeLockManager) IsLockedByPR(ctx context.Context, projectKey string, prNumber int) (bool, error) {
 	if f.isLockedByPRFunc != nil {

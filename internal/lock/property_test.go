@@ -48,11 +48,11 @@ func TestProperty_LockAcquisitionPreventsConcurrentOperations(t *testing.T) {
 		ctx := context.Background()
 		m := newPropertyManager(t)
 
-		okA, err := m.AcquireLock(ctx, projectKey, prA, "https://example.com/pr/a", "alice")
+		okA, err := acquireLock(ctx, m, projectKey, prA, "https://example.com/pr/a", "alice")
 		require.NoError(t, err)
 		require.True(t, okA)
 
-		okB, err := m.AcquireLock(ctx, projectKey, prB, "https://example.com/pr/b", "bob")
+		okB, err := acquireLock(ctx, m, projectKey, prB, "https://example.com/pr/b", "bob")
 		require.NoError(t, err)
 		require.False(t, okB, "PR A already holds the lock")
 	})
@@ -68,11 +68,11 @@ func TestProperty_LockReleaseAfterOperationCompletion(t *testing.T) {
 		ctx := context.Background()
 		m := newPropertyManager(t)
 
-		ok, err := m.AcquireLock(ctx, projectKey, pr, "https://example.com/pr", "alice")
+		ok, err := acquireLock(ctx, m, projectKey, pr, "https://example.com/pr", "alice")
 		require.NoError(t, err)
 		require.True(t, ok)
-		require.NoError(t, m.StorePlan(ctx, projectKey, pr, PlanRecord{Data: planData, Summary: plugin.ChangeSummary{Add: 1}}))
-		require.NoError(t, m.ReleaseLock(ctx, projectKey, pr))
+		require.NoError(t, storePlan(ctx, m, projectKey, pr, PlanRecord{Data: planData, Summary: plugin.ChangeSummary{Add: 1}}))
+		require.NoError(t, releaseLock(ctx, m, projectKey, pr))
 
 		status, err := m.GetLockStatus(ctx, projectKey)
 		require.NoError(t, err)
@@ -91,10 +91,10 @@ func TestProperty_PlanApplyLockConsistency(t *testing.T) {
 		ctx := context.Background()
 		m := newPropertyManager(t)
 
-		ok, err := m.AcquireLock(ctx, projectKey, pr, "https://example.com/pr", "alice")
+		ok, err := acquireLock(ctx, m, projectKey, pr, "https://example.com/pr", "alice")
 		require.NoError(t, err)
 		require.True(t, ok)
-		require.NoError(t, m.StorePlan(ctx, projectKey, pr, PlanRecord{Data: planData, Summary: summary}))
+		require.NoError(t, storePlan(ctx, m, projectKey, pr, PlanRecord{Data: planData, Summary: summary}))
 
 		plan, err := m.GetPlan(ctx, projectKey, pr)
 		require.NoError(t, err)
@@ -124,7 +124,7 @@ func TestProperty_LockAcquisitionAcrossInstances(t *testing.T) {
 				// exercised at the Redis level, not masked by
 				// in-process serialization on a shared LockManager.
 				m := NewRedisLockManager(client)
-				ok, err := m.AcquireLock(context.Background(), projectKey, pr, "https://example.com/pr", "someone")
+				ok, err := acquireLock(context.Background(), m, projectKey, pr, "https://example.com/pr", "someone")
 				if err == nil && ok {
 					successes.Add(1)
 				}

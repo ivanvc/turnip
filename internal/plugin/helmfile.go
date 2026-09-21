@@ -23,6 +23,18 @@ func (p *HelmfilePlugin) GetOperations() []string {
 	return []string{"diff", "apply", "sync"}
 }
 
+// ActsWithoutChanges is true because GetOperations exposes `sync`
+// alongside `apply`. `helmfile sync` runs `helm upgrade --install` for
+// every release regardless of the diff — it acts precisely when a diff
+// found nothing, which is the whole of its difference from `apply`.
+//
+// `helmfile apply` alone would answer false: it diffs first and syncs
+// only the releases that changed, so it is inert relative to the diff
+// that preceded it. Answering from the apply operation alone would remove
+// `sync` from every Project whose diff came back clean, permanently — a
+// re-plan would find no changes and release the Lock again.
+func (p *HelmfilePlugin) ActsWithoutChanges() bool { return true }
+
 func (p *HelmfilePlugin) GetPlanOperation() string  { return "diff" }
 func (p *HelmfilePlugin) GetApplyOperation() string { return "apply" }
 

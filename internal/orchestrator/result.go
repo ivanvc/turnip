@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/ivanvc/turnip/internal/github"
-	"github.com/ivanvc/turnip/internal/lock"
 	"github.com/ivanvc/turnip/internal/metrics"
 	"github.com/ivanvc/turnip/internal/plugin"
 	"github.com/ivanvc/turnip/internal/rpc"
@@ -42,7 +41,7 @@ func (o *Orchestrator) HandleLog(ctx context.Context, operationID string, line r
 	return nil
 }
 
-// HandleResult finalizes an Operation: Lock (Requirement 6.6-6.8),
+// HandleResult finalizes an Operation: Lock (Requirement 7),
 // check-run (Requirement 9.2/9.3), and comment (via the published
 // ProjectResult, Requirement 10) actions.
 func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, result rpc.OperationResult) error {
@@ -112,70 +111,43 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 
 	// Locked records whether this pull request still holds the Project's
 	// Lock once this result has been handled, so the comment can say so
-	// and offer the command that releases it.
+	// and offer the command that releases it. LockNote records why it
+	// moved, when it moved.
 	//
-	// It is deliberately not derived from Success: which outcomes leave a
-	// Lock held is the lock lifecycle's business, and stating the fact
-	// rather than inferring it keeps the comment honest when that
-	// lifecycle changes. Every path below sets it explicitly.
-	pr.Locked = true
-
-	if result.Success {
-		p, ok := o.plugins[rec.Project.Tool]
-		switch {
-		case ok && rec.Operation == p.GetPlanOperation():
-			summary := plugin.ChangeSummary{
-				Add:     int(result.Changes.Add),
-				Change:  int(result.Changes.Change),
-				Destroy: int(result.Changes.Destroy),
-			}
-			// Recorded because the plan succeeded, not because the tool
-			// produced an artifact — Helmfile never does, and keying this
-			// off len(result.PlanData) is what made its apply unreachable.
-			//
-			// The arguments stored are the Operation's own, taken from the
-			// record the Job was built from rather than re-derived from the
-			// trigger line, so whatever turnip normalised is what a later
-			// mutating Operation replays.
-			if err := o.locks.StorePlan(ctx, rec.ProjectKey, rec.PRNumber, lock.PlanRecord{
-				Data:    result.PlanData,
-				Args:    rec.ExtraArgs,
-				Summary: summary,
-			}); err != nil {
-				slog.ErrorContext(ctx, "storing plan", "operation_id", operationID, "error", err)
-			}
-		default:
-			// Every successful Operation that is not the plan discharges the
-			// Lock: apply, sync, and anything else a Plugin exposes.
-			// Narrowing this to the apply alone is the regression worth
-			// guarding — it reads like the rule, and it silently strands a
-			// Project after a successful sync.
-			//
-			// An unregistered tool cannot reach here. executeOne rejects one
-			// before any record exists, so the !ok case never releases a
-			// Lock for a Plugin turnip does not have.
-			if err := o.locks.ReleaseLock(ctx, rec.ProjectKey, rec.PRNumber); err != nil {
-				slog.ErrorContext(ctx, "releasing lock", "operation_id", operationID, "error", err)
-			} else {
-				pr.Locked = false
-				pr.Output += "\n\nLock released — this Project is now free for another PR to plan against."
-			}
-		}
-	}
-	// A failed or timed-out Operation triggers no Lock mutation: a failed
-	// plan leaves the Lock held with no plan recorded, and a failed apply
-	// leaves it held rather than released, because the infrastructure may
-	// be partly changed and another PR must not apply on top of it.
+	// Both are set from the transition the Lock manager confirms, never
+	// alongside the decision to attempt one. Announcing before Redis
+	// agrees would tell an author a Project is free while it is still
+	// held — and the next pull request's plan would then be rejected,
+	// naming a pull request whose own comment claims it released.
 	//
 	// The governing requirement is 7 (Redis/Valkey-Based Locking). An
-	// earlier comment here cited "Requirement 6.8", which does not exist —
-	// Requirement 6 is Plan with Destroy Flag and has five criteria, none
-	// about Lock lifecycle. The wrong citation is what made this behaviour
+	// earlier comment here cited "Requirement 6.6-6.8", which describes no
+	// Lock lifecycle at all: Requirement 6 is Plan with Destroy Flag and
+	// has five criteria. The wrong citation is what made this behaviour
 	// look specified when nothing specified it.
-	//
-	// Slice 18 revisits the first case — a failed plan holds a Lock that
-	// protects nothing — and pr.Locked will follow it without this code
-	// changing, because it reports the state rather than deducing it.
+	pr.Locked = true
+
+	summary := plugin.ChangeSummary{
+		Add:     int(result.Changes.Add),
+		Change:  int(result.Changes.Change),
+		Destroy: int(result.Changes.Destroy),
+	}
+	ev, planRec := o.lockEventFor(rec, result.Success, summary, result.PlanData)
+	tr, lockErr := o.locks.Apply(ctx, rec.ProjectKey, rec.PRNumber, ev, planRec)
+	switch {
+	case lockErr != nil:
+		slog.ErrorContext(ctx, "applying lock event", "operation_id", operationID, "event", string(ev), "error", lockErr)
+	case tr.Released:
+		pr.Locked = false
+		pr.LockNote = lockNoteFor(ev, tr)
+	case tr.From == "":
+		// No Lock existed. The pull request was closed while this
+		// Operation was in flight — a race, not a failure, and the result
+		// still has to reach the reader.
+		pr.Locked = false
+	default:
+		pr.LockNote = lockNoteFor(ev, tr)
+	}
 
 	if err := o.records.Delete(ctx, operationID); err != nil {
 		slog.ErrorContext(ctx, "deleting operation record", "operation_id", operationID, "error", err)

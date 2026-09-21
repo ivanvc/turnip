@@ -23,6 +23,9 @@ func testSweepOrchestrator(t *testing.T, jobsClient jobCreator) (*Orchestrator, 
 		plugins:            testRegistry(),
 		records:            newRecordStore(client),
 		redis:              client,
+		// The sweep now applies a transition, so it has a Lock dependency
+		// it did not have when a timeout mutated nothing.
+		locks: &fakeLockManager{},
 	}
 	return o, fakeClient
 }

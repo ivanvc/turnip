@@ -95,14 +95,22 @@ func TestProperty_LockAcquisitionPreventsConcurrentOperations(t *testing.T) {
 
 		locks := lock.NewRedisLockManager(newPropertyRedisClient(t))
 
-		okA, err := locks.AcquireLock(context.Background(), projectKey, prA, "https://example.com/a", "alice")
+		okA, err := acquireForPlanOK(locks, context.Background(), projectKey, prA, "https://example.com/a", "alice")
 		require.NoError(t, err)
 		require.True(t, okA)
 
-		okB, err := locks.AcquireLock(context.Background(), projectKey, prB, "https://example.com/b", "bob")
+		okB, err := acquireForPlanOK(locks, context.Background(), projectKey, prB, "https://example.com/b", "bob")
 		require.NoError(t, err)
 		require.False(t, okB)
 	})
+}
+
+// acquireForPlanOK drops the Transition, which this property does not
+// examine: it is about who wins a contested Lock, not about what the
+// winner's plan state becomes.
+func acquireForPlanOK(m *lock.RedisLockManager, ctx context.Context, key string, pr int, url, by string) (bool, error) {
+	ok, _, err := m.AcquireForPlan(ctx, key, pr, url, by)
+	return ok, err
 }
 
 // genMatchableProject generates a Project whose whenModified pattern is

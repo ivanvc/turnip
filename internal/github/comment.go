@@ -400,7 +400,7 @@ func buildDetailSectionPart(r ProjectResult, chunk string, part, total int) stri
 
 	var trailer string
 	if part == total {
-		trailer = blockedNote(r) + nextSteps(r)
+		trailer = blockedNote(r) + lockNote(r) + nextSteps(r)
 	}
 
 	return fmt.Sprintf(
@@ -463,6 +463,23 @@ func nextSteps(r ProjectResult) string {
 // linking to it so the reader can go and look rather than search
 // (Requirement 7.2). A holder we could not identify is reported without
 // inventing a reference.
+// lockNote renders what happened to this Project's Lock, and why.
+//
+// It sits in the trailer rather than in Output because Output is
+// interpolated *inside* the fenced block — turnip's own voice would be
+// styled as tool output — and because Output is what gets split across
+// "part N/M", which would bury a Lock state change at the end of the last
+// piece, behind a fold.
+//
+// It precedes nextSteps deliberately: the commands offered there are
+// decided by the Lock state this sentence has just explained.
+func lockNote(r ProjectResult) string {
+	if r.LockNote == "" {
+		return ""
+	}
+	return "\n\n" + r.LockNote
+}
+
 func blockedNote(r ProjectResult) string {
 	if r.BlockedBy == nil {
 		return ""

@@ -172,3 +172,14 @@ func TestHelmfilePlugin_NameAndOperations(t *testing.T) {
 	assert.Equal(t, "diff", p.GetPlanOperation())
 	assert.Equal(t, "apply", p.GetApplyOperation())
 }
+
+// The declared value decides whether a Helmfile Project's Lock survives a
+// plan that found nothing, so the reasoning matters as much as the value.
+func TestHelmfile_ActsWithoutChanges(t *testing.T) {
+	p := NewHelmfilePlugin()
+
+	assert.True(t, p.ActsWithoutChanges(),
+		"helmfile sync upgrades every release regardless of the diff, so it acts when a diff found nothing")
+	assert.Contains(t, p.GetOperations(), "sync",
+		"the declaration above is true only while sync is exposed; if it ever goes, revisit it")
+}

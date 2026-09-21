@@ -253,7 +253,11 @@ func (s *selection) holdsPlan(ctx context.Context, p config.Project) (bool, erro
 	if err != nil || status == nil {
 		return false, err
 	}
-	return status.Locked && status.PRNumber == s.prNumber && status.HasPlan, nil
+	// The same condition admission uses, so a bare mutating Operation
+	// selects exactly the Projects it could actually run on — rather than
+	// gathering Projects whose plan is no longer valid and refusing them
+	// one by one.
+	return status.Locked && status.PRNumber == s.prNumber && status.State == lock.StatePlanReady, nil
 }
 
 // truncatedListingNotice warns that the Modified_Set may be incomplete

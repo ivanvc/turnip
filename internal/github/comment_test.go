@@ -365,3 +365,35 @@ func TestBuildConsolidatedComment_DiffFenceOnSuccessPlainOnFailure(t *testing.T)
 	assert.NotContains(t, failure[0], "```diff",
 		"an error message must not be diff-highlighted")
 }
+
+// The note belongs outside the fence: inside it, turnip's own sentence is
+// styled as tool output and is carried away by output splitting.
+func TestBuildConsolidatedComment_LockNoteRendersOutsideTheFence(t *testing.T) {
+	const note = "Lock released — the plan failed, so nothing was recorded."
+	parts := BuildConsolidatedComment([]ProjectResult{{
+		ProjectName: "web",
+		Tool:        "helmfile",
+		Operation:   "diff",
+		Success:     false,
+		Output:      "some tool failure",
+		LockNote:    note,
+	}})
+	require.Len(t, parts, 1)
+	body := parts[0]
+
+	require.Contains(t, body, note)
+
+	// Everything between the opening and closing fence is the tool's.
+	openIdx := strings.Index(body, "```")
+	closeIdx := strings.Index(body[openIdx+3:], "```") + openIdx + 3
+	fenced := body[openIdx:closeIdx]
+	assert.NotContains(t, fenced, note, "turnip's voice must not sit inside the tool's code block")
+}
+
+func TestBuildConsolidatedComment_NoLockNoteRendersNothing(t *testing.T) {
+	parts := BuildConsolidatedComment([]ProjectResult{{
+		ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: "no changes",
+	}})
+	require.Len(t, parts, 1)
+	assert.NotContains(t, parts[0], "Lock released")
+}

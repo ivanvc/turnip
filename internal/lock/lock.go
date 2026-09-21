@@ -7,6 +7,30 @@ import (
 	"github.com/ivanvc/turnip/internal/plugin"
 )
 
+// LockState is the lifecycle position of a *held* Lock. The absence of a
+// Lock has no LockState: it is the absence of the Redis key, which is what
+// the acquire and compare-and-mutate scripts key their atomicity off.
+type LockState string
+
+const (
+	// StatePlanning means the Lock is held and no successful plan has been
+	// recorded against it. Nothing has been established, so releasing it
+	// takes nothing from anyone.
+	StatePlanning LockState = "planning"
+
+	// StatePlanReady means the recorded plan is believed to describe the
+	// delta between current infrastructure and the desired state at the
+	// current head commit. It is the only state that admits a mutating
+	// Operation.
+	StatePlanReady LockState = "plan_ready"
+
+	// StatePlanStale means a plan was recorded and something has since
+	// invalidated it — a new commit, a failed re-plan, or a mutating
+	// Operation that failed or timed out. The Lock is still held; the plan
+	// cannot be applied.
+	StatePlanStale LockState = "plan_stale"
+)
+
 // LockData is the JSON-serialized value stored in Redis/Valkey per Lock.
 type LockData struct {
 	PRNumber       int       `json:"pr_number"`
@@ -14,17 +38,14 @@ type LockData struct {
 	LockedAt       time.Time `json:"locked_at"`
 	LockedBy       string    `json:"locked_by"`
 
-	// HasPlan records that a plan ran and its result was stored, which is
-	// not the same question as whether PlanData holds bytes: Helmfile
-	// produces none, so for it the byte slice is always empty even after a
-	// successful plan. It deliberately carries no omitempty — it is the
-	// only field here that survives the round trip when a plan ran with no
-	// arguments, which is what distinguishes that from no plan at all.
+	// State is the Lock's lifecycle position. Empty means the value was
+	// written before states existed; DecodedState is what interprets that,
+	// and no reader should consult this field directly.
 	//
-	// A Lock written before this field existed decodes as false, so its
-	// pull request is asked to re-plan rather than having an unrecorded
-	// scope replayed on its behalf.
-	HasPlan bool `json:"has_plan"`
+	// It replaced a has_plan boolean, which could say that a plan had been
+	// recorded but never whether it was still true — the distinction a
+	// push, a failed apply and a timed-out apply all turn on.
+	State LockState `json:"state,omitempty"`
 
 	// PlanArgs is the scope the plan ran with. Where Terraform stores a
 	// plan file, Helmfile has only the arguments that selected what the
@@ -35,10 +56,33 @@ type LockData struct {
 	PlanSummary plugin.ChangeSummary `json:"plan_summary,omitzero"`
 }
 
+// DecodedState reports the Lock's state, tolerating a value this build
+// does not recognise — including one written before the field existed.
+//
+// Unrecognised decodes to StatePlanStale rather than StatePlanning, which
+// is the conservative answer on both axes that matter. It is not
+// StatePlanReady, so nothing unreviewed is applied on the strength of a
+// plan whose validity this build cannot vouch for. And it is not
+// StatePlanning, which would license releasing the Lock when a plan fails
+// — evicting a pull request that may well have established work this
+// build simply cannot see.
+//
+// Deliberately not derived from HasPlan: that field records that a plan
+// ran, never that it is still true, so reading it here would promote
+// exactly the Locks this slice exists to withdraw.
+func (d LockData) DecodedState() LockState {
+	switch d.State {
+	case StatePlanning, StatePlanReady, StatePlanStale:
+		return d.State
+	default:
+		return StatePlanStale
+	}
+}
+
 // PlanRecord is everything a plan leaves behind for a mutating Operation
 // to replay. Data is optional — a Plugin whose plan produces no artifact
-// (Helmfile) stores an empty slice, and HasPlan on the Lock rather than
-// len(Data) is what reports that a plan happened.
+// (Helmfile) stores an empty slice, and the Lock's StatePlanReady rather
+// than len(Data) is what reports that a usable plan exists.
 type PlanRecord struct {
 	Data    []byte
 	Args    []string
@@ -47,10 +91,10 @@ type PlanRecord struct {
 
 // LockStatus is GetLockStatus's return value.
 //
-// HasPlan has a reader: selection uses it to decide which Projects a bare
-// mutating Operation targets — those whose Lock this pull request holds
-// with a plan recorded (project-selection, Requirement 4.1). Locked and
-// PRNumber are read alongside it.
+// State has two readers, and they must agree: admission decides whether a
+// mutating Operation may run, and selection decides which Projects a bare
+// one targets. Splitting those conditions is how a bare apply comes to
+// gather Projects it then refuses one at a time.
 //
 // PlanSummary still has none. It is populated anyway because Requirement
 // 4.3 specifies that a Lock's status reports the holding PR, its URL, the
@@ -66,24 +110,35 @@ type LockStatus struct {
 	PullRequestURL string
 	LockedAt       time.Time
 	LockedBy       string
-	HasPlan        bool
 	PlanSummary    plugin.ChangeSummary
+
+	// State is the Lock's lifecycle position, already interpreted through
+	// DecodedState, so a caller never has to handle an unrecognised value.
+	State LockState
 }
 
 // LockManager prevents concurrent operations on the same Project and
 // carries plan data from a plan operation through to its apply.
 type LockManager interface {
-	// AcquireLock attempts to acquire a lock for projectKey on behalf of
-	// prNumber. Succeeds (true) if no lock exists, or if the existing lock
-	// is already held by prNumber (idempotent re-acquire, e.g. after a
-	// failed plan — existing plan data, if any, is left untouched).
-	// Returns false only when a different PR holds the lock.
-	AcquireLock(ctx context.Context, projectKey string, prNumber int, pullRequestURL, lockedBy string) (bool, error)
+	// AcquireForPlan acquires the Lock for a plan, or confirms prNumber
+	// already holds it, applying EventPlanDispatched in the same step.
+	//
+	// Returns acquired=false only when a different pull request holds the
+	// Lock, in which case no state changes. The Transition reports what
+	// the dispatch did — notably StatePlanReady to StatePlanStale, which
+	// is how a stored plan is superseded at the push rather than minutes
+	// later when the Runner reports.
+	AcquireForPlan(ctx context.Context, projectKey string, prNumber int, pullRequestURL, lockedBy string) (bool, Transition, error)
 
-	// StorePlan attaches a plan record to a lock already held by prNumber,
-	// marking the lock as carrying a plan. Returns an error if the lock
-	// isn't held by prNumber (including "no lock at all").
-	StorePlan(ctx context.Context, projectKey string, prNumber int, plan PlanRecord) error
+	// Apply moves the Lock according to the transition table and reports
+	// what it did, so the caller can say so on the pull request.
+	//
+	// plan is recorded when the edge keeps the Lock and a plan is given;
+	// it is ignored otherwise. An event for a Lock that no longer exists
+	// is a no-op with a nil error, not a failure: closing a pull request
+	// mid-apply deletes the Lock, and the Operation's result still has to
+	// reach the reader.
+	Apply(ctx context.Context, projectKey string, prNumber int, ev Event, plan *PlanRecord) (Transition, error)
 
 	// GetPlan retrieves the plan record from a lock held by prNumber.
 	// Returns an error if the lock isn't held by prNumber, or if no plan
@@ -91,10 +146,6 @@ type LockManager interface {
 	// the record's Data being empty, since a Plugin may legitimately
 	// record a plan with no artifact.
 	GetPlan(ctx context.Context, projectKey string, prNumber int) (PlanRecord, error)
-
-	// ReleaseLock releases projectKey's lock. No-op (nil error) if no lock
-	// exists. Returns an error if the lock is held by a different PR.
-	ReleaseLock(ctx context.Context, projectKey string, prNumber int) error
 
 	// GetLockStatus reports whether projectKey is locked and by whom.
 	GetLockStatus(ctx context.Context, projectKey string) (*LockStatus, error)

@@ -284,7 +284,11 @@ func TestHandleResult_SuccessfulApply_ReleasesLockAndAppendsNote(t *testing.T) {
 
 	select {
 	case r := <-resultCh:
-		assert.Contains(t, r.Output, "Lock released")
+		// The note moved off Output, which renders inside the tool's own
+		// code fence and is what gets split when output is long, onto a
+		// field the renderer places in the trailer beside the next steps.
+		assert.Contains(t, r.LockNote, "Lock released")
+		assert.NotContains(t, r.Output, "Lock released", "turnip's voice does not belong inside the tool's output")
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for published result")
 	}

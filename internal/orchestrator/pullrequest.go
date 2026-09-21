@@ -8,6 +8,7 @@ import (
 
 	"github.com/ivanvc/turnip/internal/config"
 	"github.com/ivanvc/turnip/internal/github"
+	"github.com/ivanvc/turnip/internal/lock"
 )
 
 // HandlePullRequest reacts to pull_request webhooks: "opened"/"synchronize"
@@ -141,15 +142,22 @@ func (o *Orchestrator) handlePRClosed(ctx context.Context, client github.GitHubC
 	if cfg != nil {
 		for _, project := range cfg.Projects {
 			key := projectKey(owner, repoName, project.Name)
-			locked, err := o.locks.IsLockedByPR(ctx, key, prNumber)
-			if err != nil || !locked {
+			// Through the transition table, for the same reason as the
+			// manual unlock: a closing pull request releases from any
+			// state, and the day that stops being true there has to be a
+			// row to change rather than a caller to remember.
+			tr, err := o.locks.Apply(ctx, key, prNumber, lock.EventPullRequestClosed, nil)
+			if err != nil {
+				// A Lock held by a different pull request is the ordinary
+				// case, not a problem worth logging on every close.
+				if !errors.Is(err, lock.ErrLockedByOtherPR) {
+					slog.ErrorContext(ctx, "releasing lock on PR close", "lock_key", key, "error", err)
+				}
 				continue
 			}
-			if err := o.locks.ReleaseLock(ctx, key, prNumber); err != nil {
-				slog.ErrorContext(ctx, "releasing lock on PR close", "lock_key", key, "error", err)
-				continue
+			if tr.Released {
+				unlocked = append(unlocked, project.Name)
 			}
-			unlocked = append(unlocked, project.Name)
 		}
 	}
 

@@ -180,7 +180,8 @@ stays silent on comments that aren't addressed to it.
 ```
 
 Normally you'll never need this — a lock releases on its own once an
-apply succeeds, or when the PR merges or closes. Use `unlock` to abandon
+apply succeeds, when a plan finds nothing to apply, when a plan fails
+having recorded nothing, or when the PR merges or closes. Use `unlock` to abandon
 a stale plan (e.g. the PR is being reworked and the old plan no longer
 applies) without merging or closing the PR first. Needs write permission
 (see below), and never runs a tool or creates a Job — it's a pure Redis
@@ -200,6 +201,43 @@ Practically:
 - A held lock blocks *other* PRs from planning the same project — you'll
   see a comment naming which PR holds it, and either wait for that PR to
   merge/close (auto-releases) or have someone unlock it.
+
+### When a stored plan stops being usable
+
+Holding a lock and having an appliable plan are different things. A lock
+can be held while its plan is no longer usable, in which case an apply is
+refused and asks for a fresh plan. That happens in three situations:
+
+- **You pushed a commit.** The plan is superseded the moment the new plan
+  is dispatched, not when it finishes — so there is no window in which an
+  apply could run against code nobody reviewed.
+- **An apply or sync failed part-way.** Infrastructure may have changed,
+  so the plan describes a starting state that no longer exists. The lock
+  stays held — another PR must not apply on top of an unknown state — but
+  you must re-plan before retrying. Re-planning is also what shows you
+  what the partial run actually did.
+- **An operation timed out.** No result arrived and the Runner may still
+  be running, so the same reasoning applies.
+
+turnip says so in the comment each time, and says which of these it was.
+A lock that is still held is always listed in the comment's footer with
+`/turnip unlock` offered, including after a timeout.
+
+### What releases a lock
+
+| Outcome | Lock |
+|---|---|
+| plan succeeded, something to apply | held |
+| plan succeeded, nothing to apply | released, **unless** the tool can act without changes |
+| plan failed, nothing recorded yet | released |
+| plan failed, but an earlier plan had succeeded | held, plan invalidated |
+| apply or sync succeeded | released |
+| apply or sync failed, or timed out | held, plan invalidated |
+| PR merged or closed, or `/turnip unlock` | released |
+
+Helmfile is a tool that *can* act without changes, because `helmfile
+sync` upgrades every release regardless of the diff. So a Helmfile
+project keeps its lock even when its diff comes back clean.
 
 ## Who can trigger what
 

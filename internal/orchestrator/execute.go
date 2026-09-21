@@ -112,7 +112,17 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	execArgs := t.ExtraArgs
 
 	if isPlan {
-		acquired, err := o.locks.AcquireLock(ctx, key, pr.Number, pullRequestURL(repo.Owner, repo.Name, pr.Number), t.TriggeredBy)
+		// AcquireForPlan applies the dispatch edge in the same evaluation
+		// as the acquisition, so a Lock is never observable as acquired
+		// for a new plan while still reporting its old one as appliable.
+		//
+		// The transition is deliberately not reported to the reader here.
+		// This Operation's own result is about to say what the new plan
+		// found, and "your previous plan was superseded" immediately above
+		// the plan that superseded it is noise. The case where it matters
+		// — the re-plan failing, leaving nothing usable — is announced by
+		// that failure instead.
+		acquired, _, err := o.locks.AcquireForPlan(ctx, key, pr.Number, pullRequestURL(repo.Owner, repo.Name, pr.Number), t.TriggeredBy)
 		if err != nil {
 			metrics.LockAttempt("rejected")
 			return rejectedResult(t, fmt.Sprintf("acquiring lock: %v", err))
@@ -140,6 +150,21 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		locked, err := o.locks.IsLockedByPR(ctx, key, pr.Number)
 		if err != nil || !locked {
 			return rejectedResult(t, "no lock (or a different PR's lock) is held; a new plan is required")
+		}
+		status, err := o.locks.GetLockStatus(ctx, key)
+		if err != nil {
+			return rejectedResult(t, fmt.Sprintf("reading lock: %v", err))
+		}
+		// One condition where there were two, and the refusals are worded
+		// apart on purpose: "nothing was ever recorded" and "what was
+		// recorded is no longer true" are different situations, and only
+		// the second tells the author that something happened.
+		switch status.State {
+		case lock.StatePlanReady:
+		case lock.StatePlanStale:
+			return rejectedResult(t, "the recorded plan is no longer valid — a new commit, a failed plan, or an operation that did not complete has superseded it. Re-plan before retrying.")
+		default:
+			return rejectedResult(t, "no plan recorded; a new plan is required")
 		}
 		// Every mutating Operation replays the recorded plan, not just the
 		// apply: a sync that ran unscoped after a scoped diff would change

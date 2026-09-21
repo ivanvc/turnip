@@ -122,8 +122,8 @@ This document specifies requirements for rewriting the multi-IaC automation plat
 
 1. WHEN a plan Operation starts for a Project, THE Server SHALL attempt to acquire a Lock in Redis/Valkey using the Project identifier and PR number as the key
 2. IF a Lock already exists for the Project held by a different PR, THEN THE Server SHALL reject the Operation and post a comment indicating another PR holds the lock with a link to that PR
-3. WHEN a plan Operation completes successfully, THE Server SHALL store the plan result in the Lock and THE Lock SHALL remain held
-4. THE Lock SHALL persist without TTL until the PR is merged, closed, manually unlocked, or a successful apply completes
+3. WHEN a plan Operation completes successfully and leaves something to apply, THE Server SHALL store the plan result in the Lock and THE Lock SHALL remain held. A plan leaves something to apply when it reported changes, or when the Project's tool can act without them
+4. THE Lock SHALL persist without TTL until the PR is merged, closed, manually unlocked, a successful mutating Operation completes, or a plan ends with nothing to apply — whether because it failed with nothing recorded, or because it found no changes for a tool that cannot act without them
 5. WHEN an apply Operation is triggered, THE Server SHALL verify the Lock is held by the current PR and retrieve the plan data from the Lock
 6. WHEN an apply Operation completes successfully, THE Server SHALL release the Lock
 7. THE Server SHALL support manual unlock via comment ("/turnip unlock") which releases the Lock and requires re-planning before apply

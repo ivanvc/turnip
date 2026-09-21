@@ -212,3 +212,24 @@ all three, then the package doc update, then tests (unit against
   ]
 }
 ```
+
+- [x] 16. The Lock's lifecycle became a state machine (Slice 18 amendment)
+  - This slice's documented lifecycle — acquire on plan, release on a
+    successful mutating Operation, manual unlock, or pull request close —
+    is no longer the whole of it. A held Lock now records one of
+    `planning`, `plan_ready` or `plan_stale`, and every lifecycle change
+    goes through `AcquireForPlan` or `Apply` rather than through
+    `AcquireLock`/`StorePlan`/`ReleaseLock`, which Slice 18 removed along
+    with the `acquire` and `compare-and-mutate` scripts they used.
+  - What changed behaviourally, from this slice's point of view: a plan
+    that fails with nothing recorded releases its Lock; a plan that finds
+    nothing to apply releases it when the tool is inert without changes;
+    dispatching a plan invalidates a stored one; and a mutating Operation
+    that fails or times out keeps the Lock but invalidates the plan.
+  - `has_plan` on the stored value is gone. A Lock written before the
+    state field decodes as `plan_stale` — not appliable, and not
+    releasable on a failed plan either, which is the conservative answer
+    on both axes.
+  - _Requirements: (amendment — see `lock-release-rules` for the rules
+    themselves; this entry exists so a reader of this slice is not left
+    with a lifecycle that no longer matches the code)_

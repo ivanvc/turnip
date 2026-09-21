@@ -17,6 +17,16 @@ type Plugin interface {
 	// GetApplyOperation returns the operation name used for applying.
 	GetApplyOperation() string
 
+	// ActsWithoutChanges reports whether any operation this Plugin exposes
+	// other than its plan can still affect infrastructure when the plan
+	// reported no changes.
+	//
+	// It answers for the Plugin's whole operation surface rather than for
+	// its designated apply operation, because a Lock's fate is decided
+	// once, when the plan's result arrives — before turnip knows which
+	// mutating operation the author will later ask for.
+	ActsWithoutChanges() bool
+
 	// Execute runs one of the operations returned by GetOperations.
 	Execute(ctx context.Context, operation string, opts ExecuteOptions) (*ExecuteResult, error)
 }

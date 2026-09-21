@@ -26,7 +26,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 15 | Refuse Fork Pull Requests | `fork-pull-requests` | Complete | Slice 6 |
 | 16 | Cloning Submodules | `clone-submodules` | Complete | Slice 5 |
 | 17 | Pull Request Comment Output | `comment-output` | Complete | Slices 4, 6 |
-| 18 | Hold a Lock Only When There Is Something to Apply | `lock-release-rules` | Not Started | Slices 3, 6 |
+| 18 | The Lock's Lifecycle as a State Machine | `lock-release-rules` | Complete | Slices 3, 6 |
 | 19 | Draft Pull Requests | `draft-pull-requests` | Complete | Slices 4, 6 |
 | 20 | Apply Exactly What Was Planned | `plan-scoped-apply` | Complete | Slices 3, 6 |
 | 21 | What a Bare Command Targets | `project-selection` | Complete | Slices 1, 6 |
@@ -41,6 +41,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 30 | Scheduling: Concurrency and Execution Order | `operation-scheduling` | Not Started | Slices 6, 7 |
 | 31 | Runner Pod Placement: Node Selectors and Tolerations | `runner-pod-placement` | Not Started | Slices 5, 13 |
 | 32 | Refuse Operations on a Closed Pull Request | `closed-pull-requests` | Not Started | Slices 4, 6 |
+| 33 | Show What Ran and With What Scope | `execution-provenance` | Not Started | Slices 2, 17, 20 |
 
 ## Slice Details
 
@@ -545,122 +546,127 @@ criteria were first written, not a decision anyone made.
 
 ---
 
-### Slice 18: Hold a Lock Only When There Is Something to Apply
+### Slice 18: The Lock's Lifecycle as a State Machine
 
-**Goal**: Stop a Lock outliving the thing it protects.
+**Goal**: Make the Lock's lifecycle explicit, so a Lock is held exactly
+while it guards something, and a stored plan is appliable exactly while it
+is still true.
 
-**What's wrong today**: a Lock is acquired when a plan *starts* and
-released only on a successful apply, a manual `/turnip unlock`, or the
-pull request closing. Two outcomes therefore keep a Lock that guards
-nothing — a plan that **failed**, and a plan that **succeeded with no
-changes** — each blocking every other pull request from planning that
+**Two faults. The second was found while speccing and is the sharper one.**
+
+*A Lock can guard nothing.* A plan that fails leaves the Lock held with
+nothing recorded, blocking every other pull request from planning that
 Project until a human intervenes, and giving the author no hint that they
-are now the obstacle.
+are the obstacle.
 
-**The reasoning**: a Lock does two jobs — mutual exclusion *during*
-execution, and custody of the plan artifact *between* plan and apply.
-Both outcomes above discharge both jobs. Execution is over, and there is
-either no artifact at all or one whose application changes nothing.
+*A Lock can stay appliable when it should not be.* `StorePlan` runs only
+on success, so a stored plan survives a new commit, a failed apply and a
+timed-out apply — and the Lock records nothing that tells those apart.
+Helmfile stores no plan artifact (`Execute` returns `PlanData: nil`), so
+an apply replays only the recorded arguments while the Runner clones at
+the pull request's *current* head. Three reachable consequences: applying
+after a push runs unreviewed code; applying after a failed apply runs
+against partly-changed infrastructure; applying after a timed-out apply
+can run on top of an Operation that is still executing.
 
-Framing this around *failure* alone was the original mistake: failure is
-not the property that matters. The property is whether an applicable
-plan exists.
+**Why a state machine rather than more flags**: expressing this with
+booleans needs three — a plan exists, it is stale, and this pull request
+once established one. The third exists only because clearing the first
+loses the history that distinguishes "nothing was ever planned here, so
+releasing evicts nobody" from "this author had a working plan and pushed a
+typo". Two of the eight combinations are meaningless. A state remembers by
+being a state, and repeated failures become a self-loop rather than a
+contradiction.
 
-**Delivers** a five-way rule, where today there is one:
+**Delivers** three states within a held Lock, and the edges between them:
 
-| Outcome | Lock | Why |
+| State | Meaning | Mutating_Operation |
 |---|---|---|
-| plan succeeded, with changes | held | the case the Lock exists for — apply must get exactly what was planned |
-| plan succeeded, no changes | released | the stored plan applies to nothing, so it is worth no one's wait |
-| plan failed | released | nothing to apply, execution finished |
-| plan timed out | held | no result arrived; the Runner may still be live, and releasing under a live Runner is worse than a stale Lock |
-| apply failed | held | an apply mutates — infrastructure may be partly changed, and another pull request must not apply on top of an unknown state |
+| `Planning` | held; nothing successfully planned yet | refused — no plan recorded |
+| `PlanReady` | held; the recorded plan still describes the delta at the current head | **admitted** |
+| `PlanStale` | held; a plan was recorded and something invalidated it | refused — re-plan required |
 
-The apply asymmetry is the substance of the slice: today's blanket "a
-failed or timed-out Operation triggers no Lock mutation" is correct for a
-failed apply and wrong for a failed plan.
+The edges that carry the slice: a plan **dispatch** moves `PlanReady` to
+`PlanStale`, atomically with acquisition, so the invalidation lands at the
+push rather than minutes later when the plan reports; a plan that fails
+from `Planning` releases the Lock, while one that fails from `PlanStale`
+holds it; a Mutating_Operation that fails or times out moves to
+`PlanStale` and **keeps** the Lock, because infrastructure may be partly
+changed and another pull request must not apply on top of it.
 
-**This is worth more than lock hygiene, and the reason is worth stating.**
-A repository with a fleet of near-identical environments — the same
-components deployed to many clusters, differing only in values — cannot
-narrow its blast radius with `whenModified` at all. The coupling there is
-*true*: an edit to a shared component genuinely affects every environment
-that deploys it, so every one of them must plan, and no pattern should
-prevent that.
+**Every release and every invalidation is announced with its reason**,
+because several edges arrive at `PlanStale` for different causes and
+"this plan is stale" tells an author nothing actionable.
 
-What is wrong in that situation is not which Projects planned but what
-happens afterwards. The edit usually renders identically for most of
-them, so most of those plans find nothing to apply — and today each one
-still holds a Lock until a human clears it. `whenModified` cannot fix
-this, because path matching can only remove coupling that was false. This
-slice can, because it decides from the plan's own result rather than from
-where a file sits.
-
+**The many-similar-environments case, and what it does not get.** A
+repository with a fleet of near-identical environments cannot narrow its
+blast radius with `whenModified`, because the coupling is *true*: an edit
+to a shared component genuinely affects every environment deploying it.
 Measured on a real repository of that shape: a shared helmfile read by six
 environments carried 50 releases, of which **34 were unconditional** and
-only **3** were guarded by environment name — the remainder guarded by
-value-derived capability checks that cannot become file layout without
-freezing today's values into the directory tree. Restructuring was
-attempted there on one environment, approved, and abandoned as not worth
-merging. That is the case this slice answers and restructuring does not.
+only **3** were guarded by environment name. Restructuring was attempted
+on one environment, approved, and abandoned as not worth merging.
 
-**Open question, to settle before implementing**: is applying a no-change
-plan genuinely inert? For Helmfile it should be, but `apply` can run
-hooks that `diff` does not, so "nothing to apply" may not mean "applying
-does nothing". If a no-change apply has effects someone might want, the
-no-changes row above becomes a judgement rather than a deduction.
+The no-change release was written for that case, and it does not reach it.
+Helmfile's `GetOperations` exposes `sync`, which upgrades every release
+regardless of the diff, so a Helmfile Project has something to apply even
+when its diff is clean — releasing would make `sync` permanently
+unreachable for any Project whose diff came back clean, since a re-plan
+finds no changes and releases again. The relief arrives for tools whose
+whole mutating surface is inert without changes, when Slice 7 lands
+Terraform and Pulumi. Relief for Helmfile without that cost needs
+contention-based release, which is a different mechanism.
 
-That question is best settled empirically, and a Helmfile deployment with
-many similar environments exercises the no-change path constantly — so it
-should be answered with evidence from one rather than reasoned about in
-the abstract.
-
-**Implementable as stated**: the cases are already distinguishable where
-the decision is made. `HandleResult` runs only when `ClaimForResult`
-succeeds — a Runner actually reported — while `sweepOnce` claims records
-whose start deadline passed and which never started, reporting "timed
-out". Within `HandleResult`, the change counts the Runner reported
-separate "succeeded with changes" from "succeeded with none".
-
-**Where it lands**: the semantics are documented in `redis-lock-manager`,
-but `ReleaseLock` itself does not change — what changes is when the
-orchestrator calls it, in `internal/orchestrator/result.go`. Expect an
-amendment task in each.
+**Where it lands**: `internal/lock` gains the state, two entry points
+(`AcquireForPlan`, `Apply`) and the transition table; `execute.go`,
+`result.go`, `sweep.go` and `target.go` map their situations to edges. The
+atomicity primitive is unchanged — `SET NX` and the compare-and-mutate
+script still decide who holds a Lock, and the state lives inside the value
+they already guard. A Lock written before this slice decodes with no
+state and is treated as not `PlanReady`, so it asks for a re-plan rather
+than being promoted to appliable.
 
 **Carries a documentation fix**: `result.go` and `HandleResult` cite
-"Requirement 6.6-6.8" for Lock behaviour. Requirement 6 is *Plan with
-Destroy Flag* and has five criteria; the governing requirement is 7.
-The wrong citation is what makes this behaviour look deliberate when
-nothing specifies it.
+"Requirement 6.6-6.8" for Lock behaviour, and `sweep.go` cites "6.8/8.5".
+Requirement 6 is *Plan with Destroy Flag* and has five criteria, none
+about Lock lifecycle; the governing requirement is 7. The wrong citation
+is what made this behaviour look deliberate when nothing specified it.
 
-**Global requirements covered**: the two halves of this slice stand
-differently, which is worth knowing before it is picked up.
+**Global requirements covered**: the halves stand differently. *Releasing
+after a failed plan fills a gap* — failure appears nowhere in Requirement
+7, so nothing is overturned. *Releasing after a plan that found nothing
+amends Requirement 7.3*, which said a plan that "completes successfully"
+keeps its Lock.
 
-*Releasing after a failed plan fills a gap.* Requirement 7 covers
-acquisition, contention, a successful plan, persistence, apply
-verification, a successful apply, manual unlock and atomicity. Failure
-appears nowhere in the global spec, so nothing is overturned.
+**Amendment made** (2026-09-21), in place, per the convention the global
+spec already uses:
 
-*Releasing after a no-change plan **amends Requirement 7.3**.* That
-criterion says a plan that "completes successfully" stores its result and
-"THE Lock SHALL remain held" — and a no-change plan completes
-successfully. Requirement 7.4 repeats it, listing release triggers that
-do not include this one. So this half contradicts a written decision
-rather than filling a hole, and must amend 7.3 and 7.4 explicitly, the
-way Slice 17 amended 10.2 and 17.3.
+- **7.3** now reads "WHEN a plan Operation completes successfully **and
+  leaves something to apply**, THE Server SHALL store the plan result in
+  the Lock and THE Lock SHALL remain held. A plan leaves something to
+  apply when it reported changes, or when the Project's tool can act
+  without them."
+- **7.4** now ends "…manually unlocked, a successful mutating Operation
+  completes, **or a plan ends with nothing to apply — whether because it
+  failed with nothing recorded, or because it found no changes for a tool
+  that cannot act without them**."
 
-That asymmetry is easy to miss: the failure case looked like the whole
-slice precisely because it was the half nobody had written down.
+`redis-lock-manager` carries a matching amendment task, since its
+documented lifecycle no longer described the code.
 
-**Interacts with Slice 17, but requires nothing from it.** Slice 17's
-comment offers `unlock` where `ProjectResult.Locked` is true, and
-`HandleResult` sets that field from what actually happened to the Lock
-rather than inferring it from success. So when this slice stops a failed
-or no-change plan from holding a Lock, those sections stop offering
-unlock and drop out of the "holds locks on …" footer on their own —
-no renderer change, no orchestrator change beyond the release itself.
-Slice 17 was built that way deliberately, and a test there pins each
-lock outcome so a regression here would be caught rather than rendered.
+**Interacts with Slice 17, but requires little from it.** Slice 17's
+comment offers `unlock` and the "holds locks on …" footer from
+`ProjectResult.Locked`, which `HandleResult` sets from what actually
+happened rather than inferring from success — so released Projects drop
+out on their own. What this slice adds there is one field carrying the
+reason, rendered in the trailer rather than appended to `Output`, which
+today renders turnip's own sentence inside the tool's code fence.
+
+**Deferred**: recording the head commit on the Lock. Requirement 2 reaches
+the same outcome through dispatch without comparing commits. The case a
+commit would close is two plans completing out of order, the older
+overwriting the newer — `OperationRecord` already carries `HeadSHA`, so a
+later slice can refuse an out-of-order store.
 
 ---
 
@@ -1949,6 +1955,63 @@ plan. Not this bug, but the same switch, and worth settling while someone
 is looking at it.
 
 ---
+
+### Slice 33: Show What Ran and With What Scope
+
+**Goal**: Make the pull request say what turnip executed, and with what
+scope, so that neither has to be reconstructed from configuration at that
+commit.
+
+**What's missing today, and they are two separate silences.**
+
+The first is scope. Slice 20 made a plan record its arguments
+(`lock.PlanRecord.Args`) and every Mutating_Operation replay them, refusing
+arguments of its own. The scope is therefore durable state on the Lock,
+outliving the comment that produced it. But the summary line renders
+`<project> · diff · +0 ~1 -0` whether the plan examined one release or the
+whole Project, and the footer offers a bare `/turnip apply` beneath "holds
+locks on `<project>` until applied or released". That text is stale rather
+than unsafe — Slice 17 wrote it before Slice 20 existed, and Slice 20
+changed what "until applied" means without revisiting it.
+
+The second is the command. `helmfile.go:39` injects `--environment <env>`
+from the Project's `config`; the author never typed it and the comment
+never shows it. The output block opens on the tool's first line of stdout,
+with no record of which binary ran, at which version, in which directory.
+
+**Delivers**: a per-Project scope marker on the summary line, a footer that
+describes a scoped apply accurately, and an Execution_Transcript written
+into the Operation's own output — provenance, the resolved command, and an
+exit-and-duration trailer — emitted from the shared command-execution seam
+at the moment each command runs.
+
+**Emitted at the seam, not per Plugin, and not server-side.** Putting it in
+`execCommand` means a Plugin cannot forget it, and a Plugin added later is
+covered by existing code. Emitting into the output stream rather than
+carrying the command back in `OperationResult` means no proto change, and
+means a transcript stays correct for a Plugin that runs several commands —
+Helmfile runs one, Terraform will run `init` then `plan`.
+
+**Why this is a slice and not an amendment.** Slice 20 named this hazard in
+its own requirements and then removed it by prevention rather than display,
+deferring nothing; the display gap is not a defect it left behind. And the
+work needs a new field on `ProjectResult` plus plumbing from the Operation
+record to the renderer, spans two completed slices' files, and carries real
+decisions of its own — where every existing amendment in this repo is small
+and mechanical.
+
+**Closes an exposure that predates it.** `Output` is interpolated into a
+code fence with no escaping (`comment.go:407`). Content that terminates the
+fence early renders as markdown inside a comment authored by turnip. Adding
+a line built from trigger-supplied tokens widens that, so the slice hardens
+both.
+
+**Adjacent Backlog entries.** "Resolving a floating tool version" asks
+where a concrete version would come from once floating tags are allowed;
+this slice builds the surface that would report it, and is satisfiable
+today because `resolveVersion` always returns a concrete version. The
+entry on a Project directory escaping the workspace shares this slice's
+path-stripping helper but is a validation change, not a display one.
 
 ## Backlog (not yet sliced)
 

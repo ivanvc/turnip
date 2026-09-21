@@ -9,6 +9,7 @@ import (
 
 	"github.com/ivanvc/turnip/internal/github"
 	"github.com/ivanvc/turnip/internal/jobs"
+	"github.com/ivanvc/turnip/internal/lock"
 )
 
 // Run starts the periodic timeout sweep (Requirement 8.3) and blocks
@@ -68,6 +69,30 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 		Operation:   rec.Operation,
 		Success:     false,
 		Output:      timeoutDiagnostic(rec.JobName, status),
+		// A timed-out Operation leaves its Lock held, and until this slice
+		// nothing here said so: Locked was never set, so it defaulted to
+		// false and the Project vanished from the comment's footer and was
+		// never offered unlock. The Lock was held and invisible at once.
+		Locked: true,
+	}
+
+	// A timed-out plan changes nothing; a timed-out mutating Operation
+	// invalidates the stored plan, because the Runner may still be
+	// executing and infrastructure may already have moved.
+	ev := lock.EventMutatingTimedOut
+	if p, ok := o.plugins[rec.Project.Tool]; ok && rec.Operation == p.GetPlanOperation() {
+		ev = lock.EventPlanTimedOut
+	}
+	switch tr, err := o.locks.Apply(ctx, rec.ProjectKey, rec.PRNumber, ev, nil); {
+	case err != nil:
+		slog.ErrorContext(ctx, "applying lock event for timed-out operation", "operation_id", operationID, "event", string(ev), "error", err)
+	case tr.Released:
+		pr.Locked = false
+		pr.LockNote = lockNoteFor(ev, tr)
+	case tr.From == "":
+		pr.Locked = false
+	default:
+		pr.LockNote = lockNoteFor(ev, tr)
 	}
 
 	if rec.CheckRunID != 0 {
@@ -86,10 +111,14 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 		}
 	}
 
-	// No ReleaseLock call (Requirement 6.8/8.5): a timed-out Operation
-	// leaves its Lock held. No jobs.Client.Delete call either (Requirement
-	// 8.6): a Runner that connects after this point may still be running
-	// real tool work — the Job's TTL is this path's cleanup mechanism.
+	// The Lock is left held by the transition applied above: the governing
+	// requirement is 7 (Redis/Valkey-Based Locking), not the "6.8/8.5"
+	// this comment once cited — Requirement 6 is Plan with Destroy Flag
+	// and has five criteria, none about Lock lifecycle.
+	//
+	// No jobs.Client.Delete call either (Requirement 8.6): a Runner that
+	// connects after this point may still be running real tool work — the
+	// Job's TTL is this path's cleanup mechanism.
 
 	if err := o.records.Delete(ctx, operationID); err != nil {
 		slog.ErrorContext(ctx, "deleting timed-out operation record", "operation_id", operationID, "error", err)

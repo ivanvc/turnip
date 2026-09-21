@@ -244,10 +244,18 @@ func (o *Orchestrator) handleUnlock(ctx context.Context, cfg *config.Config, cmd
 	var unlocked, heldByOther []string
 	for _, project := range candidates {
 		key := projectKey(repo.Owner, repo.Name, project.Name)
-		err := o.locks.ReleaseLock(ctx, key, prNumber)
+		// Through the transition table like every other lifecycle change.
+		// It decides nothing today — an unlock releases from any state —
+		// and takes this path anyway, because two callers that never
+		// consult the table are how the table stops being the whole story.
+		tr, err := o.locks.Apply(ctx, key, prNumber, lock.EventUnlocked, nil)
 		switch {
-		case err == nil:
+		case err == nil && tr.Released:
 			unlocked = append(unlocked, project.Name)
+		case err == nil:
+			// No Lock was held for this Project. Releasing reported success
+			// here before, so the reply named Projects that had never been
+			// locked; saying nothing about them is the honest report.
 		case errors.Is(err, lock.ErrLockedByOtherPR):
 			status, statusErr := o.locks.GetLockStatus(ctx, key)
 			if statusErr == nil && status.Locked {

@@ -131,6 +131,17 @@ type ProjectResult struct {
 	PlanOperation  string
 	ApplyOperation string
 
+	// LockNote states what happened to this Project's Lock and why — a
+	// release, or an invalidation that kept the Lock. Empty means neither
+	// happened, which covers a Lock still held unchanged and an Operation
+	// that never held one, since a rejected Operation touches no Lock.
+	//
+	// Set only from a confirmed transition, in the same place as Locked,
+	// so the two cannot disagree. It is therefore not derivable from
+	// !Locked: a rejected Operation has Locked false having released
+	// nothing.
+	LockNote string
+
 	// Locked reports whether the pull request holds this Project's Lock
 	// once the Operation has been handled. It is deliberately not derived
 	// from Success: which outcomes leave a Lock held is the lock

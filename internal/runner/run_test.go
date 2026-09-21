@@ -48,6 +48,7 @@ func (p *fakePlugin) Name() string              { return "fake" }
 func (p *fakePlugin) GetOperations() []string   { return p.operations }
 func (p *fakePlugin) GetPlanOperation() string  { return p.operations[0] }
 func (p *fakePlugin) GetApplyOperation() string { return p.operations[0] }
+func (p *fakePlugin) ActsWithoutChanges() bool  { return false }
 func (p *fakePlugin) Execute(_ context.Context, _ string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
 	for _, l := range p.script {
 		if opts.OnOutput != nil {
@@ -343,6 +344,7 @@ func (p *echoWorkingDirPlugin) Name() string              { return "fake" }
 func (p *echoWorkingDirPlugin) GetOperations() []string   { return p.operations }
 func (p *echoWorkingDirPlugin) GetPlanOperation() string  { return p.operations[0] }
 func (p *echoWorkingDirPlugin) GetApplyOperation() string { return p.operations[0] }
+func (p *echoWorkingDirPlugin) ActsWithoutChanges() bool  { return false }
 func (p *echoWorkingDirPlugin) Execute(_ context.Context, _ string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
 	if opts.OnOutput != nil {
 		opts.OnOutput("stdout", "reading "+opts.WorkingDir+"/values.yaml")
