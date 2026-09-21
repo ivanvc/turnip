@@ -34,6 +34,37 @@ turnip acts on its own* — never what you can ask it to do.
 This is not configurable. There is no setting to turn automatic plans on
 for drafts, so it isn't worth looking for one.
 
+### Pull requests from forks
+
+turnip runs nothing on a pull request whose branch lives in a different
+repository — a fork. Opening one plans nothing, and commenting
+(`/turnip plan`, `/helmfile diff`, and so on) on one does nothing either.
+There is no check run, no comment and no lock.
+
+turnip does not reply to say it declined. The refusal is recorded in the
+Server's log rather than on the pull request — see "Fork pull requests
+are refused" in `docs/troubleshooting.md`.
+
+The reason is that everything in a fork is controlled by whoever opened
+it, `turnip.yaml` included. Running an Operation on one would execute a
+stranger's choice of tool and arguments in a pod holding the credentials
+turnip deploys with, so the contents decide this, not the person asking.
+A collaborator commenting on a fork gets the same refusal: being
+authorized to *trigger* an operation says nothing about the *code* that
+operation would run.
+
+This is not configurable either, deliberately — there is no setting,
+environment variable or `turnip.yaml` key that allows it, and an
+allowlist of trusted contributors would not help, since the refusal is
+about where the code comes from rather than who asked.
+
+To run a fork's changes through turnip, bring them into a branch of this
+repository — push the branch here yourself, or ask a maintainer to — and
+open the pull request from there.
+
+Closing a fork pull request still works normally: any lock it holds from
+before is released, exactly as for any other pull request.
+
 ## Triggering by comment
 
 Comment on the PR:

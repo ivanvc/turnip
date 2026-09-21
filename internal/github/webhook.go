@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	gh "github.com/google/go-github/v90/github"
@@ -21,6 +22,17 @@ import (
 // second forge, or another GitHub-specific endpoint such as an OAuth
 // callback, needs no further migration of a published URL.
 const WebhookPath = "/github/webhook"
+
+// ErrRefused reports that a handler declined to act on a well-formed,
+// correctly-signed delivery. Nothing failed — turnip understood the
+// delivery and chose not to execute it.
+//
+// The distinction is load-bearing at the HTTP boundary. A handler error
+// answers 500, which makes GitHub retry; a refusal answers 200, because a
+// retry would reach the same decision. It also changes how the delivery
+// is counted: rejected rather than dispatched, so one delivery remains
+// one counted outcome.
+var ErrRefused = errors.New("github: delivery refused")
 
 // EventHandler reacts to parsed, signature-verified webhook events. Slice 6
 // implements this interface; NewWebhookHandler only dispatches to it.
@@ -88,6 +100,19 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		handleErr = h.handler.HandleIssueComment(r.Context(), event)
 	}
 
+	// Checked before the error branch below, and instead of the
+	// "dispatched" count: a refused delivery is one delivery with one
+	// outcome, so counting it both ways would break the arithmetic that
+	// makes a rate of refusals meaningful.
+	if errors.Is(handleErr, ErrRefused) {
+		metrics.WebhookEvent(eventType, "rejected")
+		// 200, deliberately. The delivery arrived intact and was
+		// understood; turnip declined to act on it, and a retry would
+		// reach the same decision.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	metrics.WebhookEvent(eventType, "dispatched")
 	if handleErr != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -107,7 +132,12 @@ func pullRequestWebhookEvent(e *gh.PullRequestEvent) *WebhookEvent {
 			HeadSHA: e.GetPullRequest().GetHead().GetSHA(),
 			BaseRef: e.GetPullRequest().GetBase().GetRef(),
 			HeadRef: e.GetPullRequest().GetHead().GetRef(),
-			Draft:   e.GetPullRequest().GetDraft(),
+			Author:  e.GetPullRequest().GetUser().GetLogin(),
+			// Nil-safe through go-github's accessors: a fork deleted
+			// after the pull request was opened yields a zero
+			// Repository, which IsForeign treats as foreign.
+			HeadRepo: repositoryFrom(e.GetPullRequest().GetHead().GetRepo()),
+			Draft:    e.GetPullRequest().GetDraft(),
 		},
 		Installation: Installation{ID: e.GetInstallation().GetID()},
 	}

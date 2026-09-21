@@ -27,6 +27,21 @@ type PullRequest struct {
 	BaseRef string
 	HeadRef string
 
+	// Author is the account that opened the pull request. Read when a
+	// refusal is logged, so an operator can tell who attempted to have
+	// turnip execute code — the automatic path has no commenter to name.
+	Author string
+
+	// HeadRepo identifies the repository this pull request's head branch
+	// lives in: equal to the event's own repository for an ordinary
+	// branch pull request, different for one opened from a fork.
+	//
+	// Zero when GitHub reports no head repository — a fork deleted after
+	// the pull request was opened. IsForeign treats that as foreign
+	// rather than as a match, because a payload turnip cannot read is not
+	// one it should execute.
+	HeadRepo Repository
+
 	// Draft reports whether GitHub considers this pull request a draft.
 	// It is read on exactly one path — the automatic plan, which skips
 	// drafts — and it is false on every issue_comment event, where only
@@ -35,6 +50,26 @@ type PullRequest struct {
 	// acts on its own, never what it can be asked to do" structural
 	// rather than a rule to remember.
 	Draft bool
+}
+
+// IsForeign reports whether this pull request's code comes from a
+// repository other than base — the case turnip must never execute,
+// because the head commit and the configuration read from it are both
+// chosen by whoever opened the pull request.
+//
+// The comparison is on owner and name, deliberately not on the
+// repository's fork flag: turnip installed on a repository that is itself
+// a fork is an ordinary case, and keying on the flag would refuse
+// legitimate work while detecting nothing a comparison does not.
+//
+// A pull request with no head repository is foreign. That is tested
+// explicitly rather than left to "" differing from base's owner, which
+// only holds while base is non-empty and is therefore accidental.
+func (p *PullRequest) IsForeign(base Repository) bool {
+	if p.HeadRepo.Owner == "" || p.HeadRepo.Name == "" {
+		return true
+	}
+	return p.HeadRepo.Owner != base.Owner || p.HeadRepo.Name != base.Name
 }
 
 type Comment struct {

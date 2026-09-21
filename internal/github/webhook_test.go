@@ -115,6 +115,72 @@ func TestWebhookHandler_PullRequestCarriesDraftFlag(t *testing.T) {
 	}
 }
 
+// The head repository must survive parsing, because refusing a fork's
+// pull request depends entirely on knowing where its code came from. An
+// unmapped field would read as empty, and IsForeign treats empty as
+// foreign — so a mapping failure here does not fail open, it refuses
+// every pull request in the repository.
+func TestWebhookHandler_PullRequestCarriesHeadRepository(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		headOwner string
+		foreign   bool
+	}{
+		{"same repository", "owner", false},
+		{"fork", "contributor", true},
+		{"head repository deleted", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := &recordingEventHandler{}
+			h := NewWebhookHandler(testWebhookSecret, handler)
+
+			req := signedWebhookRequest(t, "pull_request", headRepoPullRequestPayload(t, tc.headOwner))
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			require.NotNil(t, handler.lastEvent)
+			require.NotNil(t, handler.lastEvent.PullRequest)
+
+			assert.Equal(t, tc.headOwner, handler.lastEvent.PullRequest.HeadRepo.Owner)
+			assert.Equal(t, tc.foreign,
+				handler.lastEvent.PullRequest.IsForeign(handler.lastEvent.Repository),
+				"whether the pull request is treated as foreign")
+		})
+	}
+}
+
+// headRepoPullRequestPayload builds a pull_request payload whose head
+// repository is owned by headOwner. An empty headOwner omits head.repo
+// entirely, which is what GitHub sends once a fork has been deleted.
+func headRepoPullRequestPayload(t *testing.T, headOwner string) []byte {
+	t.Helper()
+
+	head := map[string]any{"sha": "abc123", "ref": "feature"}
+	if headOwner != "" {
+		head["repo"] = map[string]any{
+			"name":  "repo",
+			"owner": map[string]string{"login": headOwner},
+		}
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"action": "opened",
+		"number": 7,
+		"pull_request": map[string]any{
+			"head": head,
+			"base": map[string]any{"ref": "main"},
+		},
+		"repository": map[string]any{
+			"name":  "repo",
+			"owner": map[string]string{"login": "owner"},
+		},
+		"installation": map[string]any{"id": 1},
+	})
+	require.NoError(t, err)
+	return payload
+}
+
 // An issue_comment event populates Number alone, so its PullRequest can
 // never carry a draft flag. That is what makes "only the automatic plan
 // observes draft state" a property of the parsing rather than a rule the
@@ -245,6 +311,60 @@ func TestWebhookHandler_IssueCommentOnPlainIssueDoesNotDispatch(t *testing.T) {
 	assert.Equal(t, 0, pr)
 	assert.Equal(t, 0, comment)
 	assert.InDelta(t, before+1, scrapeMetric(t, "turnip_webhook_events_total", map[string]string{"event_type": "issue_comment", "outcome": "skipped"}), 0.0001)
+}
+
+// A refusal is not a failure. Answering 500 would make GitHub retry a
+// delivery turnip declined on purpose, and every retry would reach the
+// same decision.
+func TestWebhookHandler_RefusedDeliveryReturns200(t *testing.T) {
+	handler := &recordingEventHandler{returnErr: ErrRefused}
+	h := NewWebhookHandler(testWebhookSecret, handler)
+
+	req := signedWebhookRequest(t, "pull_request", testPullRequestPayload(t))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// One delivery, one counted outcome. Recording a refusal at its own site
+// while the dispatch path also counted it would make every ratio built on
+// this counter wrong — quietly, which is the worst way for a metric to be
+// wrong.
+func TestWebhookHandler_RefusedDeliveryCountedOnceAsRejected(t *testing.T) {
+	rejectedLabels := map[string]string{"event_type": "pull_request", "outcome": "rejected"}
+	dispatchedLabels := map[string]string{"event_type": "pull_request", "outcome": "dispatched"}
+
+	beforeRejected := scrapeMetric(t, "turnip_webhook_events_total", rejectedLabels)
+	beforeDispatched := scrapeMetric(t, "turnip_webhook_events_total", dispatchedLabels)
+
+	handler := &recordingEventHandler{returnErr: ErrRefused}
+	h := NewWebhookHandler(testWebhookSecret, handler)
+
+	req := signedWebhookRequest(t, "pull_request", testPullRequestPayload(t))
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	assert.InDelta(t, beforeRejected+1,
+		scrapeMetric(t, "turnip_webhook_events_total", rejectedLabels), 0.0001,
+		"a refused delivery is counted once as rejected")
+	assert.InDelta(t, beforeDispatched,
+		scrapeMetric(t, "turnip_webhook_events_total", dispatchedLabels), 0.0001,
+		"and must not also be counted as dispatched")
+}
+
+// An ordinary handler error still answers 500 and still counts as
+// dispatched: the refusal branch must not swallow real failures, which is
+// the regression a reader "simplifying" the two branches together would
+// introduce.
+func TestWebhookHandler_OrdinaryErrorStillReturns500(t *testing.T) {
+	handler := &recordingEventHandler{returnErr: errBoom}
+	h := NewWebhookHandler(testWebhookSecret, handler)
+
+	req := signedWebhookRequest(t, "pull_request", testPullRequestPayload(t))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestWebhookHandler_InvalidSignatureRejected(t *testing.T) {

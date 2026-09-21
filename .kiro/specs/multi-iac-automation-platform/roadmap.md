@@ -23,7 +23,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 12 | Runner Workspace & Project Environment | `runner-workspace-environment` | Complete | Slices 1, 5 |
 | 13 | Project Schema v1alpha2 | `project-schema-v1alpha2` | Complete | Slice 12 |
 | 14 | Per-Tool Provisioning | `tool-provisioning` | Complete | Slices 2, 12 |
-| 15 | Refuse Fork Pull Requests | `fork-pull-requests` | Not Started | Slice 6 |
+| 15 | Refuse Fork Pull Requests | `fork-pull-requests` | Complete | Slice 6 |
 | 16 | Cloning Submodules | `clone-submodules` | Complete | Slice 5 |
 | 17 | Pull Request Comment Output | `comment-output` | Complete | Slices 4, 6 |
 | 18 | Hold a Lock Only When There Is Something to Apply | `lock-release-rules` | Not Started | Slices 3, 6 |
@@ -40,6 +40,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 29 | Move the Webhook Off the Root Path | `webhook-path` | Complete | Slices 4, 10 |
 | 30 | Scheduling: Concurrency and Execution Order | `operation-scheduling` | Not Started | Slices 6, 7 |
 | 31 | Runner Pod Placement: Node Selectors and Tolerations | `runner-pod-placement` | Not Started | Slices 5, 13 |
+| 32 | Refuse Operations on a Closed Pull Request | `closed-pull-requests` | Not Started | Slices 4, 6 |
 
 ## Slice Details
 
@@ -395,16 +396,20 @@ a refusal when it differs from the base repository.
 this: a trusted collaborator commenting `/turnip plan` on a fork PR runs
 untrusted code. The trigger is authorized; the code is not.
 
-**Deliberately not scheduled now**: the only deployment is a single
+**Why it was not scheduled earlier**: the only deployment was a single
 private test repository with no forks in play, so this is a real gap
 without being a present risk. Prioritising it over the Helmfile MVP would
 be fixing the wrong thing first.
 
-**Open when this is picked up**: whether a refusal is silent or commented
-(silence gives an attacker no feedback; a comment stops a legitimate fork
-contributor wondering why nothing happened), and whether an operator may
-ever opt in for a genuinely credential-free public project. Neither was
-explored — both are decisions for whoever takes this.
+**Resolved on delivery**: the refusal is **silent** on the pull request —
+an attacker gets no feedback, and the legitimate fork contributor is
+covered by documentation instead. It is paired with a `WARN` log entry
+carrying the base repository, pull request number, head repository and
+actor, so an operator can see refusals happening; repeated entries naming
+one head repository are a detection signal, not noise. No opt-in was
+added: there is no environment variable, `turnip.yaml` key or override
+that permits an Operation on a foreign pull request, because the question
+is where the code comes from rather than who is asking.
 
 **What a 2026-09-19 security review added.** The review confirmed
 everything above, including that the comment path needs the same check.
@@ -421,6 +426,24 @@ tool container can simply read it out of the repository it was handed.
 The fix is independent of the fork check and worth doing regardless: a
 credential helper or `http.extraHeader` in the clone step, or rewriting
 the remote to a clean URL before the tool container starts.
+
+**The token in `.git/config` was deliberately left out of Slice 15**
+(2026-09-20), because it is a separate exposure with a separate fix and
+folding it in would have widened a security slice mid-flight. It still
+has **no slice of its own** — it is recorded only in this entry and in
+the workspace-exposure table above, which means nothing is scheduled to
+fix it. Whoever picks it up should give it a slice rather than attaching
+it to an unrelated one.
+
+**Delivered** (2026-09-20): head-repository identity on
+`github.PullRequest` (`HeadRepo`, `Author`) mapped from both the webhook
+payload and `GetPullRequest`, an `IsForeign` comparison that fails closed
+when GitHub reports no head repository, refusals on both trigger paths,
+and a `github.ErrRefused` sentinel that makes a refused delivery answer
+**200** and count once as `rejected` — a 500 would have made GitHub retry
+a delivery turnip declined on purpose. `closed` deliberately still
+reaches `handlePRClosed`, so a fork pull request holding a Lock from
+before this slice can still release it.
 
 The review also confirmed a mitigation that **does** hold, worth recording
 so it is not re-litigated: `runner.serviceAccount` cannot be chosen from
@@ -1852,6 +1875,78 @@ characters on the simpler field.
   question (append or replace) that neither `serviceAccount` nor `env`
   answers.
 - **Pod labels and annotations** — the Azure Workload Identity entry.
+
+---
+
+### Slice 32: Refuse Operations on a Closed Pull Request
+
+**A bug, not a feature.** Commenting `/helmfile diff` on a closed pull
+request runs it — plans, locks, creates a Job, executes. Nothing stops
+it, because turnip has no concept of a pull request being open or closed.
+
+**What's missing**: `github.PullRequest` carries `Number`, `HeadSHA`,
+`BaseRef`, `HeadRef` and `Draft`, and `GetPullRequest` maps only those.
+GitHub's payload offers `state`, `merged`, `merged_at` and `closed_at`;
+turnip reads none of them. `HandleIssueComment` has no state guard at any
+point — it authorizes the commenter, fetches the configuration at the head
+SHA, resolves Targets and executes.
+
+**Consequence 1 — a Lock nothing will ever release.** Lock release on
+close happens in `handlePRClosed`, and that event has already fired by the
+time someone comments on a closed pull request. There is no second close
+event. So a plan taken afterwards acquires a Lock with **no remaining
+lifecycle event to discharge it**: successful apply and pull-request close
+are the only other releases, and both are out of reach. It blocks every
+other pull request from planning that Project until a human runs
+`/turnip unlock`.
+
+This is adjacent to, but not covered by, Slice 15's Requirement 2.3. That
+one keeps the `closed` path working so Locks are not stranded *at* close;
+this strands one *after* close, which nothing guards.
+
+**Consequence 2 — applying changes that were rejected.** `/turnip apply`
+alone is refused, because close released the Lock and an apply needs one
+carrying a plan. But `diff` then `apply` re-acquires, re-plans and
+applies. The Runner merges base into head, so on a pull request closed
+**without merging** that deploys precisely the changes someone declined to
+merge. On a merged pull request it is close to inert, since head is
+already in base — the rejected case is the dangerous one.
+
+**Scope is the comment path only.** `HandlePullRequest` autoplans on
+`opened`, `synchronize` and `ready_for_review`, and routes `closed` to
+Lock release; every other action falls to `default: return nil`. So the
+automatic path cannot reach a closed pull request, and the whole gap is in
+`HandleIssueComment`.
+
+**Deliberately different from drafts.** Slice 19 decided a draft "changes
+when turnip acts on its own, never what it can be asked to do" — a draft
+is unfinished work whose author may legitimately want a plan. A closed
+pull request is finished or abandoned, and the cleanup that follows it has
+already run. The reasoning that makes a draft's comment trigger valid is
+exactly what makes a closed one's invalid.
+
+**Delivers**: pull-request state on `PullRequest`, mapped from both the
+webhook payload and `GetPullRequest`, and a refusal of every Operation —
+plan and mutating alike — on a pull request that is not open. No
+distinction between merged and closed-unmerged: both are closed, and the
+Lock-lifecycle argument applies to each.
+
+**Sequencing with Slice 15.** Both slices add a mapped field to
+`PullRequest` from the same two payloads (`head.repo` there, `state`
+here), so whichever lands second is materially cheaper — the mapping in
+`GetPullRequest` and in `pullRequestWebhookEvent` is touched once either
+way. Worth doing adjacently.
+
+**Open question**: silent or commented. Slice 15 chose silence because the
+requester may be an attacker. Here the requester is almost certainly a
+colleague who commented on the wrong tab, and there is no attack to starve
+of feedback — so a reply naming the reason is probably right. Worth
+deciding explicitly rather than inheriting Slice 15's answer.
+
+**Noticed while tracing this, and separable**: `reopened` is handled
+nowhere (`default: return nil`), so reopening a pull request triggers no
+plan. Not this bug, but the same switch, and worth settling while someone
+is looking at it.
 
 ---
 

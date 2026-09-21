@@ -100,14 +100,71 @@ func TestClient_GetPullRequest(t *testing.T) {
 	mux.HandleFunc("/repos/owner/repo/pulls/7", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, map[string]any{
 			"number": 7,
-			"head":   map[string]string{"sha": "abc123", "ref": "feature"},
-			"base":   map[string]string{"ref": "main"},
+			"head": map[string]any{
+				"sha": "abc123", "ref": "feature",
+				"repo": map[string]any{
+					"name":     "repo",
+					"owner":    map[string]string{"login": "owner"},
+					"html_url": "https://github.com/owner/repo",
+				},
+			},
+			"base": map[string]string{"ref": "main"},
 		})
 	})
 
 	got, err := client.GetPullRequest(t.Context(), "owner", "repo", 7)
 	require.NoError(t, err)
-	assert.Equal(t, &PullRequest{Number: 7, HeadSHA: "abc123", BaseRef: "main", HeadRef: "feature"}, got)
+	assert.Equal(t, &PullRequest{
+		Number: 7, HeadSHA: "abc123", BaseRef: "main", HeadRef: "feature",
+		HeadRepo: Repository{Owner: "owner", Name: "repo", URL: "https://github.com/owner/repo"},
+	}, got)
+}
+
+// GetPullRequest is the *only* source of head-repository identity on the
+// issue_comment path — that payload carries a pull request number and
+// nothing else — so a fork's identity surviving this mapping is what lets
+// a Trigger Command be refused at all.
+func TestClient_GetPullRequest_CarriesForkHeadRepository(t *testing.T) {
+	client, mux := newTestClient(t)
+
+	mux.HandleFunc("/repos/owner/repo/pulls/9", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]any{
+			"number": 9,
+			"head": map[string]any{
+				"sha": "def456", "ref": "patch",
+				"repo": map[string]any{
+					"name":  "repo",
+					"owner": map[string]string{"login": "contributor"},
+				},
+			},
+			"base": map[string]string{"ref": "main"},
+		})
+	})
+
+	got, err := client.GetPullRequest(t.Context(), "owner", "repo", 9)
+	require.NoError(t, err)
+	assert.Equal(t, "contributor", got.HeadRepo.Owner)
+	assert.True(t, got.IsForeign(Repository{Owner: "owner", Name: "repo"}))
+}
+
+// A fork deleted after its pull request was opened leaves head.repo null.
+// The mapping must survive it, and the result must be foreign — failing
+// closed, since a payload turnip cannot read is not one it should run.
+func TestClient_GetPullRequest_AbsentHeadRepositoryIsForeign(t *testing.T) {
+	client, mux := newTestClient(t)
+
+	mux.HandleFunc("/repos/owner/repo/pulls/11", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]any{
+			"number": 11,
+			"head":   map[string]string{"sha": "aaa", "ref": "gone"},
+			"base":   map[string]string{"ref": "main"},
+		})
+	})
+
+	got, err := client.GetPullRequest(t.Context(), "owner", "repo", 11)
+	require.NoError(t, err)
+	assert.Equal(t, Repository{}, got.HeadRepo)
+	assert.True(t, got.IsForeign(Repository{Owner: "owner", Name: "repo"}))
 }
 
 func TestClient_CreateCheckRun(t *testing.T) {

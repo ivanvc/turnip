@@ -155,9 +155,12 @@ func wireGRPCJobCreator(t *testing.T, o *Orchestrator, logLine string, result *p
 
 func haPlanEvent(owner, repo string, prNumber int) *github.WebhookEvent {
 	return &github.WebhookEvent{
-		Action:       "opened",
-		Repository:   github.Repository{Owner: owner, Name: repo},
-		PullRequest:  &github.PullRequest{Number: prNumber, HeadSHA: "sha"},
+		Action:     "opened",
+		Repository: github.Repository{Owner: owner, Name: repo},
+		// HeadRepo derived from the parameters rather than hardcoded:
+		// these tests generate a fresh owner per run, so a literal
+		// "owner" here would read as a fork and be refused.
+		PullRequest:  &github.PullRequest{Number: prNumber, HeadSHA: "sha", HeadRepo: github.Repository{Owner: owner, Name: repo}},
 		Installation: github.Installation{ID: 1},
 	}
 }
@@ -187,7 +190,7 @@ func TestHA_PlanAndApplyAcrossInstancesMatchSingleInstance(t *testing.T) {
 		repo := "repo"
 		prNumber := 1
 		client := newHAFakeClient([]byte(haTurnipYAML))
-		client.pr = &github.PullRequest{Number: prNumber, HeadSHA: "sha"}
+		client.pr = &github.PullRequest{Number: prNumber, HeadSHA: "sha", HeadRepo: github.Repository{Owner: owner, Name: repo}}
 		planInstance.installationClient = func(id int64) github.GitHubClient { return client }
 		applyInstance.installationClient = func(id int64) github.GitHubClient { return client }
 

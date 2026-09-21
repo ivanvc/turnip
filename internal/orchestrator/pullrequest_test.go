@@ -117,13 +117,110 @@ func TestHandlePlanTrigger_MatchedProjectExecutesAndPosts(t *testing.T) {
 	event := &github.WebhookEvent{
 		Action:       "opened",
 		Repository:   github.Repository{Owner: "owner", Name: "repo"},
-		PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 		Installation: github.Installation{ID: 1},
 	}
 	require.NoError(t, o.HandlePullRequest(context.Background(), event))
 
 	require.Eventually(t, func() bool { return len(fakeClient.postedComments()) >= 1 }, 2*time.Second, 10*time.Millisecond)
 	assert.Contains(t, fakeClient.postedComments()[0], "helm-a")
+}
+
+// A pull request whose code lives in another repository is refused before
+// anything runs. The automatic path has no authorization check by design,
+// so opening one would otherwise be enough to execute a stranger's code
+// in a Pod holding cloud credentials.
+//
+// getFileCallLog is the witness that the guard ran *early*:
+// handlePlanTrigger's first act is fetching turnip.yaml, and on a foreign
+// pull request that file is chosen by whoever opened it — so reading it
+// at all is already a step too far (Requirement 2.2).
+func TestHandlePullRequest_ForeignPullRequestIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		head github.Repository
+	}{
+		{"fork under another owner", github.Repository{Owner: "contributor", Name: "repo"}},
+		{"different repository, same owner", github.Repository{Owner: "owner", Name: "other"}},
+		{"head repository deleted", github.Repository{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var acquired int
+			locks := &fakeLockManager{
+				acquireLockFunc: func(ctx context.Context, projectKey string, prNumber int, url, lockedBy string) (bool, error) {
+					acquired++
+					return true, nil
+				},
+			}
+			redisClient := newTestRedisClient(t)
+			jobs := &fakeJobCreator{t: t, redis: redisClient, result: github.ProjectResult{Success: true}}
+			fakeClient := &fakePRClient{
+				files:         map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
+				modifiedFiles: []string{"a/main.tf"},
+			}
+			o := &Orchestrator{
+				locks:              locks,
+				jobs:               jobs,
+				plugins:            testRegistry(),
+				records:            newRecordStore(redisClient),
+				redis:              redisClient,
+				installationClient: func(id int64) github.GitHubClient { return fakeClient },
+			}
+
+			event := &github.WebhookEvent{
+				Action:       "opened",
+				Repository:   github.Repository{Owner: "owner", Name: "repo"},
+				PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc", Author: "mallory", HeadRepo: tc.head},
+				Installation: github.Installation{ID: 1},
+			}
+
+			err := o.HandlePullRequest(context.Background(), event)
+
+			// ErrRefused, so the webhook layer answers 200 and counts the
+			// delivery once as rejected rather than retrying it.
+			require.ErrorIs(t, err, github.ErrRefused)
+
+			assert.Empty(t, fakeClient.getFileCallLog(),
+				"a refused pull request must not even fetch turnip.yaml")
+			assert.Zero(t, acquired, "no Lock is acquired")
+			assert.Zero(t, jobs.createCount(), "no Runner Job is created")
+			assert.Empty(t, fakeClient.postedComments(),
+				"the refusal is silent on the pull request")
+		})
+	}
+}
+
+// Closing a foreign pull request must still release its Locks. Guarding
+// the whole handler instead of the plan arm would strand a Lock taken
+// before this slice existed, with no lifecycle event left to discharge it.
+func TestHandlePullRequest_ClosedForeignPullRequestStillReleasesLocks(t *testing.T) {
+	var released []string
+	locks := &fakeLockManager{
+		isLockedByPRFunc: func(ctx context.Context, projectKey string, prNumber int) (bool, error) {
+			return true, nil
+		},
+		releaseLockFunc: func(ctx context.Context, projectKey string, prNumber int) error {
+			released = append(released, projectKey)
+			return nil
+		},
+	}
+	o, _ := testPullRequestOrchestrator(t)
+	o.locks = locks
+	fakeClient := &fakePRClient{files: map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)}}
+	o.installationClient = func(id int64) github.GitHubClient { return fakeClient }
+
+	event := &github.WebhookEvent{
+		Action:     "closed",
+		Repository: github.Repository{Owner: "owner", Name: "repo"},
+		PullRequest: &github.PullRequest{
+			Number: 42, HeadSHA: "abc",
+			HeadRepo: github.Repository{Owner: "contributor", Name: "repo"},
+		},
+		Installation: github.Installation{ID: 1},
+	}
+	require.NoError(t, o.HandlePullRequest(context.Background(), event))
+
+	assert.NotEmpty(t, released, "a foreign pull request's Locks are still released on close")
 }
 
 func TestHandlePullRequest_DispatchesOnAction(t *testing.T) {
@@ -135,7 +232,7 @@ func TestHandlePullRequest_DispatchesOnAction(t *testing.T) {
 	event := &github.WebhookEvent{
 		Action:       "labeled", // not opened/synchronize/closed
 		Repository:   github.Repository{Owner: "owner", Name: "repo"},
-		PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 		Installation: github.Installation{ID: 1},
 	}
 	require.NoError(t, o.HandlePullRequest(context.Background(), event))
@@ -163,7 +260,7 @@ func TestHandlePullRequest_DraftIsNotPlannedAutomatically(t *testing.T) {
 			event := &github.WebhookEvent{
 				Action:       action,
 				Repository:   github.Repository{Owner: "owner", Name: "repo"},
-				PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc", Draft: true},
+				PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc", Draft: true, HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 				Installation: github.Installation{ID: 1},
 			}
 			require.NoError(t, o.HandlePullRequest(context.Background(), event))
@@ -199,7 +296,7 @@ func TestHandlePullRequest_ReadyForReviewPlans(t *testing.T) {
 	event := &github.WebhookEvent{
 		Action:       "ready_for_review",
 		Repository:   github.Repository{Owner: "owner", Name: "repo"},
-		PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc", Draft: false},
+		PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc", Draft: false, HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 		Installation: github.Installation{ID: 1},
 	}
 	require.NoError(t, o.HandlePullRequest(context.Background(), event))
@@ -236,7 +333,7 @@ func TestHandlePullRequest_ClosedDraftStillReleasesLocks(t *testing.T) {
 	event := &github.WebhookEvent{
 		Action:       "closed",
 		Repository:   github.Repository{Owner: "owner", Name: "repo"},
-		PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc", Draft: true},
+		PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc", Draft: true, HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 		Installation: github.Installation{ID: 1},
 	}
 	require.NoError(t, o.HandlePullRequest(context.Background(), event))
@@ -254,7 +351,7 @@ func TestHandlePlanTrigger_ZeroMatchedProjectsTakesNoAction(t *testing.T) {
 
 	event := &github.WebhookEvent{
 		Repository:  github.Repository{Owner: "owner", Name: "repo"},
-		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 	require.NoError(t, o.handlePlanTrigger(context.Background(), client, event))
 
@@ -275,7 +372,7 @@ func TestHandlePlanTrigger_RootFileIsTheFallback(t *testing.T) {
 
 	event := &github.WebhookEvent{
 		Repository:  github.Repository{Owner: "owner", Name: "repo"},
-		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 	require.NoError(t, o.handlePlanTrigger(context.Background(), client, event))
 
@@ -298,7 +395,7 @@ func TestHandlePlanTrigger_DedicatedDirectoryWinsOverRoot(t *testing.T) {
 
 	event := &github.WebhookEvent{
 		Repository:  github.Repository{Owner: "owner", Name: "repo"},
-		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 	require.NoError(t, o.handlePlanTrigger(context.Background(), client, event))
 
@@ -317,7 +414,7 @@ func TestHandlePlanTrigger_MissingConfigPostsNothing(t *testing.T) {
 
 	event := &github.WebhookEvent{
 		Repository:  github.Repository{Owner: "owner", Name: "repo"},
-		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 	require.NoError(t, o.handlePlanTrigger(context.Background(), client, event))
 
@@ -338,7 +435,7 @@ func TestHandlePlanTrigger_InvalidConfigStillPostsComment(t *testing.T) {
 
 	event := &github.WebhookEvent{
 		Repository:  github.Repository{Owner: "owner", Name: "repo"},
-		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 	require.NoError(t, o.handlePlanTrigger(context.Background(), client, event))
 
@@ -363,7 +460,7 @@ func TestHandlePRClosed_ReleasesOnlyLocksHeldByThisPR(t *testing.T) {
 	prClient := &fakePRClient{files: map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)}}
 	event := &github.WebhookEvent{
 		Repository:  github.Repository{Owner: "owner", Name: "repo"},
-		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 	require.NoError(t, o.handlePRClosed(context.Background(), prClient, event))
 
@@ -384,7 +481,7 @@ func TestHandlePRClosed_NoLocksHeldPostsNoComment(t *testing.T) {
 	prClient := &fakePRClient{files: map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)}}
 	event := &github.WebhookEvent{
 		Repository:  github.Repository{Owner: "owner", Name: "repo"},
-		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 	require.NoError(t, o.handlePRClosed(context.Background(), prClient, event))
 
@@ -400,7 +497,7 @@ func TestHandlePRClosed_AlwaysDeletesPlanCommentRecord(t *testing.T) {
 	prClient := &fakePRClient{files: map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)}}
 	event := &github.WebhookEvent{
 		Repository:  github.Repository{Owner: "owner", Name: "repo"},
-		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		PullRequest: &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 	require.NoError(t, o.handlePRClosed(context.Background(), prClient, event))
 

@@ -94,6 +94,11 @@ func (c *Client) GetPullRequest(ctx context.Context, owner, repo string, prNumbe
 		HeadSHA: pr.GetHead().GetSHA(),
 		BaseRef: pr.GetBase().GetRef(),
 		HeadRef: pr.GetHead().GetRef(),
+		Author:  pr.GetUser().GetLogin(),
+		// The only source of head-repository identity on the
+		// issue_comment path: that payload carries a pull request number
+		// and nothing else.
+		HeadRepo: repositoryFrom(pr.GetHead().GetRepo()),
 	}, nil
 }
 

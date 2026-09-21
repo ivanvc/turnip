@@ -318,9 +318,11 @@ chart can redirect a resource as readily as a hook can run one — but it
 is sharper than it looks, and two things follow:
 
 - **Run turnip only on repositories whose contributors you already trust
-  with the cluster.** Refusing pull requests from forks is a planned slice
-  and is **not implemented yet**; until it is, a fork's pull request is
-  treated like any other.
+  with the cluster.** turnip refuses to run anything on a pull request
+  from a fork, on both trigger paths (see "Pull requests from forks" in
+  `docs/usage.md`), so this is about the people who can push a branch to
+  the repository itself — for them, opening a pull request is enough to
+  run a hook with the Runner's credentials.
 - **Scope by cluster, not by rule set.** The practical blast radius is
   decided when you choose which cluster turnip runs in and which
   repository drives it — not by trimming permissions that will grow back

@@ -42,6 +42,31 @@ func (o *Orchestrator) HandlePullRequest(ctx context.Context, event *github.Webh
 		if event.PullRequest.Draft {
 			return nil
 		}
+		// A pull request whose code comes from another repository is
+		// refused outright: its head commit and the turnip.yaml read
+		// from that commit are both chosen by whoever opened it, and an
+		// automatic plan runs with no authorization check by design.
+		//
+		// Placed in this arm for the same reason the draft test is, and
+		// it matters more here: guarding the whole handler would stop
+		// "closed" releasing Locks, and a foreign pull request holding
+		// one from before this check would strand it with no lifecycle
+		// event left to discharge it.
+		//
+		// Before handlePlanTrigger, whose first act is fetching
+		// turnip.yaml — on a foreign pull request that file is
+		// attacker-controlled, so reading it is already a step too far.
+		if event.PullRequest.IsForeign(event.Repository) {
+			slog.WarnContext(ctx, "refusing operation on a pull request from another repository",
+				"owner", event.Repository.Owner,
+				"repo", event.Repository.Name,
+				"pr_number", event.PullRequest.Number,
+				"head_owner", event.PullRequest.HeadRepo.Owner,
+				"head_repo", event.PullRequest.HeadRepo.Name,
+				"actor", event.PullRequest.Author,
+			)
+			return github.ErrRefused
+		}
 		return o.handlePlanTrigger(ctx, client, event)
 	case "closed":
 		return o.handlePRClosed(ctx, client, event)

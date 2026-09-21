@@ -58,6 +58,29 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 		return fmt.Errorf("orchestrator: getting pull request %s/%s#%d: %w", owner, repoName, event.PullRequest.Number, err)
 	}
 
+	// The first point at which the head repository is known: an
+	// issue_comment payload carries a pull request number and nothing
+	// else, so GetPullRequest above is the only source.
+	//
+	// The collaborator check this follows authorizes the *trigger*, not
+	// the *code*. A trusted colleague commenting on a fork's pull request
+	// would otherwise run a stranger's code, which is why permission
+	// level does not enter into this decision.
+	//
+	// Before fetchConfig, for the same reason as the automatic path: on a
+	// foreign pull request that file is chosen by whoever opened it.
+	if pr.IsForeign(event.Repository) {
+		slog.WarnContext(ctx, "refusing operation on a pull request from another repository",
+			"owner", owner,
+			"repo", repoName,
+			"pr_number", pr.Number,
+			"head_owner", pr.HeadRepo.Owner,
+			"head_repo", pr.HeadRepo.Name,
+			"actor", event.Comment.Author,
+		)
+		return github.ErrRefused
+	}
+
 	cfg, err := fetchConfig(ctx, client, owner, repoName, pr.HeadSHA)
 	if err != nil {
 		_, postErr := client.PostComment(ctx, owner, repoName, event.PullRequest.Number, configErrorComment(err))

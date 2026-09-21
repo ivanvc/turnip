@@ -174,6 +174,32 @@ the operation running.
   read). Ask a maintainer to grant write access, or ask them to run the
   command themselves.
 
+## Fork pull requests are refused
+
+**Symptom**: a pull request opened from a fork gets no check run, no
+comment and no lock, and comment triggers on it are ignored — with
+nothing posted to the pull request explaining why. The silence is
+intentional (see "Pull requests from forks" in `docs/usage.md`); the
+refusal is reported here instead:
+
+```
+WARN refusing operation on a pull request from another repository
+  owner=... repo=... pr_number=... head_owner=... head_repo=... actor=...
+```
+
+`head_owner`/`head_repo` identify the repository the branch actually
+lives in, and `actor` is whoever caused the attempt — the pull request's
+author on the automatic path, the commenter on the comment path. An
+empty `head_owner`/`head_repo` means GitHub reported no head repository
+at all, usually a fork deleted after the pull request was opened; turnip
+refuses that case too rather than guessing.
+
+Worth watching rather than filtering out: a single entry is ordinary
+open-source traffic, but repeated entries naming the same `head_owner`
+mean someone outside the repository is persistently trying to get turnip
+to execute their code with your deployment credentials. That is the
+signal this log line exists to give you.
+
 ## High-availability / multi-instance behavior
 
 If you're running more than one Server replica (see `docs/deployment.md`),

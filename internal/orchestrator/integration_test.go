@@ -109,7 +109,7 @@ func TestIntegration_AutoPlanFlowEndToEnd(t *testing.T) {
 	event := &github.WebhookEvent{
 		Action:       "opened",
 		Repository:   github.Repository{Owner: "owner", Name: "repo"},
-		PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		PullRequest:  &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 		Installation: github.Installation{ID: 1},
 	}
 	require.NoError(t, o.HandlePullRequest(context.Background(), event))
@@ -136,7 +136,7 @@ func TestIntegration_CommentTriggeredApplyFlowEndToEnd(t *testing.T) {
 	client := &fakeCommentEventClient{
 		permission: "write",
 		files:      map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
-		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc"},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 
 	o := &Orchestrator{
