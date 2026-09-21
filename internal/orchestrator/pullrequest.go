@@ -18,7 +18,14 @@ func (o *Orchestrator) HandlePullRequest(ctx context.Context, event *github.Webh
 	client := o.installationClient(event.Installation.ID)
 
 	switch event.Action {
-	case "opened", "synchronize", "ready_for_review":
+	case "opened", "synchronize", "ready_for_review", "reopened":
+		// "reopened" joins this arm rather than getting one of its own,
+		// so that everything wanted comes from the arm it joins: the
+		// matched-Project set from handlePlanTrigger, the draft guard
+		// below, and the fork refusal after it. A separate arm would have
+		// to repeat the last two, and two copies of a security check
+		// drift apart.
+		//
 		// A draft is work its author has marked unfinished, so turnip
 		// does not act on it of its own accord: no Lock, no Runner Job,
 		// no comment. A comment trigger still works — being a draft

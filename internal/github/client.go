@@ -99,6 +99,10 @@ func (c *Client) GetPullRequest(ctx context.Context, owner, repo string, prNumbe
 		// issue_comment path: that payload carries a pull request number
 		// and nothing else.
 		HeadRepo: repositoryFrom(pr.GetHead().GetRepo()),
+		// The only source of pull-request state on the issue_comment
+		// path, for the same reason. GetMerged is not read: a merged pull
+		// request already reports "closed".
+		Open: pr.GetState() == "open",
 	}, nil
 }
 

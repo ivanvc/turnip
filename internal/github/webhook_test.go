@@ -416,3 +416,59 @@ func TestWebhookHandler_HandlerErrorReturns500(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
+
+func statePullRequestPayload(t *testing.T, state string, merged bool) []byte {
+	t.Helper()
+
+	pr := map[string]any{
+		"head":   map[string]any{"sha": "abc123", "ref": "feature", "repo": map[string]any{"name": "repo", "owner": map[string]string{"login": "owner"}}},
+		"base":   map[string]any{"ref": "main"},
+		"merged": merged,
+	}
+	if state != "" {
+		pr["state"] = state
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"action":       "opened",
+		"number":       7,
+		"pull_request": pr,
+		"repository":   map[string]any{"name": "repo", "owner": map[string]string{"login": "owner"}},
+		"installation": map[string]any{"id": 1},
+	})
+	require.NoError(t, err)
+	return payload
+}
+
+// A merged pull request reports state "closed", so treating merged and
+// closed alike needs no rule of turnip's own — and an absent state maps
+// to not-open, which is the direction that refuses rather than the one
+// that silently restores the bug.
+func TestWebhookHandler_PullRequestCarriesOpenState(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		state  string
+		merged bool
+		want   bool
+	}{
+		{"open", "open", false, true},
+		{"closed without merging", "closed", false, false},
+		{"merged", "closed", true, false},
+		{"state absent from the payload", "", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := &recordingEventHandler{}
+			h := NewWebhookHandler(testWebhookSecret, handler)
+
+			req := signedWebhookRequest(t, "pull_request", statePullRequestPayload(t, tc.state, tc.merged))
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			require.NotNil(t, handler.lastEvent)
+			require.NotNil(t, handler.lastEvent.PullRequest)
+
+			assert.Equal(t, tc.want, handler.lastEvent.PullRequest.Open)
+		})
+	}
+}

@@ -318,3 +318,33 @@ func TestClient_GenerateInstallationToken(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-installation-token", token)
 }
+
+// GetPullRequest is the only source of pull-request state on the
+// issue_comment path, exactly as it is for the head repository.
+func TestClient_GetPullRequest_CarriesOpenState(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body map[string]any
+		want bool
+	}{
+		{"open", map[string]any{"number": 9, "state": "open"}, true},
+		{"closed without merging", map[string]any{"number": 9, "state": "closed", "merged": false}, false},
+		{"merged", map[string]any{"number": 9, "state": "closed", "merged": true}, false},
+		{"state absent", map[string]any{"number": 9}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, mux := newTestClient(t)
+			body := tc.body
+			body["head"] = map[string]any{"sha": "def456", "ref": "patch"}
+			body["base"] = map[string]string{"ref": "main"}
+
+			mux.HandleFunc("/repos/owner/repo/pulls/9", func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(t, w, body)
+			})
+
+			got, err := client.GetPullRequest(t.Context(), "owner", "repo", 9)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got.Open)
+		})
+	}
+}

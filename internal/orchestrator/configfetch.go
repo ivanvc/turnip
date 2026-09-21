@@ -98,3 +98,19 @@ func configErrorComment(err error) string {
 		"> Fetching the turnip configuration failed, so no operations ran. This is usually an authentication, permission, or rate-limit problem with turnip's GitHub App rather than something wrong with this repository.\n\n" +
 		fmt.Sprintf("<details>\n<summary>Error</summary>\n\n```\n%s\n```\n\n</details>", err.Error())
 }
+
+// closedPullRequestComment is the reply to a Trigger Command on a pull
+// request that is no longer open.
+//
+// It names the reason rather than staying silent, unlike the fork
+// refusal: there the requester may be an attacker and feedback is worth
+// withholding, here they are almost certainly a colleague who commented
+// on the wrong tab, and silence would read as turnip being broken.
+//
+// It does not distinguish merged from closed-without-merging, because
+// turnip does not: a Lock taken after either has no lifecycle event left
+// to release it.
+func closedPullRequestComment() string {
+	return "This pull request is closed, so turnip will not run anything on it.\n\n" +
+		"Reopen it to plan again, or open a new pull request with these changes."
+}

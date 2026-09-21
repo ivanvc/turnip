@@ -136,7 +136,7 @@ func TestIntegration_CommentTriggeredApplyFlowEndToEnd(t *testing.T) {
 	client := &fakeCommentEventClient{
 		permission: "write",
 		files:      map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
-		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", Open: true, HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 
 	o := &Orchestrator{

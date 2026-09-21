@@ -65,6 +65,29 @@ open the pull request from there.
 Closing a fork pull request still works normally: any lock it holds from
 before is released, exactly as for any other pull request.
 
+### Closed and merged pull requests
+
+turnip runs nothing on a pull request that is no longer open. Commenting
+`/turnip plan`, `/helmfile diff` or anything else on a closed or merged
+one gets a reply saying so, and nothing else happens — no check run, no
+lock, no Job.
+
+There is no distinction between merged and closed-without-merging. Both
+are closed, and the reason applies to each: the cleanup that runs when a
+pull request closes has already happened, so anything turnip started
+afterwards would hold a lock with no remaining event to release it. You
+would have to clear it by hand with `/turnip unlock`.
+
+On a pull request closed *without* merging there is a second reason.
+turnip merges the base branch into the head commit before running, so
+`diff` followed by `apply` there would deploy precisely the changes
+someone decided not to merge.
+
+**Reopening a pull request plans it again**, for the projects its changes
+match — the same set an ordinary push would plan. You do not need to push
+a commit to wake turnip up. A pull request reopened as a draft is not
+planned automatically, exactly as one opened as a draft is not.
+
 ## Triggering by comment
 
 Comment on the PR:

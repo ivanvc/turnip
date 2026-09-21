@@ -138,6 +138,10 @@ func pullRequestWebhookEvent(e *gh.PullRequestEvent) *WebhookEvent {
 			// Repository, which IsForeign treats as foreign.
 			HeadRepo: repositoryFrom(e.GetPullRequest().GetHead().GetRepo()),
 			Draft:    e.GetPullRequest().GetDraft(),
+			// GetMerged is deliberately not read: GitHub reports a merged
+			// pull request as "closed", so treating merged and closed
+			// alike needs no rule of turnip's own.
+			Open: e.GetPullRequest().GetState() == "open",
 		},
 		Installation: Installation{ID: e.GetInstallation().GetID()},
 	}

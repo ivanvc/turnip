@@ -40,7 +40,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 29 | Move the Webhook Off the Root Path | `webhook-path` | Complete | Slices 4, 10 |
 | 30 | Scheduling: Concurrency and Execution Order | `operation-scheduling` | Not Started | Slices 6, 7 |
 | 31 | Runner Pod Placement: Node Selectors and Tolerations | `runner-pod-placement` | Not Started | Slices 5, 13 |
-| 32 | Refuse Operations on a Closed Pull Request | `closed-pull-requests` | Not Started | Slices 4, 6 |
+| 32 | Refuse a Closed Pull Request, Plan a Reopened One | `closed-pull-requests` | Complete | Slices 4, 6 |
 | 33 | Show What Ran and With What Scope | `execution-provenance` | Not Started | Slices 2, 17, 20 |
 
 ## Slice Details
@@ -1884,7 +1884,7 @@ characters on the simpler field.
 
 ---
 
-### Slice 32: Refuse Operations on a Closed Pull Request
+### Slice 32: Refuse a Closed Pull Request, Plan a Reopened One
 
 **A bug, not a feature.** Commenting `/helmfile diff` on a closed pull
 request runs it — plans, locks, creates a Job, executes. Nothing stops
@@ -1949,10 +1949,21 @@ colleague who commented on the wrong tab, and there is no attack to starve
 of feedback — so a reply naming the reason is probably right. Worth
 deciding explicitly rather than inheriting Slice 15's answer.
 
-**Noticed while tracing this, and separable**: `reopened` is handled
-nowhere (`default: return nil`), so reopening a pull request triggers no
-plan. Not this bug, but the same switch, and worth settling while someone
-is looking at it.
+**`reopened` is in scope, after all.** It is handled nowhere
+(`default: return nil`), so reopening a pull request triggers no plan
+until someone pushes. Initially deferred as "a behaviour addition inside a
+bug fix", then pulled in: the slice's subject is a pull request's *state*,
+and refusing a closed one while ignoring a reopened one covers half of it.
+A reopened pull request plans the Projects its changes match, exactly as
+an opened one does — which is what adding the action to the existing arm
+produces, draft guard included.
+
+**A note on what Slice 18 changed here.** The stranded-Lock consequence
+above is narrowed but not closed: a failed plan now releases its Lock, and
+a plan finding nothing releases for a tool that is inert without changes.
+A *successful* plan still holds, and Helmfile is never inert because
+`sync` acts regardless of the diff — so the ordinary case still strands a
+Lock that only `/turnip unlock` can clear.
 
 ---
 

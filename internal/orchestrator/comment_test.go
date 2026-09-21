@@ -32,6 +32,16 @@ type fakeCommentEventClient struct {
 	mu            sync.Mutex
 	posted        []string
 	modifiedCalls int
+	fileCalls     []string
+}
+
+// getFileCallLog is how a test witnesses that a refusal ran before the
+// configuration was read: fetchConfig is the first thing past the guard,
+// so an empty log is positive evidence rather than an inference.
+func (f *fakeCommentEventClient) getFileCallLog() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.fileCalls...)
 }
 
 func (f *fakeCommentEventClient) postedComments() []string {
@@ -71,6 +81,9 @@ func (f *fakeCommentEventClient) GetPullRequest(ctx context.Context, owner, repo
 	return f.pr, nil
 }
 func (f *fakeCommentEventClient) GetFile(ctx context.Context, owner, repo, path, ref string) ([]byte, error) {
+	f.mu.Lock()
+	f.fileCalls = append(f.fileCalls, path)
+	f.mu.Unlock()
 	data, ok := f.files[path]
 	if !ok {
 		return nil, github.ErrFileNotFound
@@ -140,7 +153,7 @@ func TestHandleIssueComment_OtherBotsCommandPostsNothingWithoutConfig(t *testing
 		client := &fakeCommentEventClient{
 			permission: "write",
 			files:      map[string][]byte{}, // no turnip.yaml anywhere
-			pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
+			pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", Open: true, HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 		}
 
 		require.NoError(t, callHandleIssueComment(o, client, commentEvent(body, "alice")))
@@ -157,7 +170,7 @@ func TestHandleIssueComment_MissingConfigStillPostsComment(t *testing.T) {
 	client := &fakeCommentEventClient{
 		permission: "write",
 		files:      map[string][]byte{},
-		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", Open: true, HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 
 	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip diff", "alice")))
@@ -194,7 +207,7 @@ func TestHandleIssueComment_ForeignPullRequestIsRefused(t *testing.T) {
 			client := &fakeCommentEventClient{
 				permission: "write", // a trusted collaborator
 				files:      map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
-				pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: tc.head},
+				pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", Open: true, HeadRepo: tc.head},
 			}
 
 			err := callHandleIssueComment(o, client, commentEvent("/turnip diff", "alice"))
@@ -215,7 +228,7 @@ func TestHandleIssueComment_SameRepositoryPullRequestStillRuns(t *testing.T) {
 	client := &fakeCommentEventClient{
 		permission: "write",
 		files:      map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
-		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", Open: true, HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 
 	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip diff helm-a", "alice")))
@@ -236,7 +249,7 @@ func TestHandleIssueComment_MalformedLineRepliedAlongsideWellFormedProcessed(t *
 	client := &fakeCommentEventClient{
 		permission: "write",
 		files:      map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
-		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", Open: true, HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 
 	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip\n/turnip plan", "alice")))
@@ -272,7 +285,7 @@ func TestHandleIssueComment_SequentialCommandsOrdered(t *testing.T) {
 	client := &fakeCommentEventClient{
 		permission: "write",
 		files:      map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
-		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", Open: true, HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 
 	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip diff helm-a\n/turnip apply helm-a", "alice")))
@@ -293,7 +306,7 @@ func TestHandleIssueComment_UnlockNeverCreatesJobOrRecord(t *testing.T) {
 	client := &fakeCommentEventClient{
 		permission: "write",
 		files:      map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
-		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", Open: true, HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 
 	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip unlock", "alice")))
@@ -339,7 +352,7 @@ func TestHandleIssueComment_BarePlansFetchModifiedFilesOnce(t *testing.T) {
 	client := &fakeCommentEventClient{
 		permission: "write",
 		files:      map[string][]byte{"turnip.yaml": []byte(multiProjectTurnipYAML)},
-		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", Open: true, HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 		modified:   []string{"a/main.tf"},
 	}
 
@@ -356,7 +369,7 @@ func TestHandleIssueComment_NamedProjectsFetchNoModifiedFiles(t *testing.T) {
 	client := &fakeCommentEventClient{
 		permission: "write",
 		files:      map[string][]byte{"turnip.yaml": []byte(multiProjectTurnipYAML)},
-		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", Open: true, HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 		modified:   []string{"a/main.tf"},
 	}
 
@@ -375,7 +388,7 @@ func TestHandleIssueComment_BareApplyWithNoPlansRepliesOnce(t *testing.T) {
 	client := &fakeCommentEventClient{
 		permission: "write",
 		files:      map[string][]byte{"turnip.yaml": []byte(multiProjectTurnipYAML)},
-		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
+		pr:         &github.PullRequest{Number: 42, HeadSHA: "abc", Open: true, HeadRepo: github.Repository{Owner: "owner", Name: "repo"}},
 	}
 
 	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip apply", "alice")))

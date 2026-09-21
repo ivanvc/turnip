@@ -42,6 +42,23 @@ type PullRequest struct {
 	// one it should execute.
 	HeadRepo Repository
 
+	// Open reports whether GitHub still considers this pull request open.
+	// A merged pull request and one closed without merging are both
+	// false: GitHub gives each the state "closed", and turnip draws no
+	// distinction between them, because a Lock taken after either is
+	// equally unreleasable.
+	//
+	// False is the safe default. A path that forgets to map it refuses
+	// everything, loudly, rather than silently restoring the bug this
+	// field exists to fix.
+	//
+	// Like Draft, it is false on every issue_comment event, where the
+	// payload populates only Number — which is why the comment path reads
+	// the pull request GetPullRequest returned and never the event's own.
+	// Unlike Draft, reading the wrong one does not merely skip an
+	// autoplan: it refuses every comment trigger in the repository.
+	Open bool
+
 	// Draft reports whether GitHub considers this pull request a draft.
 	// It is read on exactly one path — the automatic plan, which skips
 	// drafts — and it is false on every issue_comment event, where only

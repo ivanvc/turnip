@@ -81,6 +81,40 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 		return github.ErrRefused
 	}
 
+	// A pull request that is no longer open is finished or abandoned, and
+	// the cleanup that follows closing has already run. Acting now takes a
+	// Lock with no remaining lifecycle event to release it — close has
+	// already fired and there is no second one — and a diff followed by an
+	// apply on one closed *without* merging deploys precisely the changes
+	// someone declined to merge.
+	//
+	// After the fork refusal above, deliberately. A closed fork pull
+	// request stays silent: replying here would hand back the signal that
+	// refusal exists to withhold.
+	//
+	// Before fetchConfig, which is what puts it ahead of every Lock, Job
+	// and check run at once — all of them are downstream of it.
+	if !pr.Open {
+		// INFO rather than WARN. Slice 15's WARN channel is for someone
+		// trying to have turnip run their code; this is a colleague
+		// commenting on the wrong tab, and mixing the two is how a WARN
+		// channel stops being read.
+		slog.InfoContext(ctx, "refusing operation on a closed pull request",
+			"owner", owner,
+			"repo", repoName,
+			"pr_number", pr.Number,
+			"actor", event.Comment.Author,
+		)
+		if _, postErr := client.PostComment(ctx, owner, repoName, event.PullRequest.Number, closedPullRequestComment()); postErr != nil {
+			// Logged, not returned. Returning it answers 500 and has
+			// GitHub redeliver a comment turnip has already decided about
+			// — which would post this same reply again.
+			slog.ErrorContext(ctx, "posting closed pull request refusal",
+				"owner", owner, "repo", repoName, "pr_number", pr.Number, "error", postErr)
+		}
+		return github.ErrRefused
+	}
+
 	cfg, err := fetchConfig(ctx, client, owner, repoName, pr.HeadSHA)
 	if err != nil {
 		_, postErr := client.PostComment(ctx, owner, repoName, event.PullRequest.Number, configErrorComment(err))

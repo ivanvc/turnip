@@ -190,7 +190,7 @@ func TestHA_PlanAndApplyAcrossInstancesMatchSingleInstance(t *testing.T) {
 		repo := "repo"
 		prNumber := 1
 		client := newHAFakeClient([]byte(haTurnipYAML))
-		client.pr = &github.PullRequest{Number: prNumber, HeadSHA: "sha", HeadRepo: github.Repository{Owner: owner, Name: repo}}
+		client.pr = &github.PullRequest{Number: prNumber, HeadSHA: "sha", Open: true, HeadRepo: github.Repository{Owner: owner, Name: repo}}
 		planInstance.installationClient = func(id int64) github.GitHubClient { return client }
 		applyInstance.installationClient = func(id int64) github.GitHubClient { return client }
 
