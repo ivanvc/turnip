@@ -20,6 +20,13 @@ func parseChangedReleases(output string) int {
 	sawBodyLine := false
 
 	for _, line := range lines {
+		// turnip's own annotation lines are not the tool's output and
+		// must not count as a release's body. Without this the trailer,
+		// which follows the last release, makes that release look changed
+		// on every diff that ends with an unchanged one.
+		if strings.HasPrefix(line, transcriptPrefix) {
+			continue
+		}
 		if comparingReleaseRe.MatchString(line) {
 			if inBody && sawBodyLine {
 				changed++

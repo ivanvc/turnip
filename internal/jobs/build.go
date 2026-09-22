@@ -124,6 +124,16 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		{Name: "TURNIP_PROJECT_NAME", Value: project.Name},
 		{Name: "TURNIP_PROJECT_DIR", Value: project.Directory},
 		{Name: "TURNIP_TOOL", Value: project.Tool},
+		// The version this Job's tool image was built from. The Runner
+		// records it in the execution transcript so a pull request read
+		// months later says which binary produced its output — the usual
+		// answer to "why did this change when I did not touch anything".
+		//
+		// It is the version turnip *requested*, which is the one that runs
+		// while resolveVersion rejects a floating tag. If floating tags
+		// are ever allowed, this is the value that has to start reporting
+		// what resolved.
+		{Name: "TURNIP_TOOL_VERSION", Value: version},
 		{Name: "TURNIP_OPERATION", Value: op.Operation},
 		{Name: "TURNIP_REPO_URL", Value: op.RepoURL},
 		{Name: "TURNIP_COMMIT_SHA", Value: op.CommitSHA},

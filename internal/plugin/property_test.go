@@ -19,7 +19,7 @@ func TestProperty_PluginResultStructureCompleteness(t *testing.T) {
 		exitCode := rapid.IntRange(0, 255).Draw(t, "exitCode")
 
 		p := &HelmfilePlugin{
-			run: func(ctx context.Context, dir, name string, args []string, onOutput func(stream, line string)) ([]byte, []byte, int, error) {
+			run: func(ctx context.Context, dir, name string, args []string, version string, onOutput func(stream, line string)) ([]byte, []byte, int, error) {
 				return []byte(stdout), []byte(stderr), exitCode, nil
 			},
 		}
@@ -40,7 +40,7 @@ func TestProperty_HelmfilePluginCommandExecution(t *testing.T) {
 		var gotName string
 		var gotArgs []string
 		p := &HelmfilePlugin{
-			run: func(ctx context.Context, dir, name string, args []string, onOutput func(stream, line string)) ([]byte, []byte, int, error) {
+			run: func(ctx context.Context, dir, name string, args []string, version string, onOutput func(stream, line string)) ([]byte, []byte, int, error) {
 				gotName = name
 				gotArgs = args
 				return nil, nil, 0, nil

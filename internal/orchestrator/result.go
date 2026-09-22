@@ -125,6 +125,11 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 	// Lock lifecycle at all: Requirement 6 is Plan with Destroy Flag and
 	// has five criteria. The wrong citation is what made this behaviour
 	// look specified when nothing specified it.
+	// The scope this Operation ran with, for the summary line. Taken from
+	// the record the Job was built from, which is what actually reached
+	// the tool, rather than re-derived from the trigger line.
+	pr.ScopeArgs = rec.ExtraArgs
+
 	pr.Locked = true
 
 	summary := plugin.ChangeSummary{

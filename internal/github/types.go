@@ -148,6 +148,15 @@ type ProjectResult struct {
 	PlanOperation  string
 	ApplyOperation string
 
+	// ScopeArgs is the trailing arguments this Project's Operation ran
+	// with, verbatim and in order. Empty means it ran with none.
+	//
+	// Carried as a field rather than recovered from the output: the
+	// summary line is built before the output is, and parsing turnip's own
+	// annotation back out of a blob the tool also writes into would be a
+	// guess.
+	ScopeArgs []string
+
 	// LockNote states what happened to this Project's Lock and why — a
 	// release, or an invalidation that kept the Lock. Empty means neither
 	// happened, which covers a Lock still held unchanged and an Operation

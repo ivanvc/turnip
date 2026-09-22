@@ -198,6 +198,22 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 	// directory turnip cloned into. See stripWorkspacePath.
 	strip := func(s string) string { return stripWorkspacePath(dir, s) }
 
+	// clean is what leaves for the Server: the workspace path removed, and
+	// the installation token removed with it.
+	//
+	// Redaction belongs here rather than at the command seam because this
+	// is where the secret is — internal/plugin has no business holding
+	// one. The execution transcript is inside result.Output by the time
+	// this runs, so one pass covers turnip's own lines and the tool's
+	// alike.
+	//
+	// It closes a gap wider than the transcript: redact has only ever been
+	// applied to clone failures, so a tool that echoed a token into its
+	// output has never been redacted at all. Adding a line built from
+	// trigger-supplied tokens is what made that worth fixing now; the gap
+	// predates it.
+	clean := func(s string) string { return redact(strip(s), "", cfg.GitHubToken) }
+
 	// OnOutput fans out to two places for every (stream, line), and the
 	// first must never wait on the second (Requirement 4.7): write it to
 	// the matching local stream synchronously, then hand it to the
@@ -209,31 +225,36 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 		case "stderr":
 			_, _ = fmt.Fprintln(stderr, line)
 		}
-		// The local mirror above keeps the absolute path; only what
-		// leaves for the Server is stripped.
-		rep.LogLine(stream, strip(line))
+		// The local mirror above keeps the absolute path and any secret
+		// the tool printed — `kubectl logs` is the one place those are
+		// still worth having. Only what leaves for the Server is cleaned,
+		// and it is cleaned the same way the final output is, so a token
+		// cannot reach a live viewer by a route the comment closes.
+		rep.LogLine(stream, clean(line))
 	}
 
 	result, err := p.Execute(ctx, cfg.Operation, plugin.ExecuteOptions{
-		WorkingDir: filepath.Join(dir, cfg.ProjectDir),
-		Config:     cfg.ToolConfig,
-		ExtraArgs:  cfg.ExtraArgs,
-		PlanData:   cfg.PlanData,
-		OnOutput:   onOutput,
+		WorkingDir:  filepath.Join(dir, cfg.ProjectDir),
+		Tool:        cfg.Tool,
+		ToolVersion: cfg.ToolVersion,
+		Config:      cfg.ToolConfig,
+		ExtraArgs:   cfg.ExtraArgs,
+		PlanData:    cfg.PlanData,
+		OnOutput:    onOutput,
 	})
 	if err != nil {
-		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: strip(fmt.Sprintf("execute failed: %v", err))}
+		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: clean(fmt.Sprintf("execute failed: %v", err))}
 	}
 
 	opResult := OperationResult{
 		Success:  result.ExitCode == 0,
-		Output:   strip(result.Output),
+		Output:   clean(result.Output),
 		ExitCode: result.ExitCode,
 		Changes:  result.ChangeSummary,
 		PlanData: result.PlanData,
 	}
 	if result.Error != nil {
-		opResult.ErrorMessage = strip(result.Error.Error())
+		opResult.ErrorMessage = clean(result.Error.Error())
 	}
 	return opResult
 }

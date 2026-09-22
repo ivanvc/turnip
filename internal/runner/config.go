@@ -16,6 +16,7 @@ type Config struct {
 	ProjectName string
 	ProjectDir  string
 	Tool        string
+	ToolVersion string
 	Operation   string
 	RepoURL     string
 	CommitSHA   string
@@ -109,6 +110,7 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 	// Set only under the copy-out strategy. Under run-in-image the tool is
 	// already on the vendor image's own PATH, and pathWithToolsDir leaves
 	// PATH untouched when this is empty.
+	cfg.ToolVersion = env("TURNIP_TOOL_VERSION")
 	cfg.ToolsDir = env("TURNIP_TOOLS_DIR")
 
 	// An unset value is the documented temporary-directory fallback for

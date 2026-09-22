@@ -34,9 +34,17 @@ type Plugin interface {
 // ExecuteOptions carries the standardized inputs to a Plugin's Execute call.
 type ExecuteOptions struct {
 	WorkingDir string
-	Config     map[string]string
-	ExtraArgs  []string
-	PlanData   []byte
+
+	// Tool and ToolVersion name the binary for the execution transcript.
+	// They are carried rather than asked of the Plugin, because the Server
+	// already resolved the version to build the Job's image and a second
+	// source could disagree with the first.
+	Tool        string
+	ToolVersion string
+
+	Config    map[string]string
+	ExtraArgs []string
+	PlanData  []byte
 
 	// OnOutput, when non-nil, is invoked once per line of output as the
 	// subprocess produces it, tagged with which pipe it came from

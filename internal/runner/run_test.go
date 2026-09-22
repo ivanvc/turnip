@@ -377,3 +377,64 @@ func TestRunWith_WorkspacePathStrippedFromWhatTheServerSees(t *testing.T) {
 	// logs` is the one place it is still worth having.
 	assert.Contains(t, stdout.String(), "/tmp/turnip-runner-")
 }
+
+// The gap this closes is wider than the execution transcript: redact has
+// only ever been applied to clone failures, so a tool that echoed the
+// installation token into its own output was never redacted at all.
+//
+// Tested with the token in the tool's output rather than only in its
+// arguments, because a test that checked arguments alone would pass while
+// the real hazard remained.
+func TestRunWith_TokenInToolOutputIsRedacted(t *testing.T) {
+	const token = "ghs_exampletokenvalue"
+
+	p := &fakePlugin{
+		operations: []string{"diff"},
+		script: []outputLine{
+			{"stdout", "fetching with " + token},
+		},
+		result: &plugin.ExecuteResult{
+			ExitCode: 0,
+			Output:   "cloned https://x-access-token:" + token + "@github.com/acme/repo",
+		},
+	}
+	rep := &fakeReporter{}
+	var stdout, stderr safeBuffer
+
+	cfg := testRunConfig()
+	cfg.GitHubToken = token
+
+	exitCode := runWith(context.Background(), cfg, rep, fakeSelector(p), &stdout, &stderr)
+	require.Equal(t, 0, exitCode)
+
+	assert.NotContains(t, rep.lastResult.Output, token,
+		"the token must not reach the pull request comment")
+	for _, l := range rep.logLines {
+		assert.NotContains(t, l.line, token,
+			"nor a live viewer, which reads the same lines by another route")
+	}
+
+	// The local mirror deliberately keeps it: kubectl logs is the one
+	// place the real value is still worth having.
+	assert.Contains(t, stdout.String(), token)
+}
+
+// The transcript records argv and is given no access to the environment.
+// Credentials reach a tool through the environment and mounted files, so
+// this distinction is what makes recording the command safe at all.
+func TestRunWith_TranscriptNeverCarriesTheEnvironment(t *testing.T) {
+	t.Setenv("TURNIP_SECRET_PROBE", "super-secret-value")
+
+	p := &fakePlugin{
+		operations: []string{"diff"},
+		result:     &plugin.ExecuteResult{ExitCode: 0, Output: "ok"},
+	}
+	rep := &fakeReporter{}
+	var stdout, stderr safeBuffer
+
+	exitCode := runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), &stdout, &stderr)
+	require.Equal(t, 0, exitCode)
+
+	assert.NotContains(t, rep.lastResult.Output, "super-secret-value")
+	assert.NotContains(t, stdout.String(), "super-secret-value")
+}

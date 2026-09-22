@@ -54,7 +54,7 @@ func (p *HelmfilePlugin) Execute(ctx context.Context, operation string, opts Exe
 	args = append(args, operation)
 	args = append(args, opts.ExtraArgs...)
 
-	stdout, stderr, exitCode, err := p.run(ctx, opts.WorkingDir, "helmfile", args, opts.OnOutput)
+	stdout, stderr, exitCode, err := p.run(ctx, opts.WorkingDir, "helmfile", args, opts.ToolVersion, opts.OnOutput)
 	if err != nil {
 		return nil, err
 	}

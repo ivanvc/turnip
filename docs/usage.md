@@ -287,7 +287,10 @@ project keeps its lock even when its diff comes back clean.
   Below it, one collapsible section per project. Each section's heading
   stays visible while collapsed and carries that project's status and
   change counts (`✅ web · diff · +1 ~4 -2`), so a run across many
-  projects is scannable at a glance. Expanding one shows the full command
+  projects is scannable at a glance. When the operation ran with extra
+  arguments, the heading carries them too
+  (`✅ web · diff · +0 ~1 -0 · -l name=api`), so you can tell a scoped
+  run from one that looked at the whole project without expanding it. Expanding one shows the full command
   output, followed by the commands that act on **that project alone**:
 
   ```
@@ -295,6 +298,38 @@ project keeps its lock even when its diff comes back clean.
   - Re-plan it: /turnip diff web
   - Release its lock: /turnip unlock web
   ```
+
+### What turnip ran
+
+Each project's output opens and closes with turnip's own lines, marked
+`# turnip · ` so they are never confused with the tool's:
+
+```
+# turnip · env/staging · helmfile v0.169.0
+# turnip · helmfile --environment staging diff -l name=api
+Comparing release=api, chart=charts/api
+...
+# turnip · exit 0 · 4.2s
+```
+
+They record what actually ran, including arguments turnip supplies that
+you never typed — `--environment` above comes from the project's own
+configuration. Reconstructing that later from `turnip.yaml` at that commit
+is exactly the thing that goes wrong during an incident, so turnip writes
+it down at the time. The version is the tool version the run used, which
+is usually the answer when a diff changes and nobody touched the code.
+
+The command line records **arguments only** — never the environment.
+Credentials reach the tool through environment variables and mounted
+files, not through its command line, which is what makes recording the
+command safe. Anything that looks like turnip's GitHub token is removed
+from everything sent back, including the tool's own output.
+
+**Arguments are recorded and replayed.** The scope a plan ran with is
+stored with its lock, and a later `apply` or `sync` replays exactly that
+— which is why those operations refuse arguments of their own. Where a
+locked project's plan recorded arguments, the comment's footer says that
+applying replays that scope rather than covering the whole project.
 
   Only the commands that actually apply are shown — a project that failed
   is never offered an apply, and unlock appears only where this PR is

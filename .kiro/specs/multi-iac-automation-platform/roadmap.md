@@ -41,7 +41,8 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 30 | Scheduling: Concurrency and Execution Order | `operation-scheduling` | Not Started | Slices 6, 7 |
 | 31 | Runner Pod Placement: Node Selectors and Tolerations | `runner-pod-placement` | Not Started | Slices 5, 13 |
 | 32 | Refuse a Closed Pull Request, Plan a Reopened One | `closed-pull-requests` | Complete | Slices 4, 6 |
-| 33 | Show What Ran and With What Scope | `execution-provenance` | Not Started | Slices 2, 17, 20 |
+| 33 | Show What Ran and With What Scope | `execution-provenance` | Complete | Slices 2, 17, 20 |
+| 34 | What a Pull Request Must Satisfy Before an Apply | `apply-requirements` | Not Started | Slices 4, 6, 20 |
 
 ## Slice Details
 
@@ -2024,6 +2025,83 @@ today because `resolveVersion` always returns a concrete version. The
 entry on a Project directory escaping the workspace shares this slice's
 path-stripping helper but is a validation change, not a display one.
 
+### Slice 34: What a Pull Request Must Satisfy Before an Apply
+
+**Goal**: Let an operator require that a pull request has been approved,
+and can actually be merged, before turnip will change anything.
+
+**What's missing today**: turnip admits a mutating Operation on two facts —
+the commenter has write permission, and the Lock is in `StatePlanReady`.
+It asks nothing about whether anyone *approved* the change, or whether the
+pull request could even be merged. A single collaborator can plan and
+apply their own pull request with no second pair of eyes, which for most
+repositories is the opposite of why they run a review process.
+
+**What Atlantis has** (researched 2026-09-21,
+`runatlantis.io/docs/command-requirements`): three requirements, per
+command — `approved` ("approved by at least one person other than the
+author"), `mergeable` ("prevents applies unless a pull request is able to
+be merged"), and `undiverged` (merge checkout strategy only: "prevents
+applies if there are any changes on the base branch since the most recent
+plan"). All are **opt-in**; none is default. A repository's own
+`atlantis.yaml` cannot set them unless the server-side config lists them
+in `allowed_overrides`.
+
+**Delivers**: `TURNIP_APPLY_REQUIREMENTS`, comma-separated, defaulting to
+empty — which is today's behaviour and Atlantis's default. `approved` and
+`mergeable` are in scope; `undiverged` is not, because it needs a base
+commit the Lock does not record.
+
+**Operator-side only, and that breaks the existing pattern deliberately.**
+`runner.serviceAccount` and `clone.submodules` are gateable through
+`TURNIP_ALLOWED_OVERRIDES` because an operator may have reason to let a
+repository choose and the worst case is scoped. A requirement is different
+in kind: its whole purpose is to constrain the pull request, and the pull
+request supplies `turnip.yaml`. Offering it as a gateable path is a trap —
+an operator who adds it to the list has silently disabled the control for
+anyone who can edit that file, and nothing in the mechanism hints that
+this key is unlike its neighbours. `knownOverridePaths` stays at two.
+
+**Avoids Atlantis's deadlock by construction.** Do not use GitHub's
+`mergeable_state` (`clean`/`blocked`/`behind`/`unstable`): it folds in
+required status checks, which is why Atlantis ships
+`--gh-allow-mergeable-bypass-apply` — "enable ability to use `mergeable`
+mode with required apply status check". If turnip's own
+`turnip/<project>/<operation>` checks are required by branch protection,
+the pull request cannot be `clean` until an apply runs and the apply will
+not run until it is `clean`.
+
+Use the **`mergeable` boolean**, which reports conflicts only. Then
+`mergeable` means "no merge conflict", `approved` means "someone signed
+off", and the two compose without turnip asking GitHub a question whose
+answer includes turnip's own. A well-posed question rather than an escape
+hatch from a badly-posed one.
+
+**Where the gate sits**: once per Trigger Command in the comment path,
+beside the collaborator check. Not per Target, which would fire a
+per-pull-request API call once for every Project on a fleet. Sufficient
+because a mutating Operation only ever arrives by comment — the automatic
+path plans only.
+
+**`unlock` is outside the gate**, structurally rather than by exception:
+`comment.go:159` handles it before Target resolution and it is never a
+Plugin Operation. Gating it would be wrong anyway — releasing a Lock is
+how someone recovers from a pull request that cannot satisfy the
+requirements.
+
+**Cost per requirement**: `approved` needs one new client call
+(`GET /pulls/{n}/reviews`) plus a not-the-author test. `mergeable` is
+nearly free, since `GetPullRequest` already fetches the field — but GitHub
+computes it asynchronously, so it is `null` on a fresh pull request and
+needs a bounded retry or a "not yet known" refusal.
+
+**Deferred**: `undiverged` needs the base SHA recorded at plan time, which
+the Lock does not carry; it is also the cheap, deadlock-free approximation
+of the plan-freshness check the Backlog records as accepted. Per-repository
+requirements need the Backlog's per-repository server configuration.
+
+---
+
 ## Backlog (not yet sliced)
 
 Recorded so they aren't rediscovered the hard way. None of these has a
@@ -2342,6 +2420,50 @@ move. Woodpecker shows the cost of leaving it too long: having made the
 workspace configurable after plugins had already hardcoded it, it now
 carries a permanent exception — "Plugins will always have the workspace
 base at `/woodpecker`".
+
+### A Helmfile apply does not verify its plan is still fresh — accepted
+
+Terraform replays a plan file; Helmfile has no artifact, so its "plan" is
+the arguments that produced the diff and the apply re-renders at run time.
+Slice 20 made the *scope* replayable, not the content.
+
+Slice 18 closed the half that moves most: dispatching a plan invalidates a
+stored one, so an apply cannot cross a commit, a failed apply, or a
+timeout. What remains unguarded is narrower:
+
+- **Resolution drift** — a floating chart version, a `^1.2` range, or a
+  remote values source can move with the commit unchanged.
+- **Cluster drift** — the diff compares desired against live, so the live
+  side can move between plan and apply for reasons unrelated to the
+  change.
+
+**Considered and declined** (2026-09-21): re-diffing at apply time and
+comparing against the stored diff. Four shapes were weighed — comparing
+the changed-release set rather than the text, fingerprinting
+`helmfile template` output, pinning resolved chart versions and values
+checksums, and showing the fresh diff without blocking.
+
+Declined because the residual risk is accepted, not because the mechanism
+would not work. Three costs drove it: comparing diff output is unreliable
+(a chart calling `randAlphaNum` without a `lookup` guard renders
+differently every time, so those releases would report stale forever);
+blocking on cluster drift blocks on other people's legitimate changes,
+which is what apply exists to reconcile; and every variant pays an extra
+render at apply time, on top of the one `helmfile apply` already performs
+internally — three renders where a fleet-shaped repository feels each one.
+
+**What would change the answer**: a chart resolving to a different version
+between plan and apply, or an apply visibly deploying something the
+reviewed diff did not describe. If that happens, pinning the inputs is the
+shape to reach for rather than comparing the outputs — its failure message
+names a cause ("chart api moved from 1.2.3 to 1.2.4") where a diff
+comparison only reports a difference.
+
+**If it is ever picked up**, it belongs on the Plugin rather than in the
+orchestrator: Terraform replays an artifact and Helmfile would need a
+fingerprint, which is the same shape as Slice 18's `ActsWithoutChanges` —
+a Plugin declaring a property of its own tool, so Slice 7 fills a seam
+instead of reopening a decision.
 
 ### Resolving a floating tool version
 

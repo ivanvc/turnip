@@ -17,7 +17,7 @@ type recordedCall struct {
 
 func fakeRunner(t *testing.T, calls *[]recordedCall, stdout, stderr []byte, exitCode int, err error) commandRunner {
 	t.Helper()
-	return func(ctx context.Context, dir, name string, args []string, onOutput func(stream, line string)) ([]byte, []byte, int, error) {
+	return func(ctx context.Context, dir, name string, args []string, version string, onOutput func(stream, line string)) ([]byte, []byte, int, error) {
 		*calls = append(*calls, recordedCall{dir: dir, name: name, args: args})
 		return stdout, stderr, exitCode, err
 	}
@@ -148,7 +148,7 @@ func TestHelmfilePlugin_StderrAppendedToOutput(t *testing.T) {
 func TestHelmfilePlugin_OnOutputReachesCommandRunnerUnchanged(t *testing.T) {
 	var calls []recordedCall
 	var gotOnOutput func(stream, line string)
-	p := &HelmfilePlugin{run: func(ctx context.Context, dir, name string, args []string, onOutput func(stream, line string)) ([]byte, []byte, int, error) {
+	p := &HelmfilePlugin{run: func(ctx context.Context, dir, name string, args []string, version string, onOutput func(stream, line string)) ([]byte, []byte, int, error) {
 		calls = append(calls, recordedCall{dir: dir, name: name, args: args})
 		gotOnOutput = onOutput
 		return []byte("out"), nil, 0, nil

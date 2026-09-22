@@ -378,10 +378,24 @@ func buildFooter(results []ProjectResult) string {
 		return ""
 	}
 
-	return fmt.Sprintf(
-		"This pull request holds locks on %s until applied or released.\n`/turnip apply` · `/turnip unlock`",
-		strings.Join(locked, ", "),
-	)
+	body := fmt.Sprintf("This pull request holds locks on %s until applied or released.",
+		strings.Join(locked, ", "))
+
+	// Where a locked Project's plan recorded arguments, applying replays
+	// that scope rather than covering the whole Project — which the counts
+	// above do not say on their own.
+	//
+	// Said in prose, never as a command carrying the arguments: a mutating
+	// Operation that supplies its own is refused, so such a suggestion
+	// would be offering something turnip rejects.
+	for _, r := range results {
+		if r.Locked && len(r.ScopeArgs) > 0 {
+			body += "\nApplying replays the scope each plan recorded, which may be narrower than the whole Project."
+			break
+		}
+	}
+
+	return body + "\n`/turnip apply` · `/turnip unlock`"
 }
 
 // buildDetailSectionPart renders one self-contained <details> piece
@@ -403,9 +417,11 @@ func buildDetailSectionPart(r ProjectResult, chunk string, part, total int) stri
 		trailer = blockedNote(r) + lockNote(r) + nextSteps(r)
 	}
 
+	open, close := fencesFor(chunk, r.Success)
+
 	return fmt.Sprintf(
-		"<details>\n<summary>%s</summary>\n\n%s\n%s\n```%s\n\n</details>",
-		summary, fenceFor(r.Success), chunk, trailer,
+		"<details>\n<summary>%s</summary>\n\n%s\n%s\n%s%s\n\n</details>",
+		summary, open, chunk, close, trailer,
 	)
 }
 
@@ -425,7 +441,57 @@ func summaryLine(r ProjectResult) string {
 		detail = fmt.Sprintf("+%d ~%d -%d", r.Changes.Add, r.Changes.Change, r.Changes.Destroy)
 	}
 
-	return fmt.Sprintf("%s %s · %s · %s", statusMark(r.Success), r.ProjectName, r.Operation, detail)
+	line := fmt.Sprintf("%s %s · %s · %s", statusMark(r.Success), r.ProjectName, r.Operation, detail)
+	if marker := scopeMarker(r.ScopeArgs); marker != "" {
+		line += " · " + marker
+	}
+	return line
+}
+
+// scopeMarkerWidth caps the marker on a line that is already dense. The
+// full arguments stay visible in the Project's section, inside the
+// execution transcript.
+const scopeMarkerWidth = 40
+
+// scopeMarker renders the arguments an Operation ran with, for the text a
+// reader sees without expanding anything.
+//
+// Verbatim and uninterpreted. Slice 20 put "teaching turnip which flags
+// affect scope" out of scope because such a list needs updating whenever a
+// tool gains a flag; this reports what was passed, and the reader, who
+// knows their own tool, decides what it meant.
+//
+// The span is widened past the longest backtick run in the arguments, for
+// the same reason the output fence is: an argument carrying a backtick
+// would otherwise close the span and render the rest as markdown, inside a
+// comment authored by turnip.
+func scopeMarker(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+
+	joined := strings.Join(args, " ")
+	if runes := []rune(joined); len(runes) > scopeMarkerWidth {
+		joined = string(runes[:scopeMarkerWidth-1]) + "…"
+	}
+
+	longest, run := 0, 0
+	for _, r := range joined {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+			continue
+		}
+		run = 0
+	}
+
+	tick := strings.Repeat("`", longest+1)
+	// A span whose content starts or ends with a backtick needs padding
+	// spaces, which CommonMark strips when rendering.
+	if strings.HasPrefix(joined, "`") || strings.HasSuffix(joined, "`") {
+		return tick + " " + joined + " " + tick
+	}
+	return tick + joined + tick
 }
 
 // nextSteps prints the commands that act on this Project alone.
@@ -490,26 +556,47 @@ func blockedNote(r ProjectResult) string {
 	return fmt.Sprintf("\n\nLocked by [#%d](%s).", r.BlockedBy.Number, r.BlockedBy.URL)
 }
 
-// fenceFor picks the opening code fence for a Project's output.
+// fencesFor picks the opening and closing code fences for a Project's
+// output, wide enough that nothing inside can terminate them.
+//
+// A fence of N backticks is closed by a line of N or more, so content
+// carrying its own fence escapes the block and everything after it renders
+// as markdown — inside a comment authored by turnip, which a reader trusts
+// differently from one authored by a contributor. Widening the fence past
+// the longest run in the content closes that without touching the
+// content: the tool's output reaches the reader exactly as the tool wrote
+// it, which is the whole point of quoting it.
 //
 // IaC tools emit something close to a unified diff, so tagging the block
 // `diff` makes GitHub colour added and removed lines — which is most of
 // the value of reading a plan at all (Requirement 10.5's "syntax
 // highlighting"). Atlantis fences plan output the same way.
 //
-// A *failure* gets a plain fence instead. Its body is an error message
+// A *failure* still gets a plain fence. Its body is an error message
 // rather than a diff, and diff highlighting would colour any line starting
-// with "-" as a deletion — turning an unrelated message red for no reason.
-// Atlantis reaches the same split by rendering errors from separate
-// templates; turnip has one renderer, so it branches here.
-//
-// Only the opening fence carries a language; the closing fence never does,
-// which is why truncateBody's marker needs no matching change.
-func fenceFor(success bool) string {
-	if success {
-		return "```diff"
+// with "-" as a deletion, turning an unrelated message red. Slice 33
+// considered making both fences `diff` so its annotation lines render as
+// muted comments in either case, and reversed that: on success the content
+// really is a diff, so the highlighting is right and a stray column-0 "-"
+// is the cost of a mostly-correct choice; on failure it is wrong in
+// general. The annotation stays identifiable by its text in both, which is
+// the part that matters.
+func fencesFor(content string, success bool) (open, close string) {
+	longest := 0
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimLeft(line, " \t")
+		run := 0
+		for run < len(trimmed) && trimmed[run] == '`' {
+			run++
+		}
+		longest = max(longest, run)
 	}
-	return "```"
+
+	bar := strings.Repeat("`", max(3, longest+1))
+	if success {
+		return bar + "diff", bar
+	}
+	return bar, bar
 }
 
 func statusMark(success bool) string {

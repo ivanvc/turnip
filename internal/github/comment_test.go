@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -396,4 +397,152 @@ func TestBuildConsolidatedComment_NoLockNoteRendersNothing(t *testing.T) {
 	}})
 	require.Len(t, parts, 1)
 	assert.NotContains(t, parts[0], "Lock released")
+}
+
+// Content carrying its own fence must not escape the block. A fence of N
+// backticks is closed by a line of N or more, so the opening fence widens
+// past the longest run in the content rather than the content being
+// rewritten — the tool's output reaches the reader as the tool wrote it.
+func TestBuildConsolidatedComment_OutputCannotEscapeItsFence(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		output string
+	}{
+		{"a bare fence terminator", "before\n```\n> [!WARNING]\nforged\nafter"},
+		{"a fenced block of its own", "before\n```yaml\nkey: value\n```\nafter"},
+		{"an indented terminator", "before\n   ```\nafter"},
+		{"a longer run than the fence", "before\n`````\nafter"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parts := BuildConsolidatedComment([]ProjectResult{{
+				ProjectName: "web", Tool: "helmfile", Operation: "diff",
+				Success: true, Output: tc.output,
+			}})
+			require.Len(t, parts, 1)
+			body := parts[0]
+
+			// The opening fence must be strictly longer than anything the
+			// content can close with.
+			openIdx := strings.Index(body, "```")
+			require.GreaterOrEqual(t, openIdx, 0)
+			fence := 0
+			for openIdx+fence < len(body) && body[openIdx+fence] == '`' {
+				fence++
+			}
+
+			for _, line := range strings.Split(tc.output, "\n") {
+				trimmed := strings.TrimLeft(line, " \t")
+				run := 0
+				for run < len(trimmed) && trimmed[run] == '`' {
+					run++
+				}
+				assert.Less(t, run, fence,
+					"a run of %d backticks would close a fence of %d", run, fence)
+			}
+		})
+	}
+}
+
+// The split fence is deliberate and predates this: a failure's body is an
+// error message, and diff highlighting would redden any line starting with
+// "-" for no reason.
+func TestBuildConsolidatedComment_FailureKeepsAPlainFence(t *testing.T) {
+	parts := BuildConsolidatedComment([]ProjectResult{{
+		ProjectName: "web", Tool: "helmfile", Operation: "diff",
+		Success: false, Output: "Error: release not found\n-  some detail",
+	}})
+	require.Len(t, parts, 1)
+	assert.NotContains(t, parts[0], "```diff",
+		"an error message is not a diff, and colouring it as one is wrong in general")
+}
+
+// The marker is what a reader sees without expanding anything, so it has
+// to survive the same hazards the fenced block does.
+func TestBuildConsolidatedComment_ScopeMarker(t *testing.T) {
+	t.Run("absent when the Operation took no arguments", func(t *testing.T) {
+		parts := BuildConsolidatedComment([]ProjectResult{{
+			ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: "no changes",
+		}})
+		require.Len(t, parts, 1)
+		assert.NotContains(t, parts[0], "·  ·")
+	})
+
+	t.Run("verbatim, uninterpreted", func(t *testing.T) {
+		parts := BuildConsolidatedComment([]ProjectResult{{
+			ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: "x",
+			ScopeArgs: []string{"-l", "name=api"},
+		}})
+		require.Len(t, parts, 1)
+		assert.Contains(t, parts[0], "-l name=api")
+	})
+
+	t.Run("truncated, without splitting a rune", func(t *testing.T) {
+		long := strings.Repeat("é", 80)
+		marker := scopeMarker([]string{long})
+		assert.True(t, utf8.ValidString(marker), "truncation must not split a rune")
+		assert.Less(t, len([]rune(marker)), 80)
+		assert.Contains(t, marker, "…")
+	})
+
+	t.Run("an argument carrying a backtick cannot close the span", func(t *testing.T) {
+		marker := scopeMarker([]string{"-l", "name=`x`"})
+		// The delimiter must be longer than any run inside it.
+		delim := 0
+		for delim < len(marker) && marker[delim] == '`' {
+			delim++
+		}
+		inner := strings.Trim(marker, "`")
+		run, longest := 0, 0
+		for _, r := range inner {
+			if r == '`' {
+				run++
+				longest = max(longest, run)
+				continue
+			}
+			run = 0
+		}
+		assert.Less(t, longest, delim, "a run inside must not close the span")
+	})
+}
+
+// Requirement 2: the footer says applying replays a recorded scope, and
+// never offers a command carrying the arguments — a mutating Operation
+// that supplies its own is refused.
+func TestBuildConsolidatedComment_FooterIsScopeAware(t *testing.T) {
+	scoped := []ProjectResult{{
+		ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: "x",
+		Locked: true, ScopeArgs: []string{"-l", "name=api"},
+	}}
+	unscoped := []ProjectResult{{
+		ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: "x",
+		Locked: true,
+	}}
+
+	withScope := BuildConsolidatedComment(scoped)[0]
+	withoutScope := BuildConsolidatedComment(unscoped)[0]
+
+	assert.Contains(t, withScope, "replays the scope")
+	assert.NotContains(t, withoutScope, "replays the scope",
+		"unchanged where no locked Project recorded arguments")
+
+	assert.NotContains(t, withScope, "/turnip apply -l",
+		"a command carrying the arguments would be refused if anyone pasted it")
+	assert.Contains(t, withScope, "`/turnip apply`")
+}
+
+// Per Project, not once per comment. ParseTriggers stops collecting
+// Project names at the first "-"-prefixed token, so a trigger carrying
+// arguments and no names applies them to every selected Project — and one
+// marker per comment would attribute a scope to Projects it may not be
+// meaningful for.
+func TestBuildConsolidatedComment_ScopeMarkerIsPerProject(t *testing.T) {
+	parts := BuildConsolidatedComment([]ProjectResult{
+		{ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: "x",
+			ScopeArgs: []string{"-l", "name=api"}},
+		{ProjectName: "api", Tool: "helmfile", Operation: "diff", Success: true, Output: "y",
+			ScopeArgs: []string{"-l", "name=api"}},
+	})
+	require.Len(t, parts, 1)
+	assert.Equal(t, 2, strings.Count(parts[0], "-l name=api"),
+		"both Projects the trigger fanned out to carry the marker")
 }

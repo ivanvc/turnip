@@ -264,3 +264,40 @@ func TestHandleResult_AFailedTransitionAnnouncesNothing(t *testing.T) {
 		t.Fatal("timed out waiting for published result")
 	}
 }
+
+// The scope reported is the Operation's own, taken from the record the Job
+// was built from rather than re-derived from the trigger line.
+func TestHandleResult_ReportsTheScopeItRanWith(t *testing.T) {
+	locks := &fakeLockManager{}
+	o, _ := testResultOrchestrator(t, locks)
+	rec := &OperationRecord{
+		OperationID: "op-1",
+		ProjectKey:  "owner/repo/p",
+		Project:     config.Project{Name: "p", Tool: "helmfile"},
+		Owner:       "owner", Repo: "repo", PRNumber: 42,
+		Operation:     "diff",
+		ExtraArgs:     []string{"-l", "name=api"},
+		StartDeadline: time.Now().Add(time.Hour).Unix(),
+		CreatedAt:     time.Now(),
+	}
+	require.NoError(t, o.records.Create(context.Background(), rec))
+
+	resultCh := make(chan github.ProjectResult, 1)
+	go func() {
+		r, err := waitForDone(context.Background(), o.redis, "op-1")
+		assert.NoError(t, err)
+		resultCh <- r
+	}()
+	require.Eventually(t, func() bool {
+		return o.redis.PubSubNumSub(context.Background(), doneChannel("op-1")).Val()[doneChannel("op-1")] > 0
+	}, time.Second, time.Millisecond)
+
+	require.NoError(t, o.HandleResult(context.Background(), "op-1", rpc.OperationResult{Success: true}))
+
+	select {
+	case r := <-resultCh:
+		assert.Equal(t, []string{"-l", "name=api"}, r.ScopeArgs)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for published result")
+	}
+}
