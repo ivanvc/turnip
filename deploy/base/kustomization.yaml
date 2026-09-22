@@ -7,6 +7,10 @@ resources:
   - serviceaccount.yaml
   - role.yaml
   - rolebinding.yaml
+  # TokenReview is cluster-scoped, so validating a Runner's token cannot
+  # be granted by the namespaced Role above.
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
 
 # Non-secret defaults. No TURNIP_REDIS_ADDR or TURNIP_GITHUB_APP_ID here —
 # there's no sane base-level default for either (Requirement 1.3: the base

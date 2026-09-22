@@ -40,6 +40,13 @@ type Config struct {
 	// turnip-built Job gets.
 	WorkspaceDir string
 
+	// TokenFile is where internal/jobs.BuildJob projected this Pod's
+	// ServiceAccount token, scoped to turnip's own audience. The reporter
+	// reads it on every stream it opens rather than once at startup,
+	// because kubelet rotates a projected token in place and a reconnect
+	// after rotation must present the current one.
+	TokenFile string
+
 	// CloneSubmodules is the Submodule_Mode this Operation's clone uses:
 	// one of config.Submodules{None,TopLevel,Recursive}. Like GitHubToken
 	// it is set on the clone initContainer and deliberately absent from
@@ -81,6 +88,11 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 		{"TURNIP_REPO_URL", &cfg.RepoURL},
 		{"TURNIP_COMMIT_SHA", &cfg.CommitSHA},
 		{"TURNIP_BASE_REF", &cfg.BaseRef},
+		// Required on every container that reaches the Server: without it
+		// the Runner presents nothing and the Server refuses the stream.
+		// Failing here says which variable is absent; failing later says
+		// only that the stream was rejected.
+		{"TURNIP_TOKEN_FILE", &cfg.TokenFile},
 	}
 
 	var missing []string

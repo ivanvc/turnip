@@ -438,6 +438,32 @@ wiring, then tests (unit, then property).
     `roadmap.md`
   - _Requirements: (maintenance amendment, no behavioral change)_
 
+- [x] 26. The service gains an interceptor and a metadata contract
+      (runner-authentication amendment, Slice 25)
+  - `NewServer(handler)` becomes `NewServer(handler, opts ...Option)`,
+    with `WithAuthenticator` and `WithCertificate`. This slice's design
+    noted that `NewServer` took no options as a reason there was exactly
+    one place to add one; Slice 25 is what took it
+  - Every stream is now authenticated by a `grpc.StreamInterceptor`
+    before its handler runs, including an RPC added later whose author
+    adds no check. A `NewServer` built without `WithAuthenticator`
+    refuses every stream rather than accepting every stream
+  - The Runner attaches two metadata values to each stream it opens: the
+    bearer token from its projected ServiceAccount token, and the
+    Operation id it claims. Both keys are defined once, in
+    `internal/rpc/metadata.go`, because a mismatch between the two sides
+    is not a compile error — it is a Server that refuses every Runner
+  - `ExecuteOperation` no longer reads `operationID` from the Start
+    message. The id comes from `rpc.OperationIDFromContext`, and the
+    message's own field is left in place but ignored, with a comment
+    saying why: restoring the assignment looks like removing dead code
+    and would reopen the gap
+  - The connection stays plaintext. Encryption was briefly part of Slice
+    25 and was split into Slice 38 (`runner-server-tls`); every change
+    above is therefore staged rather than a cutover, and a new Runner
+    against an old Server is a no-op
+  - _Requirements: (Slice 25 amendment; see runner-authentication)_
+
 ## Notes
 
 - `k8s.io/api`, `k8s.io/apimachinery`, and `k8s.io/client-go` are already

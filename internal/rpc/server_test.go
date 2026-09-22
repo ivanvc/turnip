@@ -9,6 +9,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/stretchr/testify/assert"
@@ -44,13 +45,30 @@ func (h *fakeHandler) HandleResult(ctx context.Context, operationID string, resu
 	return h.resultErr
 }
 
+// acceptAll is the authenticator these dispatch tests use: they are about
+// what the handler does with a stream's messages, not about who may open
+// one. auth_test.go covers the decision itself.
+type acceptAll struct{}
+
+func (acceptAll) Authenticate(context.Context, string, string) error { return nil }
+
+// authedContext produces the metadata a Runner attaches to every stream.
+// Every test here needs it, because the interceptor is installed
+// unconditionally — there is no unauthenticated path to the handler.
+func authedContext(operationID string) context.Context {
+	return metadata.AppendToOutgoingContext(context.Background(),
+		AuthorizationKey, BearerPrefix+"test-token",
+		OperationIDKey, operationID,
+	)
+}
+
 // dialServer starts a server hosting handler on an in-process bufconn
 // listener and returns a connected client.
 func dialServer(t *testing.T, handler OperationHandler) pb.OperationServiceClient {
 	t.Helper()
 
 	lis := bufconn.Listen(1024 * 1024)
-	server := NewServer(handler)
+	server := NewServer(handler, WithAuthenticator(acceptAll{}))
 	go func() {
 		_ = server.Serve(lis)
 	}()
@@ -70,7 +88,7 @@ func TestExecuteOperation_FullStreamDispatchesInOrder(t *testing.T) {
 	handler := &fakeHandler{}
 	client := dialServer(t, handler)
 
-	stream, err := client.ExecuteOperation(context.Background())
+	stream, err := client.ExecuteOperation(authedContext("op-1"))
 	require.NoError(t, err)
 
 	require.NoError(t, stream.Send(&pb.ExecuteOperationRequest{
@@ -108,7 +126,7 @@ func TestExecuteOperation_HandleResultErrorAbortsRPC(t *testing.T) {
 	handler := &fakeHandler{resultErr: errors.New("boom")}
 	client := dialServer(t, handler)
 
-	stream, err := client.ExecuteOperation(context.Background())
+	stream, err := client.ExecuteOperation(authedContext("op-2"))
 	require.NoError(t, err)
 
 	require.NoError(t, stream.Send(&pb.ExecuteOperationRequest{
@@ -126,7 +144,7 @@ func TestExecuteOperation_ChangeSummaryPropagated(t *testing.T) {
 	handler := &fakeHandler{}
 	client := dialServer(t, handler)
 
-	stream, err := client.ExecuteOperation(context.Background())
+	stream, err := client.ExecuteOperation(authedContext("op-3"))
 	require.NoError(t, err)
 
 	require.NoError(t, stream.Send(&pb.ExecuteOperationRequest{

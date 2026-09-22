@@ -127,6 +127,13 @@ type fakeClock struct {
 
 func newFakeClock() *fakeClock { return &fakeClock{now: time.Unix(0, 0)} }
 
+// Polling bounds for the Eventually assertions that wait on a gRPC
+// handler goroutine to register what it received.
+const (
+	waitTimeout = 5 * time.Second
+	waitTick    = time.Millisecond
+)
+
 func (c *fakeClock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -138,6 +145,12 @@ func (c *fakeClock) Sleep(d time.Duration) {
 	defer c.mu.Unlock()
 	c.now = c.now.Add(d)
 }
+
+// stubToken stands in for reading the projected ServiceAccount token
+// from disk. Every reporter test needs one, because openStream now
+// presents a credential before it sends anything; the tests that care
+// about the reading itself substitute their own counting version.
+func stubToken() (string, error) { return "test-token", nil }
 
 func testCfg() Config {
 	return Config{
@@ -209,6 +222,7 @@ func TestReporter_ConnectSucceedsFirstAttemptNoRetries(t *testing.T) {
 	}
 	clock := newFakeClock()
 	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0.5 })
+	r.readToken = stubToken
 
 	require.NoError(t, r.Connect(context.Background()))
 	assert.Equal(t, 1, client.attemptCount())
@@ -225,6 +239,7 @@ func TestReporter_ConnectRetriesThenSucceeds(t *testing.T) {
 	}
 	clock := newFakeClock()
 	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
+	r.readToken = stubToken
 
 	require.NoError(t, r.Connect(context.Background()))
 	assert.Equal(t, 3, client.attemptCount())
@@ -238,6 +253,7 @@ func TestReporter_ConnectGivesUpOnceBudgetElapses(t *testing.T) {
 	}
 	clock := newFakeClock()
 	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 1 })
+	r.readToken = stubToken
 
 	err := r.Connect(context.Background())
 	require.Error(t, err)
@@ -249,6 +265,7 @@ func TestReporter_ReportSucceeds(t *testing.T) {
 	client := dialScriptedServer(t, srv)
 	clock := newFakeClock()
 	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
+	r.readToken = stubToken
 
 	require.NoError(t, r.Connect(context.Background()))
 	require.NoError(t, r.Report(context.Background(), OperationResult{Success: true, Output: "ok", ExitCode: 0}))
@@ -261,6 +278,7 @@ func TestReporter_ReportReturnsSentinelWhenBudgetExhausted(t *testing.T) {
 	client := dialScriptedServer(t, srv)
 	clock := newFakeClock()
 	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 1 })
+	r.readToken = stubToken
 
 	err := r.Report(context.Background(), OperationResult{Success: true})
 	require.Error(t, err)
@@ -272,6 +290,7 @@ func TestReporter_ReportReconnectsAndResendsFullBufferWithResumedTrue(t *testing
 	client := dialScriptedServer(t, srv)
 	clock := newFakeClock()
 	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
+	r.readToken = stubToken
 
 	require.NoError(t, r.Connect(context.Background()))
 	// Pin the first stream to index 0 before anything opens a second one;

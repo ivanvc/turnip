@@ -42,6 +42,27 @@ const (
 	workspaceVolumeName = "workspace"
 	workspaceMountPath  = "/turnip/src"
 
+	// tokenVolumeName/tokenMountPath/tokenFileName carry the Runner's
+	// proof of identity: a ServiceAccount token projected with turnip's
+	// own audience, which the Server validates with a TokenReview before
+	// letting the caller write to an Operation (Slice 25).
+	//
+	// It is a volume projection — a field of the Pod spec turnip already
+	// writes — and not a change to any ServiceAccount object. That is what
+	// keeps Slice 13's runner.serviceAccount override orthogonal: a
+	// Project may still choose which account the Pod runs as, because the
+	// identity that matters here is the Pod's, not the account's.
+	tokenVolumeName = "turnip-token"
+	tokenMountPath  = "/turnip/run/secrets"
+	tokenFileName   = "token"
+
+	// tokenExpirationSeconds is how long kubelet lets a projected token
+	// live before rotating it in place. Ten minutes is the API server's
+	// own floor; asking for less gets silently rounded up. The Runner
+	// re-reads the file on every stream it opens rather than caching what
+	// it read at startup, so a rotation mid-Operation costs nothing.
+	tokenExpirationSeconds = int64(10 * 60)
+
 	// jobTTLSeconds bounds how long Kubernetes keeps a finished Job (and
 	// its Pod) around (Requirement 7.4/9.1) — matching the reporter's
 	// final-result-delivery retry budget (design.md), so a Job whose
@@ -49,6 +70,17 @@ const (
 	// under it.
 	jobTTLSeconds = int32(15 * 60)
 )
+
+// TokenAudience is what the Runner's projected token is scoped to, and
+// the only audience the Server's TokenReview accepts.
+//
+// It is deliberately not the API server's own audience. A Pod's default
+// token — the one at /var/run/secrets/kubernetes.io/serviceaccount —
+// would be accepted by any component that merely checks "is this a valid
+// token", and the Server could then replay it to the API server *as* the
+// Runner's ServiceAccount. Scoping to an audience nothing else honours
+// makes that impossible rather than merely discouraged.
+const TokenAudience = "turnip.ivan.vc"
 
 var jobTTLSecondsAfterFinished = ptr.To(jobTTLSeconds)
 
@@ -145,11 +177,19 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		// clone initContainer writes the repository, and where the tool
 		// then finds it.
 		{Name: "TURNIP_WORKSPACE_DIR", Value: workspaceMountPath},
+		// Both containers that reach the Server need to prove who they
+		// are, so the token path is base environment rather than
+		// per-container: the clone reports its own failures over the same
+		// authenticated stream the tool's container later uses.
+		{Name: "TURNIP_TOKEN_FILE", Value: tokenMountPath + "/" + tokenFileName},
 	}
 
 	toolsMount := corev1.VolumeMount{Name: toolsVolumeName, MountPath: toolsMountPath}
 	binMount := corev1.VolumeMount{Name: binVolumeName, MountPath: binMountPath}
 	workspaceMount := corev1.VolumeMount{Name: workspaceVolumeName, MountPath: workspaceMountPath}
+	// ReadOnly because nothing in the Pod has any business rewriting the
+	// credential kubelet maintains there.
+	tokenMount := corev1.VolumeMount{Name: tokenVolumeName, MountPath: tokenMountPath, ReadOnly: true}
 
 	// The clone runs in turnip's own image, which has git — so the image
 	// that runs the tool needs nothing but the tool, and can be a vendor
@@ -169,7 +209,7 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 			corev1.EnvVar{Name: "TURNIP_GITHUB_TOKEN", Value: op.GitHubToken},
 			corev1.EnvVar{Name: "TURNIP_CLONE_SUBMODULES", Value: op.Submodules},
 		),
-		VolumeMounts: []corev1.VolumeMount{workspaceMount},
+		VolumeMounts: []corev1.VolumeMount{workspaceMount, tokenMount},
 	}
 
 	var (
@@ -197,8 +237,8 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		// is statically linked (CGO_ENABLED=0), so it executes in any
 		// image regardless of libc.
 		mainCommand = []string{binMountPath + "/runner"}
-		mainMounts = []corev1.VolumeMount{binMount, workspaceMount}
-		volumes = []corev1.Volume{emptyDirVolume(binVolumeName), emptyDirVolume(workspaceVolumeName)}
+		mainMounts = []corev1.VolumeMount{binMount, workspaceMount, tokenMount}
+		volumes = []corev1.Volume{emptyDirVolume(binVolumeName), emptyDirVolume(workspaceVolumeName), tokenVolume()}
 
 		// No TURNIP_TOOLS_DIR: the tool is already on the vendor image's
 		// own PATH. The Runner needs no branch for this — pathWithToolsDir
@@ -218,8 +258,8 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 			cloneContainer,
 		}
 		mainImage = op.RunnerImage
-		mainMounts = []corev1.VolumeMount{toolsMount, workspaceMount}
-		volumes = []corev1.Volume{emptyDirVolume(toolsVolumeName), emptyDirVolume(workspaceVolumeName)}
+		mainMounts = []corev1.VolumeMount{toolsMount, workspaceMount, tokenMount}
+		volumes = []corev1.Volume{emptyDirVolume(toolsVolumeName), emptyDirVolume(workspaceVolumeName), tokenVolume()}
 
 		// TURNIP_TOOLS_DIR tells the Runner where the initContainer copied
 		// the tool binary, so it can prepend that directory to its own
@@ -295,6 +335,31 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 	}
 
 	return job, nil
+}
+
+// tokenVolume is the ServiceAccountToken projection the Runner presents
+// to the Server. kubelet mints it against the Pod's own ServiceAccount,
+// scoped to turnip's audience, and rotates it in place as it nears
+// expiry.
+//
+// The projection carries the Pod's identity — name and uid — in the
+// resulting token's claims, which is what lets the Server bind a caller
+// to one Operation rather than merely recognising that it is some Runner.
+func tokenVolume() corev1.Volume {
+	return corev1.Volume{
+		Name: tokenVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Projected: &corev1.ProjectedVolumeSource{
+				Sources: []corev1.VolumeProjection{{
+					ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+						Audience:          TokenAudience,
+						ExpirationSeconds: ptr.To(tokenExpirationSeconds),
+						Path:              tokenFileName,
+					},
+				}},
+			},
+		},
+	}
 }
 
 func emptyDirVolume(name string) corev1.Volume {

@@ -92,7 +92,8 @@ func TestBuildJob_EveryStrategyClonesInAnInitContainer(t *testing.T) {
 			assert.Equal(t, []string{"clone"}, clone.Args)
 			assert.Equal(t, []corev1.VolumeMount{
 				{Name: workspaceVolumeName, MountPath: workspaceMountPath},
-			}, clone.VolumeMounts, "it writes the workspace and touches nothing else")
+				{Name: tokenVolumeName, MountPath: tokenMountPath, ReadOnly: true},
+			}, clone.VolumeMounts, "it writes the workspace, reads its credential, and touches nothing else")
 		})
 	}
 }
@@ -138,6 +139,7 @@ func TestBuildJob_CopyOutShape(t *testing.T) {
 	assert.ElementsMatch(t, []corev1.VolumeMount{
 		{Name: toolsVolumeName, MountPath: toolsMountPath},
 		{Name: workspaceVolumeName, MountPath: workspaceMountPath},
+		{Name: tokenVolumeName, MountPath: tokenMountPath, ReadOnly: true},
 	}, main.VolumeMounts)
 }
 
@@ -163,20 +165,28 @@ func TestBuildJob_RunInImageShape(t *testing.T) {
 	assert.ElementsMatch(t, []corev1.VolumeMount{
 		{Name: binVolumeName, MountPath: binMountPath},
 		{Name: workspaceVolumeName, MountPath: workspaceMountPath},
+		{Name: tokenVolumeName, MountPath: tokenMountPath, ReadOnly: true},
 	}, main.VolumeMounts)
 }
 
 func TestBuildJob_VolumesPerStrategy(t *testing.T) {
 	copyOutJob, err := BuildJob(testProject("terraform"), testParams())
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{toolsVolumeName, workspaceVolumeName}, volumeNames(copyOutJob))
+	assert.ElementsMatch(t, []string{toolsVolumeName, workspaceVolumeName, tokenVolumeName}, volumeNames(copyOutJob))
 
 	runInImageJob, err := BuildJob(testProject("helmfile"), testParams())
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{binVolumeName, workspaceVolumeName}, volumeNames(runInImageJob))
+	assert.ElementsMatch(t, []string{binVolumeName, workspaceVolumeName, tokenVolumeName}, volumeNames(runInImageJob))
 
+	// Every volume turnip adds is scratch space, with one exception: the
+	// credential, which kubelet mints and rotates and so cannot be an
+	// emptyDir.
 	for _, job := range []*batchv1.Job{copyOutJob, runInImageJob} {
 		for _, v := range job.Spec.Template.Spec.Volumes {
+			if v.Name == tokenVolumeName {
+				assert.NotNil(t, v.Projected, "the credential is a projection, not scratch space")
+				continue
+			}
 			assert.NotNil(t, v.EmptyDir, "volume %q", v.Name)
 		}
 	}
@@ -387,4 +397,82 @@ func TestBuildJob_VersionNotInExampleListStillBuilds(t *testing.T) {
 	job, err := BuildJob(project, testParams())
 	require.NoError(t, err)
 	assert.Contains(t, initContainerNamed(t, "provision-terraform", job).Image, notInList)
+}
+
+// The Runner's credential is a ServiceAccountToken projection scoped to
+// turnip's own audience. The audience is the load-bearing part: a token
+// minted for the API server's audience would be replayable by whoever
+// received it *as* the Runner's ServiceAccount, which is exactly what
+// scoping prevents.
+func TestBuildJob_ProjectsAnAudienceScopedToken(t *testing.T) {
+	for tool := range toolImages {
+		t.Run(tool, func(t *testing.T) {
+			job, err := BuildJob(testProject(tool), testParams())
+			require.NoError(t, err)
+
+			var projection *corev1.ServiceAccountTokenProjection
+			for _, v := range job.Spec.Template.Spec.Volumes {
+				if v.Name == tokenVolumeName {
+					require.NotNil(t, v.Projected)
+					require.Len(t, v.Projected.Sources, 1)
+					projection = v.Projected.Sources[0].ServiceAccountToken
+				}
+			}
+			require.NotNil(t, projection, "no projected token volume")
+
+			assert.Equal(t, TokenAudience, projection.Audience,
+				"a token for the API server's own audience would be replayable as the Pod's ServiceAccount")
+			require.NotNil(t, projection.ExpirationSeconds)
+			assert.Equal(t, tokenExpirationSeconds, *projection.ExpirationSeconds)
+			assert.Equal(t, tokenFileName, projection.Path)
+		})
+	}
+}
+
+// The credential rides a field of the Pod spec turnip already writes, so
+// a Project choosing its own ServiceAccount (Slice 13) changes nothing
+// about how the Runner authenticates. This is the property to protect:
+// any rule that makes the projection depend on the account name has
+// reintroduced the coupling.
+func TestBuildJob_TokenProjectionIsIndependentOfServiceAccount(t *testing.T) {
+	withDefault := testParams()
+	withDefault.ServiceAccount = ""
+	chosen := testParams()
+	chosen.ServiceAccount = "project-chosen"
+
+	a, err := BuildJob(testProject("helmfile"), withDefault)
+	require.NoError(t, err)
+	b, err := BuildJob(testProject("helmfile"), chosen)
+	require.NoError(t, err)
+
+	assert.Equal(t, tokenVolumeOf(t, a), tokenVolumeOf(t, b),
+		"the identity that matters is the Pod's, not the account's")
+	assert.Equal(t, "project-chosen", b.Spec.Template.Spec.ServiceAccountName)
+}
+
+func tokenVolumeOf(t require.TestingT, job *batchv1.Job) corev1.Volume {
+	for _, v := range job.Spec.Template.Spec.Volumes {
+		if v.Name == tokenVolumeName {
+			return v
+		}
+	}
+	require.Fail(t, "no projected token volume")
+	return corev1.Volume{}
+}
+
+// Both containers that reach the Server need to prove who they are: the
+// clone reports its own failures over the same authenticated stream the
+// tool's container later uses, so the token path is base environment
+// rather than per-container.
+func TestBuildJob_TokenPathReachesBothContainers(t *testing.T) {
+	for tool := range toolImages {
+		t.Run(tool, func(t *testing.T) {
+			job, err := BuildJob(testProject(tool), testParams())
+			require.NoError(t, err)
+
+			want := tokenMountPath + "/" + tokenFileName
+			assert.Equal(t, want, envMap(initContainerNamed(t, "clone", job))["TURNIP_TOKEN_FILE"])
+			assert.Equal(t, want, envMap(mainContainer(t, job))["TURNIP_TOKEN_FILE"])
+		})
+	}
 }

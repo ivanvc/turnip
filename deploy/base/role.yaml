@@ -8,6 +8,9 @@ rules:
     resources: ["jobs"]
     verbs: ["create", "delete", "get", "list", "watch"]
   # internal/jobs/status.go: list a Job's Pods to diagnose start timeouts.
+  # internal/runnerauth: resolve the Pod a Runner's token was minted for,
+  # so a caller can be bound to one Operation rather than merely
+  # recognized as some Runner.
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]

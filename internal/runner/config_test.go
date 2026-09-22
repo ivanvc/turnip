@@ -19,6 +19,7 @@ func fullEnv() map[string]string {
 		"TURNIP_REPO_URL":     "https://github.com/acme/repo.git",
 		"TURNIP_COMMIT_SHA":   "abc123",
 		"TURNIP_BASE_REF":     "main",
+		"TURNIP_TOKEN_FILE":   "/turnip/run/secrets/token",
 		"TURNIP_GITHUB_TOKEN": "ghs_token",
 		"TURNIP_TOOLS_DIR":    "/tools",
 		"TURNIP_TOOL_CONFIG":  `{"environment":"staging"}`,
@@ -44,6 +45,7 @@ func TestConfigFromEnv_FullyPopulated(t *testing.T) {
 	assert.Equal(t, "https://github.com/acme/repo.git", cfg.RepoURL)
 	assert.Equal(t, "abc123", cfg.CommitSHA)
 	assert.Equal(t, "main", cfg.BaseRef)
+	assert.Equal(t, "/turnip/run/secrets/token", cfg.TokenFile)
 	assert.Equal(t, "ghs_token", cfg.GitHubToken)
 	assert.Equal(t, "/tools", cfg.ToolsDir)
 	assert.Equal(t, map[string]string{"environment": "staging"}, cfg.ToolConfig)
@@ -91,6 +93,21 @@ func TestConfigFromEnv_ToolContainerEnvironmentIsAccepted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, cfg.GitHubToken)
 	assert.Empty(t, cfg.ToolsDir, "run-in-image leaves the tool on the vendor image's own PATH")
+}
+
+// The credential is required on every container that reaches the Server
+// — unlike the GitHub token above, which only the clone carries. A Runner
+// started without it would present nothing and be refused; saying which
+// variable is absent beats discovering it as a rejected stream.
+func TestConfigFromEnv_CredentialVariableIsRequired(t *testing.T) {
+	env := fullEnv()
+	delete(env, "TURNIP_TOKEN_FILE")
+
+	_, err := ConfigFromEnv(lookup(env))
+	require.Error(t, err)
+	var missing *MissingEnvVarsError
+	require.ErrorAs(t, err, &missing)
+	assert.Equal(t, []string{"TURNIP_TOKEN_FILE"}, missing.Names)
 }
 
 func TestConfigFromEnv_InvalidToolConfigJSON(t *testing.T) {

@@ -32,8 +32,8 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 21 | What a Bare Command Targets | `project-selection` | Complete | Slices 1, 6 |
 | 22 | Refuse Tool Arguments That Name an Executable | `tool-argument-policy` | Not Started | Slices 4, 6 |
 | 23 | Authorize on Permission Level, Not Call Success | `collaborator-authorization` | Complete | Slice 4 |
-| 24 | How the Runner Receives Its GitHub Token | `runner-token-delivery` | Not Started | Slices 5, 6 |
-| 25 | Authenticating the Runner to the Server | `runner-authentication` | Not Started | Slices 5, 6 |
+| 24 | How the Runner Receives Its GitHub Token | `runner-token-delivery` | Not Started (unblocked by Slice 25) | Slices 5, 6, 25 |
+| 25 | Authenticating the Runner to the Server | `runner-authentication` | Complete | Slices 5, 6 |
 | 26 | Real-Time Operation Output | `operation-output-stream` | Not Started | Slices 5, 6 |
 | 27 | Authenticated and Encrypted Redis | `redis-tls-auth` | Not Started | Slices 3, 10 |
 | 28 | Seeing and Dropping Locks Without Hunting for the PR | `lock-admin-ui` | Not Started | Slices 3, 4 |
@@ -43,10 +43,14 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 32 | Refuse a Closed Pull Request, Plan a Reopened One | `closed-pull-requests` | Complete | Slices 4, 6 |
 | 33 | Show What Ran and With What Scope | `execution-provenance` | Complete | Slices 2, 17, 20 |
 | 34 | What a Pull Request Must Satisfy Before an Apply | `apply-requirements` | Not Started | Slices 4, 6, 20 |
+| 35 | What the Checks List Says | `check-run-titles` | Not Started | Slices 6, 33, 37 |
+| 36 | A Blocked Operation Blocks the Merge, Visibly | `check-run-refusals` | Not Started | Slices 6, 32, 35, 37 |
+| 37 | One Check Branch Protection Can Require | `aggregate-check-run` | Not Started | Slices 6, 17 |
+| 38 | Encrypting the Runner-to-Server Channel | `runner-server-tls` | Not Started | Slice 25 |
 
 ## Slice Details
 
-### Slice 0: Project Scaffolding
+### Slice 0: Project Scaffolding (`project-scaffolding`)
 
 **Goal**: Establish the Go project skeleton so all subsequent slices have a foundation to build on.
 
@@ -63,7 +67,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 
 ---
 
-### Slice 1: Config Parsing & Project Matching
+### Slice 1: Config Parsing & Project Matching (`config-parsing`)
 
 **Goal**: Parse `turnip.yaml` and determine which projects should trigger based on file changes.
 
@@ -77,7 +81,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 
 ---
 
-### Slice 2: Plugin System & Helmfile Plugin
+### Slice 2: Plugin System & Helmfile Plugin (`plugin-helmfile`)
 
 **Goal**: Define the unified Plugin interface and implement Helmfile as the first plugin.
 
@@ -93,7 +97,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 
 ---
 
-### Slice 3: Redis Lock Manager
+### Slice 3: Redis Lock Manager (`redis-lock-manager`)
 
 **Goal**: Implement Redis-based locking to prevent concurrent operations and store plan data.
 
@@ -109,7 +113,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 
 ---
 
-### Slice 4: GitHub Client & Webhook Handler
+### Slice 4: GitHub Client & Webhook Handler (`github-integration`)
 
 **Goal**: Handle GitHub App auth, receive webhooks, parse comments, manage check runs and PR comments.
 
@@ -126,7 +130,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 
 ---
 
-### Slice 5: gRPC & Runner
+### Slice 5: gRPC & Runner (`grpc-runner`)
 
 **Goal**: Establish communication between Server and Runner, implement runner lifecycle.
 
@@ -144,7 +148,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 
 ---
 
-### Slice 6: Server Orchestration
+### Slice 6: Server Orchestration (`server-orchestration`)
 
 **Goal**: Wire all components together into the complete webhook-to-operation flow.
 
@@ -159,7 +163,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 
 ---
 
-### Slice 7: Terraform & Pulumi Plugins
+### Slice 7: Terraform & Pulumi Plugins (`terraform-pulumi-plugins`)
 
 **Goal**: Add remaining IaC tool support.
 
@@ -193,7 +197,7 @@ own spec directory (`requirements.md`/`design.md`); Slice 7 (Terraform &
 Pulumi Plugins) is independent of all four and can be picked up in any
 order relative to them.
 
-### Slice 8: Structured Logging
+### Slice 8: Structured Logging (`structured-logging`)
 
 **Goal**: Replace unstructured `log.Printf`/`fmt.Fprintf` calls with
 `log/slog`-based structured, leveled logging.
@@ -206,7 +210,7 @@ order relative to them.
 
 ---
 
-### Slice 9: Metrics & Health Endpoints
+### Slice 9: Metrics & Health Endpoints (`metrics`)
 
 **Goal**: Give the Server an HTTP observability surface.
 
@@ -221,7 +225,7 @@ order relative to them.
 
 ---
 
-### Slice 10: Deployment — Kustomize & Release Images
+### Slice 10: Deployment — Kustomize & Release Images (`deployment-kustomize`)
 
 **Goal**: Make turnip actually deployable, with real versioned images.
 
@@ -238,7 +242,7 @@ order relative to them.
 
 ---
 
-### Slice 11: HA Validation & Documentation
+### Slice 11: HA Validation & Documentation (`ha-validation`)
 
 **Goal**: Prove the stateless/multi-instance HA design holds under real
 concurrency and a real deployment; document the finished platform.
@@ -254,7 +258,7 @@ concurrency and a real deployment; document the finished platform.
 
 ---
 
-### Slice 12: Runner Workspace & Project Environment
+### Slice 12: Runner Workspace & Project Environment (`runner-workspace-environment`)
 
 **Goal**: Give the Runner a fixed, documented filesystem layout, and let a
 Project declare environment variables for its Operation — so that
@@ -288,7 +292,7 @@ changing its `config` map.
 
 ---
 
-### Slice 13: Project Schema v1alpha2
+### Slice 13: Project Schema v1alpha2 (`project-schema-v1alpha2`)
 
 **Goal**: Reshape a Project around the three questions its settings
 actually answer — what to run, how to call it, where it runs — and make an
@@ -328,7 +332,7 @@ replaced — and Requirement 14.2a's cross-reference to it.
 
 ---
 
-### Slice 14: Per-Tool Provisioning
+### Slice 14: Per-Tool Provisioning (`tool-provisioning`)
 
 **Goal**: Provision each IaC_Tool the way that tool actually works, rather
 than assuming every tool is a single static binary.
@@ -376,7 +380,7 @@ can obtain its tool.
 
 ---
 
-### Slice 15: Refuse Fork Pull Requests
+### Slice 15: Refuse Fork Pull Requests (`fork-pull-requests`)
 
 **Goal**: Never run an Operation on code from a repository other than the
 one turnip is installed on.
@@ -455,7 +459,7 @@ inherits the operator's default ServiceAccount rather than selecting one.
 
 ---
 
-### Slice 16: Cloning Submodules
+### Slice 16: Cloning Submodules (`clone-submodules`)
 
 **Goal**: Check out a repository's submodules, configurably, so a tool
 reaching through a submodule path finds files rather than an empty
@@ -506,7 +510,7 @@ GitLab or an internal server, so those are reported rather than attempted
 
 ---
 
-### Slice 17: Pull Request Comment Output
+### Slice 17: Pull Request Comment Output (`comment-output`)
 
 **Goal**: Make the consolidated comment report what an Operation did, not
 merely that it happened.
@@ -547,7 +551,7 @@ criteria were first written, not a decision anyone made.
 
 ---
 
-### Slice 18: The Lock's Lifecycle as a State Machine
+### Slice 18: The Lock's Lifecycle as a State Machine (`lock-release-rules`)
 
 **Goal**: Make the Lock's lifecycle explicit, so a Lock is held exactly
 while it guards something, and a stored plan is appliable exactly while it
@@ -671,7 +675,7 @@ later slice can refuse an out-of-order store.
 
 ---
 
-### Slice 19: Draft Pull Requests
+### Slice 19: Draft Pull Requests (`draft-pull-requests`)
 
 **Goal**: Stop turnip acting on its own for work its author has marked
 unfinished.
@@ -724,7 +728,7 @@ reason.
 
 ---
 
-### Slice 20: Apply Exactly What Was Planned
+### Slice 20: Apply Exactly What Was Planned (`plan-scoped-apply`)
 
 **Goal**: Make a Helmfile apply do exactly what its diff showed.
 
@@ -808,7 +812,7 @@ actually claims.
 
 ---
 
-### Slice 21: What a Bare Command Targets
+### Slice 21: What a Bare Command Targets (`project-selection`)
 
 **Goal**: Make `/turnip plan` mean what the pull request actually touched.
 
@@ -887,7 +891,7 @@ Slice 20's argument handling around it.
 
 ---
 
-### Slice 22: Refuse Tool Arguments That Name an Executable
+### Slice 22: Refuse Tool Arguments That Name an Executable (`tool-argument-policy`)
 
 **Goal**: Stop a pull request comment's trailing arguments from choosing
 which binary the Runner executes.
@@ -1042,7 +1046,7 @@ commenter already has repository access.
 
 ---
 
-### Slice 23: Authorize on Permission Level, Not Call Success
+### Slice 23: Authorize on Permission Level, Not Call Success (`collaborator-authorization`)
 
 **Goal**: Make the collaborator gate test what GitHub actually answered.
 
@@ -1112,7 +1116,7 @@ reads this slice.
 
 ---
 
-### Slice 24: How the Runner Receives Its GitHub Token
+### Slice 24: How the Runner Receives Its GitHub Token (`runner-token-delivery`)
 
 **Goal**: Stop the GitHub App installation token being readable by anything
 that can read a Pod.
@@ -1176,9 +1180,27 @@ env value on the pod (`TURNIP_OPERATION_ID`). That trades "pod-read yields
 the token" for "pod-read yields the id, which yields the token" — an
 indirection, not a fix. Slice 25 is what makes B coherent.
 
-**Recommended order**: C first (smallest, and the only one a pull request
-can reach), then A as the delivery change, with B as the end state once
-Slice 25 lands.
+**Decided 2026-09-21: B, and A is never built.** The earlier reading here
+was "C first, then A, with B as the end state once Slice 25 lands" — which
+would have built the per-Job Secret, its `ownerReference` lifecycle and
+its RBAC, and then deleted all of it when B arrived.
+
+Whether A is needed at all is decided by Slice 25's mechanism, not by this
+slice. Slice 25 uses an audience-scoped **projected ServiceAccount
+token**: kubelet mounts it, nothing lands in the Pod spec, and there is no
+credential to deliver. Every other authentication mechanism — mTLS
+certificates, a per-Operation bearer token — creates the delivery problem
+A exists to solve, and so would have justified A. The projection does not.
+
+There is one installation and no urgency, so the right move is the end
+state rather than a patch with a known expiry date. **Slice 25 lands
+first**, then this slice fetches the credential over the channel 25
+authenticates.
+
+**Still done here, and unblocked by anything**: C, because it is the only
+surface a pull request can reach; deleting `github_token` from
+`OperationStart`; and narrowing what the token can do in the first place —
+see below.
 
 **Free either way, and larger than the credential.** `OperationStart`
 declares twelve fields; the Server reads exactly one of them —
@@ -1206,6 +1228,39 @@ installation token expires in about an hour, but the exposure window *is*
 the Job's lifetime — precisely the interval in which the token is live. Expiry
 bounds the damage afterwards; it does not reduce the exposure.
 
+**Narrow the token, which no entry previously said.**
+`GenerateInstallationToken` returns `c.itr.Token(ctx)` — the **full**
+installation token: every repository the App is installed on, every
+permission it holds, for about an hour. `ghinstallation.Transport` already
+carries an `InstallationTokenOptions` field taking `Repositories` and
+`Permissions`; turnip simply never sets it.
+
+Minting `{Repositories: [...], Permissions: {contents: read}}` reduces
+what a leak is worth on **all three** surfaces at once and depends on
+nothing — not on Slice 25, not on the delivery mechanism. It is the only
+mitigation here that also helps against the surface a pull request can
+reach, short of never persisting the token.
+
+**But it is not "the one repo", and an earlier draft of this entry said
+it was.** `internal/runner/submodules.go` authenticates submodule fetches
+with the *same* token, via `url.<authenticated>.insteadOf` rewrites, and
+`TURNIP_CLONE_SUBMODULES` defaults to `top-level`. A single-repository
+token would therefore break every repository whose submodules live in
+sibling private repos — and Requirement 1.3's "fail rather than fall back"
+would make that a hard failure, on exactly the repositories using the
+feature. The scope has to follow what the clone actually fetches.
+
+The top level is enumerable before minting: the Server mints the token
+before it creates the Job, and it can already read a file from the
+repository at the Operation's commit — that is how `turnip.yaml` arrives —
+so `.gitmodules` at the same ref costs one more call. Under `recursive`
+the nested set is only discoverable by cloning, so completeness has a
+boundary, and Requirement 1.4 states the invariant instead: narrowing must
+never be the reason a clone fails.
+
+Verified against the vendored library and against the submodule code
+rather than assumed.
+
 **Provenance**: the 2026-09-19 security review rejected a related finding
 about the token crossing plaintext gRPC, and in doing so observed that the
 Pod spec is the cheaper read — "retrievable without touching the network
@@ -1214,7 +1269,7 @@ acts on.
 
 ---
 
-### Slice 25: Authenticating the Runner to the Server
+### Slice 25: Authenticating the Runner to the Server (`runner-authentication`)
 
 **Goal**: Let the Server know *which* Runner it is talking to, so an
 Operation's results can only come from the Pod that actually ran it.
@@ -1297,14 +1352,63 @@ new infrastructure dependency turnip does not otherwise require.
 
 **Amendments**: Slice 5 `grpc-runner` (the service gains an interceptor
 and a metadata contract, and `NewServer`'s signature changes), Slice 6 for
-the Server-side wiring, and `deploy/base/role.yaml` for one new verb —
-`create` on `authentication.k8s.io/tokenreviews`.
+the Server-side wiring, and the deployment for one new verb — `create` on
+`authentication.k8s.io/tokenreviews`. No `secrets` grant: that belonged to
+the certificate work now in Slice 38.
 
-**Unblocks Slice 24's option B**, which is circular without it.
+**That verb cannot go in `deploy/base/role.yaml`**, as an earlier draft of
+this entry said. `TokenReview` is a cluster-scoped resource, so RBAC for
+it requires a **ClusterRole and ClusterRoleBinding** — conventionally by
+binding the built-in `system:auth-delegator`. turnip is namespaced-Role
+only today, so this is a genuine privilege increase for an operator to
+accept, and the first cluster-scoped grant turnip asks for. Worth stating
+plainly rather than discovering during deployment.
+
+The alternative is validating the token's signature locally against the
+API server's JWKS, which avoids the cluster-scoped grant at the cost of
+more code and more ways to get signature validation subtly wrong. Weigh it
+in the design; do not inherit this note as the decision.
+
+**Unblocks Slice 24's option B**, which is circular without it: the
+Server can now tell which Pod is calling. Note that B should also wait
+for **Slice 38** — reporting a result to an unverified peer risks a
+forged result, while *fetching a GitHub token* from one hands a
+repository credential to whoever answered.
+
+**Settled during implementation** (2026-09-22). Three things this entry
+left open, recorded here because a reader arriving at the entry should
+not have to reconstruct them from the slice's design:
+
+- **The open question is answered: `TokenReview` does return the Pod's
+  uid**, in `UserInfo.Extra` under
+  `authentication.kubernetes.io/pod-uid`, so the binding is exact and
+  the weaker Pod-name fallback was not built. The cost is a version
+  floor: the extra exists from v1.29 but is feature-gated until v1.32,
+  and a gate turnip cannot detect from a response is not a version it
+  can claim to support. A cluster that answers without the extra gets a
+  refusal naming the version, not a relaxed check.
+- **A narrow ClusterRole ships instead of binding
+  `system:auth-delegator`.** The conventional grant also carries
+  `subjectaccessreviews`, which turnip never creates: it asks the
+  cluster *who is this*, never *may they do X*. The privilege increase
+  this entry asks an operator to accept is therefore `create` on
+  `tokenreviews` and nothing else. Local JWKS validation was not
+  revisited — the cluster-scoped grant is one narrow verb, and signature
+  validation has more ways to be subtly wrong.
+- **"Encryption is a separate axis" survived, after briefly not.** The
+  slice's requirements made TLS its Requirement 4, and it was designed
+  and implemented — generation into a Secret on first boot, replicas
+  converging through the API server's own compare-and-swap with no
+  leader election. It was then split back out into **Slice 38
+  (`runner-server-tls`)** on 2026-09-22, because the argument for
+  merging them proved too much: it equates an attacker with network
+  position with anything holding pod-read, and everything in this slice
+  demonstrably holds over an unencrypted transport. What shipped here is
+  authentication alone.
 
 ---
 
-### Slice 26: Real-Time Operation Output
+### Slice 26: Real-Time Operation Output (`operation-output-stream`)
 
 **Goal**: Let someone watching a long plan or apply see what it is doing
 while it runs, instead of waiting for the comment at the end.
@@ -1420,7 +1524,7 @@ either forecloses this slice. The note in `result.go` says so at the site.
 
 ---
 
-### Slice 27: Authenticated and Encrypted Redis
+### Slice 27: Authenticated and Encrypted Redis (`redis-tls-auth`)
 
 **Goal**: Let turnip connect to a Redis/Valkey that requires AUTH, TLS, or
 both — so that adopting turnip stops being a reason to weaken the
@@ -1543,7 +1647,7 @@ rediscovered per slice.
 
 ---
 
-### Slice 28: Seeing and Dropping Locks Without Hunting for the PR
+### Slice 28: Seeing and Dropping Locks Without Hunting for the PR (`lock-admin-ui`)
 
 **Goal**: List every held Lock on one page, and release one from there —
 instead of opening pull requests one at a time to work out which of them
@@ -1624,7 +1728,7 @@ route with it.
 
 ---
 
-### Slice 29: Move the Webhook Off the Root Path
+### Slice 29: Move the Webhook Off the Root Path (`webhook-path`)
 
 **Goal**: Give the webhook an explicit path of its own, so that `/` stops
 being a catch-all and so the webhook can be separated from everything else
@@ -1711,7 +1815,7 @@ alongside its actual feature.
 
 ---
 
-### Slice 30: Scheduling — Concurrency and Execution Order
+### Slice 30: Scheduling — Concurrency and Execution Order (`operation-scheduling`)
 
 **Goal**: Let a repository control how its Operations are scheduled — how
 many run at once, and which must finish before others start. turnip offers
@@ -1829,7 +1933,7 @@ amendment recorded here.
 
 ---
 
-### Slice 31: Runner Pod Placement — Node Selectors and Tolerations
+### Slice 31: Runner Pod Placement — Node Selectors and Tolerations (`runner-pod-placement`)
 
 **Goal**: Let an operator place Runner Pods on a node pool chosen for the
 job — larger nodes for a heavy state refresh, a pool whose egress
@@ -1899,7 +2003,7 @@ characters on the simpler field.
 
 ---
 
-### Slice 32: Refuse a Closed Pull Request, Plan a Reopened One
+### Slice 32: Refuse a Closed Pull Request, Plan a Reopened One (`closed-pull-requests`)
 
 **A bug, not a feature.** Commenting `/helmfile diff` on a closed pull
 request runs it — plans, locks, creates a Job, executes. Nothing stops
@@ -1982,7 +2086,7 @@ Lock that only `/turnip unlock` can clear.
 
 ---
 
-### Slice 33: Show What Ran and With What Scope
+### Slice 33: Show What Ran and With What Scope (`execution-provenance`)
 
 **Goal**: Make the pull request say what turnip executed, and with what
 scope, so that neither has to be reconstructed from configuration at that
@@ -2039,7 +2143,7 @@ today because `resolveVersion` always returns a concrete version. The
 entry on a Project directory escaping the workspace shares this slice's
 path-stripping helper but is a validation change, not a display one.
 
-### Slice 34: What a Pull Request Must Satisfy Before an Apply
+### Slice 34: What a Pull Request Must Satisfy Before an Apply (`apply-requirements`)
 
 **Goal**: Let an operator require that a pull request has been approved,
 and can actually be merged, before turnip will change anything.
@@ -2113,6 +2217,262 @@ needs a bounded retry or a "not yet known" refusal.
 the Lock does not carry; it is also the cheap, deadlock-free approximation
 of the plan-freshness check the Backlog records as accepted. Per-repository
 requirements need the Backlog's per-repository server configuration.
+
+---
+
+### Slice 37: One Check Branch Protection Can Require (`aggregate-check-run`)
+
+**Goal**: Give an operator a check run name that always reports, so that
+requiring turnip is possible at all.
+
+**What's wrong today**: turnip creates one check run per (Project,
+Operation), named `turnip/<project>/<operation>`. That is right for detail
+and unusable for branch protection, because the set of Projects differs
+per pull request. Mark `turnip/web/diff` required and any pull request
+that does not touch `web` never reports it — and blocks forever with
+nothing wrong. There is no name today that an operator can safely require.
+
+**Prior art, and it is unambiguous.** Atlantis publishes both, and the
+naming carries the relationship:
+
+| Name | Title |
+|---|---|
+| `atlantis/plan` | `1/1 projects planned successfully.` |
+| `atlantis/plan: environments/aws/cicd/default` | `Plan: 0 to add, 0 to change, 0 to destroy.` |
+| `atlantis/apply` | `1/1 projects applied successfully.` |
+| `atlantis/apply: environments/aws/cicd/default` | `Apply succeeded.` |
+
+The aggregate is `<tool>/<command>`; the per-Project run extends it with
+`: <project>`. The short name is what branch protection requires; the
+detail rows sort directly beneath it.
+
+**Delivers**: one additional check run per Operation kind, summarising
+every Project the trigger resolved — reported whatever that set is,
+**including empty**, which is the case that makes requiring it safe.
+
+**Open question, to settle before implementing: the naming scheme.**
+turnip's per-Project name is `turnip/<project>/<operation>` — Project
+first. Atlantis's is command-first. The difference is not cosmetic on a
+repository with many similar environments: command-first groups every plan
+together so "did all the plans pass" reads as one block, where
+Project-first interleaves each Project's plan and apply.
+
+Adopting `turnip/<operation>` and `turnip/<operation>: <project>` is a
+**breaking change** for anyone who has marked the current name required.
+There is one installation today, so it is nearly free now and expensive
+later. Worth deciding deliberately rather than inheriting.
+
+**What the aggregate says is its own question**, and the reason this is
+not folded into Slice 36: what it reports when Projects disagree (one
+failed, four succeeded), whether an empty match is success or a distinct
+state, and whether the per-Project runs remain at all once a reader has a
+summary. Atlantis's "1/1 projects planned successfully" answers the first
+by counting rather than by verdict, which composes with the verdict line
+turnip already builds for the comment.
+
+**First of the three check-run slices**, and nothing blocks it. Slices 35
+and 36 both follow: 35 so its title sweep covers the check this one adds,
+36 because blocking a merge visibly is only meaningful once an operator
+has a check they can require.
+
+**Why Slice 36 depends on it.** That slice makes a blocked Operation block
+the merge visibly, which only means something if there is a check an
+operator can actually require. Without this one, a blocked Project's
+`queued` check blocks only if that Project's own name was required — which
+is the fragile arrangement described above.
+
+---
+
+### Slice 35: What the Checks List Says (`check-run-titles`)
+
+**Goal**: Make a check run's one line worth reading.
+
+**What's wrong today**: turnip already computes the informative string and
+then puts it where it takes a click to see. A completed plan sets
+`Title: "success"` and `Summary: "add: 1, change: 4, destroy: 2"`, so the
+checks list reads `turnip/web/diff — success`, which says nothing the ✅
+does not. The good string is one field away.
+
+The timeout path wastes it most: `timeoutDiagnostic` already builds
+exactly the condensed reason this wants — "Job X: container stuck
+(ImagePullBackOff)" — and the title says `timed out`.
+
+**Delivers**: a shared formatter for the title, reusing the one-line shape
+Slice 33 settled for the comment's summary line, applied at the four sites
+that set one (`execute.go:198`, `execute.go:284`, `result.go:93`,
+`sweep.go:104`).
+
+| State | Today | After |
+|---|---|---|
+| plan with changes | `success` | `+1 ~4 -2` |
+| plan with none | `success` | `no changes` |
+| scoped plan | `success` | `+0 ~1 -0 · -l name=api` |
+| timed out | `timed out` | the diagnostic already built |
+| failed | `failure` | `exit N`, or `ErrorMessage` when set |
+
+**The name is an identity, not a label.** None of this may move into the
+check run's *name*: branch protection's required-status-checks match on
+it, so `turnip/<project>/<operation>` has to stay stable. A name carrying
+change counts would mint a new required check on every run and never
+satisfy protection. Titles are free to change precisely because nothing
+matches on them.
+
+**Deliberately not attempting a failure *reason*.** The comparison that
+prompted this — Prow reporting "Pod scheduling timeout" — flatters turnip:
+Prow knows its own failure modes, where turnip's failures are mostly "the
+tool exited non-zero" with the reason somewhere in the output. Guessing
+and being wrong is worse than `exit 1`, because a confident wrong summary
+in a list is what people act on without clicking. Per-Plugin extraction is
+the only thing that would reach Prow's quality and is a `ActsWithoutChanges`-shaped
+concept for whoever wants it.
+
+**Follows Slice 37, deliberately.** This slice is a sweep: every site
+that sets a title moves onto one formatter. Run before Slice 37 and it
+sweeps four sites, after which Slice 37 adds a fifth — the aggregate
+check — that its author has to remember to format the same way. Run after,
+and the sweep covers everything that exists. The dependency is about the
+gap left behind rather than about code that will not compile.
+
+**Confirm before implementing**: the `output.title` length cap, for
+truncation. Not asserted here because it was not checked.
+
+---
+
+### Slice 36: A Blocked Operation Blocks the Merge, Visibly (`check-run-refusals`)
+
+**Goal**: Make a refused Operation visible in the checks list **without**
+letting the pull request merge unplanned.
+
+**The governing rule**: turnip must never report a conclusion that allows
+a pull request to merge when its infrastructure has not been planned.
+
+That rules out `neutral` and `skipped`, which GitHub counts as satisfying
+a required check — *"Required status checks must have a `successful`,
+`skipped`, or `neutral` status before collaborators can make changes to a
+protected branch."* Reporting either for "we could not plan this" means
+the change merges unplanned and unapplied, which defeats gating on turnip
+at all.
+
+**An earlier draft of this entry proposed exactly that, and was wrong.**
+It treated "blocked indefinitely" as the defect. Blocking is correct; the
+defect is only that the reason is invisible. Recorded rather than quietly
+replaced, because "make the red thing go away" is the instinct that
+produced it and will produce it again.
+
+**What's wrong today**: every refusal inside `executeOne` returns before
+`CreateCheckRun` (`execute.go:194`), so a plan blocked by another pull
+request's Lock produces a comment section — ❌ with "locked by PR #5" and
+a link — and nothing in the checks list. The pull request is correctly
+blocked and gives no indication why, several scrolls below the comment
+that explains it.
+
+**Delivers**: a check run in a **non-terminal status** for a blocked
+Operation. `status` and `conclusion` are separate fields; a check run
+reported as `queued` with no conclusion blocks a required check, appears
+in the list carrying its title, and claims nothing false. When the Lock
+frees and a plan runs, a conclusion supersedes it.
+
+`failure` was considered and rejected for this case: it blocks and is
+visible, and it says the change is broken — sending the author to debug
+their own diff when the obstacle is somebody else's pull request.
+
+**Refusals are not one kind of thing**, and the split is the substance:
+
+| Refusal | Means | Reports |
+|---|---|---|
+| locked by another pull request | **not yet** — succeeds once that merges | `queued`, reason and remedy in the title |
+| unsupported tool, refused override | **not without changing this pull request** | `failure` — the configuration really is wrong |
+| no plan recorded, on a mutating Operation | the author asked for the wrong thing | nothing; an apply is not the gate |
+
+A `queued` check sits until something re-triggers the plan. turnip does
+not re-plan when another pull request's Lock frees, so the title has to
+say what the reader must do — "locked by PR #5; re-plan once it merges" —
+rather than leaving them watching a spinner that will never turn.
+
+**Never created for a pull request that is not open.** Check runs attach
+to a *commit*, not a pull request, so on a merge-commit strategy the head
+SHA becomes an ancestor of the base branch and a check run created there
+writes into the base branch's history for a run that never happened.
+
+The rule is about **creation**, not update: one created while the pull
+request was open must still be updated with its outcome, or an Operation
+whose pull request closes mid-run leaves a check stuck in progress
+forever.
+
+This holds structurally rather than by a guard — check runs are
+per-Target, and the whole-trigger refusals (a fork, Slice 15; a closed
+pull request, Slice 32; a non-collaborator, Slice 23) return before any
+Target is resolved. The slice's job is to keep that true while adding
+check runs to per-Target refusals, not to add a state test.
+
+**Depends on Slice 35** for the title formatter. Not because a refusal
+title cannot be written without it — it plainly can — but because a
+refusal reason rendered by different code from every other title is how
+the two drift, and a check whose title read `queued` would recreate the
+problem this slice is fixing.
+
+**Depends on Slice 37 for its point to land.** Per-Project check names
+are fragile as *required* checks: if `turnip/web/diff` is required, a pull
+request that does not touch `web` never reports it and blocks forever,
+with no Lock involved. Blocking the merge visibly only means something
+once there is a check an operator can actually require, which is Slice
+37.
+
+---
+
+### Slice 38: Encrypting the Runner-to-Server Channel (`runner-server-tls`)
+
+**Goal**: Encrypt the gRPC channel Runners report over, and let a Runner
+verify it reached the real Server.
+
+**Split out of Slice 25 on 2026-09-22.** That slice's requirements made
+encryption its Requirement 4, on the argument that a bearer token on a
+plaintext channel makes the authentication decorative. The argument
+proves too much: it equates "an attacker with network position could
+capture the credential" with "anything holding pod-read can read it", and
+those differ by a wide margin. Slice 25 holds entirely over an
+unencrypted transport — its interceptor suite runs on
+`insecure.NewCredentials()` — so tying it to an unresolved certificate
+question was holding up the part that was settled.
+
+This restores what this entry said before that: **encryption is a
+separate axis.**
+
+**What is exposed until this lands**: plan and diff output and log lines
+are readable by anything able to capture pod-to-pod traffic, which needs
+node access or `CAP_NET_RAW` rather than a namespaced RBAC grant. The
+Runner_Token is capturable on the same terms — audience-scoped to turnip,
+expiring in minutes, and good only for writing to one Operation whose
+output the captor can already read. Stated in `docs/deployment.md` rather
+than left to inference.
+
+**This is a real prerequisite for Slice 24's option B**, more than Slice
+25 alone is. Reporting results to an unverified peer risks a forged
+result; *fetching a GitHub token* from an unverified peer hands a
+repository credential to whoever answered. Slice 24 should wait for this,
+not merely for authentication.
+
+**The open question, unsettled deliberately: where does the certificate
+come from?** Four options — turnip generates once, turnip generates and
+rotates the leaf, cert-manager, or the operator supplies one by hand —
+with the constraint that **cert-manager is not installed on the cluster
+turnip is piloted against**. `runner-server-tls/requirements.md` carries
+the comparison and a survey of how cert-manager's own webhook, OLM,
+ingress-nginx, Argo CD and etcd-operator each solved it, so it is not
+re-derived.
+
+**Two findings worth not losing.** Nobody surveyed hand-writes the PKI —
+etcd-operator calls `transport.SelfCert`, cert-manager publishes
+`webhook-lib/authority` — and nobody picked a ten-year expiry; the
+converged numbers are a 365-day CA with short leaves, or OLM's two years
+with regenerate-and-redeploy.
+
+**And a defect the first implementation had, independent of provenance**:
+it read the certificate once at boot into a static
+`tls.Config.Certificates` and stamped a fixed CA into every Job at
+`Orchestrator` construction. Invisible at a ten-year expiry; a recurring
+total outage at any renewal interval, which a restart appears to fix.
+Requirement 2 of the slice exists to prevent it.
 
 ---
 

@@ -25,6 +25,7 @@ import (
 	"github.com/ivanvc/turnip/internal/metrics"
 	"github.com/ivanvc/turnip/internal/orchestrator"
 	"github.com/ivanvc/turnip/internal/rpc"
+	"github.com/ivanvc/turnip/internal/runnerauth"
 )
 
 func main() {
@@ -89,7 +90,9 @@ func run(cfg orchestrator.Config) error {
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", cfg.GRPCAddr, err)
 	}
-	grpcServer := rpc.NewServer(orch)
+	grpcServer := rpc.NewServer(orch,
+		rpc.WithAuthenticator(runnerauth.New(clientset, cfg.KubernetesNamespace)),
+	)
 
 	return runConcurrently(ctx,
 		func(ctx context.Context) error {

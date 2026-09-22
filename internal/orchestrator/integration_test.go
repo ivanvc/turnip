@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/stretchr/testify/assert"
@@ -40,7 +41,13 @@ func (g *grpcDrivingJobCreator) Create(ctx context.Context, job *batchv1.Job) (*
 	job.Name = "turnip-runner-" + operationID
 
 	go func() {
-		stream, err := g.client.ExecuteOperation(context.Background())
+		// The Operation id now reaches the Server as stream metadata, not
+		// as the Start message's field — see rpc's interceptor.
+		streamCtx := metadata.AppendToOutgoingContext(context.Background(),
+			rpc.AuthorizationKey, rpc.BearerPrefix+"test-token",
+			rpc.OperationIDKey, operationID,
+		)
+		stream, err := g.client.ExecuteOperation(streamCtx)
 		if !assert.NoError(g.t, err) {
 			return
 		}
@@ -64,10 +71,17 @@ func (g *grpcDrivingJobCreator) Status(ctx context.Context, jobName string) (*jo
 	return &jobs.JobStatus{JobFound: false}, nil
 }
 
+type acceptAllAuth struct{}
+
+func (acceptAllAuth) Authenticate(context.Context, string, string) error { return nil }
+
 func newBufconnOperationClient(t *testing.T, handler rpc.OperationHandler) pb.OperationServiceClient {
 	t.Helper()
 	listener := bufconn.Listen(1024 * 1024)
-	server := rpc.NewServer(handler)
+	// These tests drive real streams to exercise dispatch, so they need an
+	// authenticator; who may open a stream is rpc's own concern and is
+	// tested there.
+	server := rpc.NewServer(handler, rpc.WithAuthenticator(acceptAllAuth{}))
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
 

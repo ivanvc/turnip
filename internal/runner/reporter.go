@@ -5,14 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
 	pb "github.com/ivanvc/turnip/internal/grpc/turnip/v1"
 	"github.com/ivanvc/turnip/internal/plugin"
+	"github.com/ivanvc/turnip/internal/rpc"
 )
 
 const (
@@ -59,6 +63,13 @@ type reporter struct {
 	sleep func(time.Duration)
 	rnd   func() float64
 
+	// readToken is re-invoked on every openStream rather than its result
+	// being cached, because kubelet rotates the projected token in place:
+	// a reconnect minutes into a long Operation must present whatever is
+	// in the file now, not whatever was there when the process started.
+	// A function rather than a path so a test can count the reads.
+	readToken func() (string, error)
+
 	buf *logRingBuffer
 
 	mu       sync.Mutex
@@ -69,6 +80,14 @@ type reporter struct {
 // NewReporter dials addr and returns a reporter backed by a real gRPC
 // connection, plus that connection's Closer for the caller to close on
 // exit.
+//
+// The connection is not encrypted. Encryption is a separate axis from
+// authentication and is tracked as its own slice; until it lands, the
+// Runner presents its credential over a plaintext pod-to-pod channel.
+// The credential is audience-scoped to turnip, expires in minutes, and
+// authorizes writing to exactly one Operation — so capturing it requires
+// network position and yields the power to forge results for an
+// operation whose output the captor can already read.
 func NewReporter(addr string, cfg Config) (*reporter, func() error, error) {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -85,6 +104,13 @@ func newReporter(client pb.OperationServiceClient, cfg Config, now func() time.T
 		sleep:  sleep,
 		rnd:    rnd,
 		buf:    newLogRingBuffer(logBufferMaxBytes),
+		readToken: func() (string, error) {
+			raw, err := os.ReadFile(cfg.TokenFile)
+			if err != nil {
+				return "", fmt.Errorf("runner: reading %s: %w", cfg.TokenFile, err)
+			}
+			return strings.TrimSpace(string(raw)), nil
+		},
 	}
 }
 
@@ -102,6 +128,20 @@ func (r *reporter) Connect(ctx context.Context) error {
 }
 
 func (r *reporter) openStream(ctx context.Context) error {
+	token, err := r.readToken()
+	if err != nil {
+		return err
+	}
+	// The Operation id travels beside the credential because the Server's
+	// interceptor runs before any message is received: it has to decide
+	// whether this caller may write to this Operation in order to admit
+	// the stream at all, so it cannot wait for the Start message that
+	// also names one.
+	ctx = metadata.AppendToOutgoingContext(ctx,
+		rpc.AuthorizationKey, rpc.BearerPrefix+token,
+		rpc.OperationIDKey, r.cfg.OperationID,
+	)
+
 	stream, err := r.client.ExecuteOperation(ctx)
 	if err != nil {
 		return err

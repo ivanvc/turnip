@@ -3,8 +3,11 @@ package rpc
 import (
 	"context"
 	"io"
+	"log/slog"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/ivanvc/turnip/internal/grpc/turnip/v1"
 )
@@ -45,10 +48,40 @@ type OperationHandler interface {
 	HandleResult(ctx context.Context, operationID string, result OperationResult) error
 }
 
+// Option configures a Server. NewServer took no options before Slice 25,
+// which is precisely why the interceptor goes here: there is exactly one
+// place to add it, and it then applies to every RPC registered
+// afterwards.
+type Option func(*serverOptions)
+
+type serverOptions struct {
+	auth Authenticator
+}
+
+// WithAuthenticator installs the check that decides which Operation a
+// caller may write to. Without it every stream is refused — see
+// streamAuthInterceptor.
+func WithAuthenticator(auth Authenticator) Option {
+	return func(o *serverOptions) { o.auth = auth }
+}
+
 // NewServer constructs a *grpc.Server hosting OperationService, dispatching
 // every message a Runner sends to handler.
-func NewServer(handler OperationHandler) *grpc.Server {
-	s := grpc.NewServer()
+func NewServer(handler OperationHandler, opts ...Option) *grpc.Server {
+	var o serverOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	// The channel is not encrypted. That is a separate axis, deliberately
+	// split out (see the TLS slice): what this interceptor establishes is
+	// *who* is calling, which holds whether or not the transport is
+	// encrypted. Without TLS a caller with network position can capture a
+	// token — a far higher bar than reading TURNIP_OPERATION_ID out of a
+	// Pod spec, which is what this replaces — and the token it captures is
+	// audience-scoped, short-lived, and authorizes writing to exactly one
+	// Operation.
+	s := grpc.NewServer(grpc.StreamInterceptor(streamAuthInterceptor(o.auth)))
 	pb.RegisterOperationServiceServer(s, &operationServer{handler: handler})
 	return s
 }
@@ -67,7 +100,20 @@ type operationServer struct {
 // failure being silently swallowed.
 func (s *operationServer) ExecuteOperation(stream pb.OperationService_ExecuteOperationServer) error {
 	ctx := stream.Context()
-	var operationID string
+
+	// The Operation id comes from what the interceptor established, never
+	// from the stream's own Start message. A Runner that knows an
+	// Operation id is not thereby entitled to write to it — that was the
+	// entire gap Slice 25 closed, and reading the id back off the wire
+	// would reopen it with a one-line change that looks like a
+	// simplification.
+	operationID, ok := OperationIDFromContext(ctx)
+	if !ok {
+		// Unreachable while the interceptor is installed, which it
+		// unconditionally is. Refusing rather than proceeding with an
+		// empty id means a future refactor that removes it fails loudly.
+		return status.Error(codes.Unauthenticated, "rpc: stream reached handler unauthenticated")
+	}
 
 	for {
 		req, err := stream.Recv()
@@ -80,7 +126,16 @@ func (s *operationServer) ExecuteOperation(stream pb.OperationService_ExecuteOpe
 
 		switch payload := req.GetPayload().(type) {
 		case *pb.ExecuteOperationRequest_Start:
-			operationID = payload.Start.GetOperationId()
+			// OperationStart.operation_id is now decorative: the
+			// authenticated id above supersedes it. The field is not
+			// removed, because pruning the message is a protocol question
+			// (Slice 24 records it) rather than a security one — but it is
+			// logged when it disagrees, since a mismatch means a Runner
+			// built against a different Job than the one that authenticated.
+			if claimed := payload.Start.GetOperationId(); claimed != "" && claimed != operationID {
+				slog.WarnContext(ctx, "operation id in start message disagrees with the authenticated one; ignoring it",
+					"authenticated", operationID, "claimed", claimed)
+			}
 
 		case *pb.ExecuteOperationRequest_Log:
 			log := payload.Log

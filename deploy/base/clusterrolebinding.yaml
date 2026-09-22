@@ -1,0 +1,17 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: turnip-server-token-review
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: turnip-server-token-review
+subjects:
+  # Spelled out because a ClusterRoleBinding is cluster-scoped: unlike the
+  # namespaced RoleBinding, there is no surrounding namespace for this
+  # subject to inherit. Installing turnip elsewhere means setting
+  # `namespace:` in your own kustomization, which kustomize propagates to
+  # this subject along with everything else.
+  - kind: ServiceAccount
+    name: turnip-server
+    namespace: default

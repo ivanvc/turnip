@@ -1,0 +1,18 @@
+# TokenReview is a cluster-scoped API, so the permission to create one
+# cannot live in the namespaced Role beside everything else. This is
+# turnip's only cluster-scoped ask.
+#
+# The conventional grant for this is the built-in `system:auth-delegator`
+# ClusterRole. turnip ships its own instead because auth-delegator also
+# carries `subjectaccessreviews`, which turnip never creates: it asks the
+# cluster "who is this", never "may they do X".
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: turnip-server-token-review
+rules:
+  # internal/runnerauth: validate a Runner's projected ServiceAccount
+  # token, scoped to turnip's own audience.
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]

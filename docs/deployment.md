@@ -9,7 +9,21 @@ deployment.
 
 ## Prerequisites
 
-1. **A Kubernetes cluster** — any cluster `kubectl apply -f` can reach.
+1. **A Kubernetes cluster, v1.32 or later** — any cluster `kubectl apply
+   -f` can reach.
+
+   The version floor comes from how the Server identifies a Runner. Each
+   Runner Pod carries a ServiceAccount token projected with turnip's own
+   audience, and the Server validates it with a `TokenReview`; what makes
+   that token bind to *one* operation rather than merely prove "some
+   Runner" is the `authentication.kubernetes.io/pod-uid` extra the API
+   server reports alongside it. That extra exists from v1.29 but sits
+   behind a feature gate until v1.32 — and a gate turnip cannot detect
+   from a response is not a version it can claim to support, because an
+   older cluster simply answers without the extra, which is
+   indistinguishable from a token that never carried one. turnip refuses
+   such a stream rather than relaxing the check, so on a cluster below
+   v1.32 no operation will ever report its result.
 2. **Redis or Valkey** — turnip's own manifests deliberately don't include
    one (`deploy/base/kustomization.yaml` ships no `TURNIP_REDIS_ADDR`
    default at all): the Server is stateless, and its only state lives in
@@ -190,6 +204,46 @@ it:
 
 A delivery that 404s is not retried by GitHub on its own, so step 3 is how
 a pull request that was opened mid-window gets its plan.
+
+## What turnip asks of your cluster
+
+Two grants, in `deploy/base`:
+
+| Scope | Grant | Why |
+|---|---|---|
+| Namespaced (`Role`) | `jobs` create/delete/get/list/watch, `pods` get/list | dispatching Runners, diagnosing ones that never start, and resolving which Pod belongs to which operation |
+| Cluster (`ClusterRole`) | `tokenreviews` create | validating a Runner's token against turnip's audience |
+
+The `tokenreviews` grant is turnip's only cluster-scoped ask, and it has
+to be: `TokenReview` is a cluster-scoped API, so the permission to create
+one cannot live in a namespaced Role. turnip ships its own narrow
+`ClusterRole` rather than binding the conventional `system:auth-delegator`,
+which also carries `subjectaccessreviews` — turnip asks the cluster *who
+is this*, never *may they do X*.
+
+## Runner-to-Server traffic is not encrypted
+
+Runners report their logs and results to the Server over gRPC, and that
+channel is **plaintext** today. Encryption is tracked separately and is
+not part of the authentication described above.
+
+What that does and doesn't mean:
+
+- A Runner proves which Pod it is before it can write anything, so
+  knowing an operation's id is no longer enough to forge a plan result or
+  release a lock. That check does not depend on encryption.
+- The credential a Runner presents is scoped to turnip's own audience,
+  expires in minutes, and authorizes writing to exactly one operation. It
+  is useless against the Kubernetes API or anything else.
+- Someone able to capture pod-to-pod traffic can read your plan and diff
+  output, and can capture that credential within its lifetime. That
+  requires network position on the cluster — node access or `CAP_NET_RAW`
+  — rather than the ability to read a Pod spec.
+
+If your cluster carries infrastructure detail you consider sensitive in
+plan output, run turnip inside a service mesh that provides transport
+encryption, or restrict who can attach to the pod network, until turnip
+offers TLS of its own.
 
 ## Optional: the Grafana dashboard
 
