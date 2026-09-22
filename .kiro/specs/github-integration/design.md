@@ -378,22 +378,40 @@ func (a *Authorizer) IsCollaborator(ctx context.Context, owner, repo, username s
 func (a *Authorizer) HasWritePermission(ctx context.Context, owner, repo, username string) (bool, error)
 ```
 
-**Single cached call, not two.** Requirement 5.1/5.2 name two checks
-(collaborator, write-permission), and the global `GitHubClient` sketch has
-two corresponding methods (`IsCollaborator`, `GetCollaboratorPermission`).
-*Alternative considered*: `Authorizer` caches each method's result
-separately, calling whichever the caller asked for. *Rejected* —
-`GetCollaboratorPermission` returning successfully already implies
-collaborator status (GitHub's API returns 404 for a non-collaborator on
-that endpoint), so `Authorizer` internally calls only
-`client.GetCollaboratorPermission` and caches the resulting permission
-string keyed by `(owner, repo, username)`; both `IsCollaborator` (any
-non-404 result) and `HasWritePermission` (rank comparison) read the same
-cache entry. This means one Trigger Comment costs at most one GitHub API
-call for authorization, not two. `Client.IsCollaborator` itself is still
-implemented (Requirement surface completeness / a direct caller that only
-needs a yes/no with no rank comparison), it's just not what `Authorizer`
-calls internally.
+**Two questions, two endpoints, one cache entry.** Requirement 5.1/5.2
+name two checks (collaborator, write-permission), and the global
+`GitHubClient` sketch has two corresponding methods (`IsCollaborator`,
+`GetCollaboratorPermission`). `Authorizer` calls each for the question it
+answers, and caches both answers under one `(owner, repo, username)` key
+with one expiry. A Trigger Comment asking only for a plan costs one call;
+one asking for a mutating Operation costs two.
+
+> **Corrected 2026-09-21 by Slice 23 — this paragraph was wrong, and the
+> error is worth keeping visible.**
+>
+> It previously read: *"`GetCollaboratorPermission` returning successfully
+> already implies collaborator status (GitHub's API returns 404 for a
+> non-collaborator on that endpoint)"*, and on that basis `Authorizer`
+> called only the permission endpoint, with `IsCollaborator` returning
+> true for *any non-404 result*.
+>
+> The 204/404 behaviour belongs to the **other** endpoint,
+> `/collaborators/{username}` — the one `Client.IsCollaborator` already
+> implemented and which nothing called. The permission endpoint reports an
+> access level in a 200 body, so a successful call means GitHub knows the
+> account, not that it trusts them. The gate therefore admitted every
+> account GitHub would answer about at all.
+>
+> Two claims about *which values* that endpoint returns — `none` for a
+> non-collaborator, `read` for any user on a public repository — were
+> checked against GitHub's documentation while fixing this and **neither
+> was confirmed**. The defect does not depend on either: treating the 200
+> itself as the answer is wrong whatever the body says, which is why the
+> fix is the endpoint rather than a threshold on the string.
+>
+> Recorded rather than quietly edited because a wrong premise left in
+> place is what produced the defect, and the next person to economise on
+> an API call would read the same sentence and reach the same conclusion.
 
 Permission ranking: `none < read < triage < write < maintain < admin`,
 an unrecognized string ranks below `none` (fails every `HasWritePermission`

@@ -264,15 +264,62 @@ project keeps its lock even when its diff comes back clean.
 
 ## Who can trigger what
 
-- **Anyone who can open a PR** gets automatic plans for free — no
-  authorization check happens for the PR-opened/synchronize path at all.
-- **Triggering anything by comment** requires being a repository
-  collaborator (any permission level, including read-only) — a
-  non-collaborator's comment gets a reply explaining that, and nothing
-  runs.
-- **Anything beyond a plan** — apply, sync, unlock — additionally
-  requires write access to the repository. A collaborator without write
-  access gets a reply naming the specific permission gap.
+turnip recognises three roles, and does not distinguish further:
+
+| Role | Who |
+|---|---|
+| **Outsider** | not a collaborator on the repository |
+| **Collaborator** | a collaborator below write — read or triage |
+| **Writer** | write, maintain or admin |
+
+Write, maintain and admin are treated identically; nothing turnip does
+needs to tell them apart.
+
+| Action | Outsider | Collaborator | Writer |
+|---|---|---|---|
+| `/turnip plan`, `/helmfile diff` | no | **yes** | yes |
+| `/turnip apply`, `/helmfile sync` | no | no | **yes** |
+| `/turnip unlock` | no | no | **yes** |
+
+An outsider's comment gets a reply saying so, and nothing runs. A
+collaborator asking for an apply gets a reply naming the permission they
+are missing.
+
+**"Collaborator" is wider than it sounds.** For an organization-owned
+repository, GitHub counts outside collaborators, members who are direct
+collaborators, members with access through a team, members with access
+through the organization's *default* permission, and organization owners.
+If your organization grants its members a default permission on
+repositories, every member can trigger a plan.
+
+### Automatic plans have no actor
+
+The table above governs comments. A plan that turnip starts by itself —
+on open, push, or reopen — has no one to authorize: it is a consequence
+of the commit existing. Its real gate is GitHub's, not turnip's, because
+pushing the branch required access in the first place, and a pull request
+from a fork is refused outright (see "Pull requests from forks").
+
+So a read-level collaborator can ask for a plan but cannot cause one by
+pushing. That asymmetry is deliberate: someone reviewing a change needs to
+be able to ask what it would do, and a plan changes nothing.
+
+### This is not configurable, on purpose
+
+There is no setting to raise or lower these levels. An apply that could be
+permitted below write would be a way to get it wrong quietly, and a
+setting that only ever has one safe value is not a setting. If you need a
+plan restricted more tightly than "any collaborator", the lever is
+GitHub's — the repository's collaborator list and your organization's
+default permission — rather than a turnip key that a repository could
+later be permitted to set for itself.
+
+### What else has to be true
+
+Permission is necessary, not sufficient. Independently of who asks, turnip
+refuses to act on a pull request from a fork, on one that is closed or
+merged, and refuses a mutating operation whose project has no valid plan
+recorded. Those are covered in their own sections above.
 
 ## What you'll see on the PR
 

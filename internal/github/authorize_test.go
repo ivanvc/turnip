@@ -20,6 +20,14 @@ type fakeGitHubClient struct {
 
 	permission string
 	err        error
+
+	// collaborator answers the 204/404 endpoint, independently of the
+	// permission level above. The two are separate questions and a fake
+	// that derived one from the other could not express the case this
+	// slice exists to fix.
+	collaborator    bool
+	collaboratorErr error
+	collabCalls     int
 }
 
 func (f *fakeGitHubClient) GetCollaboratorPermission(ctx context.Context, owner, repo, username string) (string, error) {
@@ -60,7 +68,16 @@ func (f *fakeGitHubClient) UpdateComment(ctx context.Context, owner, repo string
 	panic("not used by Authorizer")
 }
 func (f *fakeGitHubClient) IsCollaborator(ctx context.Context, owner, repo, username string) (bool, error) {
-	panic("not used by Authorizer")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.collabCalls++
+	return f.collaborator, f.collaboratorErr
+}
+
+func (f *fakeGitHubClient) collaboratorCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.collabCalls
 }
 func (f *fakeGitHubClient) MinimizeComment(ctx context.Context, nodeID string) error {
 	panic("not used by Authorizer")
@@ -69,7 +86,7 @@ func (f *fakeGitHubClient) MinimizeComment(ctx context.Context, nodeID string) e
 var _ GitHubClient = (*fakeGitHubClient)(nil)
 
 func TestAuthorizer_IsCollaborator(t *testing.T) {
-	fake := &fakeGitHubClient{permission: "read"}
+	fake := &fakeGitHubClient{permission: "read", collaborator: true}
 	a := NewAuthorizer(fake)
 
 	ok, err := a.IsCollaborator(context.Background(), "owner", "repo", "alice")
@@ -77,8 +94,15 @@ func TestAuthorizer_IsCollaborator(t *testing.T) {
 	assert.True(t, ok)
 }
 
+// A lookup that fails tells turnip nothing, so it must refuse and say so
+// rather than answering the question it could not ask.
+//
+// GitHub requires write, maintain or admin to read collaborator
+// information, so an App installation with narrower permissions lands
+// here — and an error that became a quiet false would make that
+// indistinguishable from a repository where nobody is a collaborator.
 func TestAuthorizer_IsCollaborator_Error(t *testing.T) {
-	fake := &fakeGitHubClient{err: errors.New("404 not a collaborator")}
+	fake := &fakeGitHubClient{collaboratorErr: errors.New("403 forbidden")}
 	a := NewAuthorizer(fake)
 
 	ok, err := a.IsCollaborator(context.Background(), "owner", "repo", "mallory")
@@ -113,7 +137,7 @@ func TestAuthorizer_HasWritePermission(t *testing.T) {
 }
 
 func TestAuthorizer_CachesWithinTTL(t *testing.T) {
-	fake := &fakeGitHubClient{permission: "write"}
+	fake := &fakeGitHubClient{permission: "write", collaborator: true}
 	a := NewAuthorizer(fake)
 	now := time.Now()
 	a.now = func() time.Time { return now }
@@ -123,11 +147,14 @@ func TestAuthorizer_CachesWithinTTL(t *testing.T) {
 	_, err = a.IsCollaborator(context.Background(), "owner", "repo", "alice")
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, fake.callCount(), "second call should hit the cache")
+	// Counted on the collaborator endpoint, which is what IsCollaborator
+	// now asks. It no longer touches the permission endpoint at all.
+	assert.Equal(t, 1, fake.collaboratorCallCount(), "second call should hit the cache")
+	assert.Zero(t, fake.callCount(), "collaborator status does not cost a permission lookup")
 }
 
 func TestAuthorizer_RefetchesAfterTTLExpires(t *testing.T) {
-	fake := &fakeGitHubClient{permission: "write"}
+	fake := &fakeGitHubClient{permission: "write", collaborator: true}
 	a := NewAuthorizer(fake)
 	now := time.Now()
 	a.now = func() time.Time { return now }
@@ -140,7 +167,7 @@ func TestAuthorizer_RefetchesAfterTTLExpires(t *testing.T) {
 	_, err = a.IsCollaborator(context.Background(), "owner", "repo", "alice")
 	require.NoError(t, err)
 
-	assert.Equal(t, 2, fake.callCount(), "cache should have expired")
+	assert.Equal(t, 2, fake.collaboratorCallCount(), "cache should have expired")
 }
 
 func TestAuthorizer_ConcurrentCallsForDifferentUsers(t *testing.T) {
@@ -159,4 +186,51 @@ func TestAuthorizer_ConcurrentCallsForDifferentUsers(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// The defect, stated as a fixture.
+//
+// GitHub answers two different questions here. Asked for a *permission
+// level*, it returns a 200 carrying a string; asked whether an account is
+// a *collaborator*, it answers 204 or 404. The gate inferred the second
+// from the first succeeding, which admits every account GitHub will answer
+// about at all.
+//
+// This is the only fixture that separates them: a successful permission
+// lookup describing no useful access, alongside a definitive "not a
+// collaborator". Against the unfixed Authorizer it reports true.
+func TestAuthorizer_IsCollaborator_SuccessfulLookupIsNotCollaboration(t *testing.T) {
+	for _, permission := range []string{"none", "read"} {
+		t.Run("permission "+permission, func(t *testing.T) {
+			fake := &fakeGitHubClient{permission: permission, collaborator: false}
+			a := NewAuthorizer(fake)
+
+			ok, err := a.IsCollaborator(context.Background(), "owner", "repo", "mallory")
+
+			require.NoError(t, err, "GitHub answered; it just said no")
+			assert.False(t, ok,
+				"a permission lookup that succeeds is not evidence of collaboration")
+		})
+	}
+}
+
+// Requirement 4: two questions about one account cost at most one call
+// each, and a repeat costs none.
+func TestAuthorizer_BothAnswersAreCachedIndependently(t *testing.T) {
+	fake := &fakeGitHubClient{permission: "write", collaborator: true}
+	a := NewAuthorizer(fake)
+	ctx := context.Background()
+
+	for range 3 {
+		ok, err := a.IsCollaborator(ctx, "owner", "repo", "alice")
+		require.NoError(t, err)
+		require.True(t, ok)
+
+		write, err := a.HasWritePermission(ctx, "owner", "repo", "alice")
+		require.NoError(t, err)
+		require.True(t, write)
+	}
+
+	assert.Equal(t, 1, fake.collaboratorCallCount(), "collaborator status fetched once")
+	assert.Equal(t, 1, fake.callCount(), "permission level fetched once")
 }

@@ -31,7 +31,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 20 | Apply Exactly What Was Planned | `plan-scoped-apply` | Complete | Slices 3, 6 |
 | 21 | What a Bare Command Targets | `project-selection` | Complete | Slices 1, 6 |
 | 22 | Refuse Tool Arguments That Name an Executable | `tool-argument-policy` | Not Started | Slices 4, 6 |
-| 23 | Authorize on Permission Level, Not Call Success | `collaborator-authorization` | Not Started | Slice 4 |
+| 23 | Authorize on Permission Level, Not Call Success | `collaborator-authorization` | Complete | Slice 4 |
 | 24 | How the Runner Receives Its GitHub Token | `runner-token-delivery` | Not Started | Slices 5, 6 |
 | 25 | Authenticating the Runner to the Server | `runner-authentication` | Not Started | Slices 5, 6 |
 | 26 | Real-Time Operation Output | `operation-output-stream` | Not Started | Slices 5, 6 |
@@ -1085,6 +1085,20 @@ case in both `authorize_test.go` and `comment_test.go`.
 permission endpoint may report `read` for any user at all, since public
 repositories grant universal pull access — so `>= read` would still admit
 the attacker. The fix is the endpoint, not the threshold.
+
+**Correction made** (2026-09-21): `github-integration/design.md`'s
+"Single cached call, not two" paragraph is corrected in place, with the
+original claim quoted rather than deleted — a wrong premise left in place
+is what produced the defect, and the next person to economise on an API
+call would read the same sentence. Recorded there and here, per the
+convention the global spec uses.
+
+Also recorded there: the two claims this entry makes about *which values*
+the permission endpoint returns — `none` for a non-collaborator, `read`
+for any user on a public repository — were checked while fixing this and
+**neither was confirmed**. The defect does not depend on either. Treating
+a 200 as the answer is wrong whatever the body says, which is why the fix
+is the endpoint and not a threshold on the string.
 
 **And do not let `Client.IsCollaborator` be tidied away before this
 lands.** A dead-code sweep flags it as test-only and correctly so: nothing

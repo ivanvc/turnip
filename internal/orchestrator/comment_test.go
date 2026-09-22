@@ -29,6 +29,16 @@ type fakeCommentEventClient struct {
 	pr         *github.PullRequest
 	modified   []string
 
+	// collaborator overrides what IsCollaborator answers. Nil falls back
+	// to whether a permission was configured, which is what every fixture
+	// written before the gate asked this question meant by it — so those
+	// fixtures need no change.
+	//
+	// It is settable because the two questions are independent: GitHub can
+	// report an access level for an account that is not a collaborator,
+	// and that combination is the one the gate used to get wrong.
+	collaborator *bool
+
 	mu            sync.Mutex
 	posted        []string
 	modifiedCalls int
@@ -76,6 +86,15 @@ func (f *fakeCommentEventClient) GetCollaboratorPermission(ctx context.Context, 
 		return "", errors.New("not a collaborator")
 	}
 	return f.permission, nil
+}
+func (f *fakeCommentEventClient) IsCollaborator(ctx context.Context, owner, repo, username string) (bool, error) {
+	if f.collaborator != nil {
+		return *f.collaborator, nil
+	}
+	if f.permission == "" {
+		return false, errors.New("not a collaborator")
+	}
+	return true, nil
 }
 func (f *fakeCommentEventClient) GetPullRequest(ctx context.Context, owner, repo string, prNumber int) (*github.PullRequest, error) {
 	return f.pr, nil
@@ -401,4 +420,28 @@ func TestHandleIssueComment_BareApplyWithNoPlansRepliesOnce(t *testing.T) {
 func callHandleIssueComment(o *Orchestrator, client github.GitHubClient, event *github.WebhookEvent) error {
 	o.installationClient = func(id int64) github.GitHubClient { return client }
 	return o.HandleIssueComment(context.Background(), event)
+}
+
+// The same defect, at the level that matters: a helper returning false
+// proves nothing if the caller ignores it.
+//
+// The fixture is a *successful* permission lookup describing access,
+// alongside GitHub saying the account is not a collaborator. That is the
+// combination the gate used to read as authorization.
+func TestHandleIssueComment_SuccessfulPermissionLookupIsNotAuthorization(t *testing.T) {
+	notCollaborator := false
+	o := testCommentOrchestrator(t, &fakeLockManager{})
+	client := &fakeCommentEventClient{
+		permission:   "read",
+		collaborator: &notCollaborator,
+		files:        map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
+		pr:           openPR(),
+	}
+
+	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip diff", "mallory")))
+
+	require.Len(t, client.postedComments(), 1)
+	assert.Contains(t, client.postedComments()[0], "does not have permission")
+	assert.Empty(t, client.getFileCallLog(),
+		"a refused trigger must not read the repository's configuration")
 }
