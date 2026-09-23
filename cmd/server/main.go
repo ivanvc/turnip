@@ -29,7 +29,8 @@ import (
 )
 
 func main() {
-	slog.SetDefault(logging.New(os.Stderr, logging.ParseLevel(os.Getenv("TURNIP_LOG_LEVEL"))))
+	level := logging.ParseLevel(os.Getenv("TURNIP_LOG_LEVEL"))
+	slog.SetDefault(logging.New(os.Stderr, level))
 
 	cfg, err := orchestrator.ConfigFromEnv(os.Getenv)
 	if err != nil {
@@ -37,13 +38,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := run(cfg); err != nil {
+	if err := run(cfg, level); err != nil {
 		slog.Error("running server", "error", err)
 		os.Exit(1)
 	}
+	slog.Info("server stopped")
 }
 
-func run(cfg orchestrator.Config) error {
+func run(cfg orchestrator.Config, level slog.Level) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -92,6 +94,13 @@ func run(cfg orchestrator.Config) error {
 	}
 	grpcServer := rpc.NewServer(orch,
 		rpc.WithAuthenticator(runnerauth.New(clientset, cfg.KubernetesNamespace)),
+	)
+
+	slog.Info("server starting",
+		"http_addr", cfg.HTTPAddr,
+		"grpc_addr", grpcListener.Addr().String(),
+		"namespace", cfg.KubernetesNamespace,
+		"log_level", level.String(),
 	)
 
 	return runConcurrently(ctx,

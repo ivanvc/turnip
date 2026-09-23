@@ -53,6 +53,13 @@ func (o *Orchestrator) sweepOnce(ctx context.Context) {
 }
 
 func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, rec *OperationRecord) {
+	slog.WarnContext(ctx, "operation timed out before its runner reported",
+		"operation_id", operationID,
+		"job", rec.JobName,
+		"lock_key", rec.ProjectKey,
+		"pr_number", rec.PRNumber,
+		"operation", rec.Operation,
+	)
 	var status *jobs.JobStatus
 	if rec.JobName != "" {
 		s, err := o.jobs.Status(ctx, rec.JobName)

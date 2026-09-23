@@ -137,6 +137,36 @@ on them.
     (`go test ./internal/logging/... -coverprofile=/tmp/cover.out && go tool cover -func=/tmp/cover.out`).
     Ask the user if questions arise.
 
+- [x] 9. Amendment: log the Server's lifecycle at `info` (Requirement 2, design.md Decision 2)
+  - Found while debugging: at the default `info` level a healthy Server
+    logged nothing, because Requirement 1.5 kept this slice to existing
+    call sites and every one was an error path; several non-2xx webhook
+    answers and every `executeOne` rejection were not logged at all
+  - [x] 9.1 `cmd/server/main.go`: `server starting` (HTTP/gRPC address,
+    namespace, effective level) and `server stopped`
+    - _Requirements: 2.1_
+  - [x] 9.2 `internal/github/webhook.go`: delivery ID on every record;
+    `info` on dispatch, `debug` on skip, `warn` on 401/400, `error` on a
+    handler error (the only place that error is logged)
+    - _Requirements: 2.2, 2.3_
+  - [x] 9.3 `internal/orchestrator/execute.go`: a Target-scoped logger;
+    every rejection routed through a local `reject` that logs its reason
+    at `warn`; `runner job created` and `operation finished` at `info`
+    - _Requirements: 2.4, 2.5, 2.9_
+  - [x] 9.4 `result.go` (`operation result received`, with the Lock
+    transition), `sweep.go` (timeout at `warn`), `comment.go`
+    (permission-check errors at `error`, refusals and unlock releases at
+    `info`), `pullrequest.go` (releases on close at `info`)
+    - _Requirements: 2.4, 2.6, 2.7, 2.8_
+  - [x] 9.5 Tests: `internal/github/webhook_log_test.go` (500 and 401 are
+    logged with the delivery ID; dispatch at `info`; skip at `debug`
+    only) and `internal/orchestrator/execute_log_test.go` (a rejection
+    logs the comment's reason; dispatch/finish at `info`; no tool output
+    in any record)
+    - _Requirements: 2.2–2.5, 2.9_
+  - [x] 9.6 Checkpoint: `go build ./...`, `go test -race ./...`,
+    `gofmt -l .`, golangci-lint v2
+
 ## Notes
 
 - No new dependencies — `log/slog` is standard library (see Decision 0 in

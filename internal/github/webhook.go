@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	gh "github.com/google/go-github/v90/github"
@@ -55,11 +56,18 @@ type webhookHandler struct {
 }
 
 func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	// GitHub's own ID for this delivery: what an operator searches for in
+	// the App's "Recent Deliveries" page to match a log line to a payload.
+	deliveryID := gh.DeliveryID(r)
+
 	payload, err := gh.ValidatePayload(r, h.secret)
 	if err != nil {
 		// eventType isn't known yet at this point — signature
 		// verification happens before we even look at the event type.
 		metrics.WebhookEvent("unknown", "rejected")
+		slog.WarnContext(ctx, "rejecting webhook delivery: signature verification failed",
+			"delivery_id", deliveryID, "error", err)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -67,6 +75,7 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	eventType := gh.WebHookType(r)
 	if eventType != "pull_request" && eventType != "issue_comment" {
 		metrics.WebhookEvent(eventType, "skipped")
+		slog.DebugContext(ctx, "skipping webhook delivery", "event", eventType, "delivery_id", deliveryID)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -74,6 +83,8 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	raw, err := gh.ParseWebHook(eventType, payload)
 	if err != nil {
 		metrics.WebhookEvent(eventType, "rejected")
+		slog.WarnContext(ctx, "rejecting webhook delivery: unparseable payload",
+			"event", eventType, "delivery_id", deliveryID, "error", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -88,16 +99,29 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !dispatch {
 		metrics.WebhookEvent(eventType, "skipped")
+		slog.DebugContext(ctx, "skipping webhook delivery", "event", eventType, "delivery_id", deliveryID)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
+	attrs := []any{
+		"event", eventType,
+		"action", event.Action,
+		"owner", event.Repository.Owner,
+		"repo", event.Repository.Name,
+		"delivery_id", deliveryID,
+	}
+	if event.PullRequest != nil {
+		attrs = append(attrs, "pr_number", event.PullRequest.Number)
+	}
+	slog.InfoContext(ctx, "handling webhook delivery", attrs...)
+
 	var handleErr error
 	switch eventType {
 	case "pull_request":
-		handleErr = h.handler.HandlePullRequest(r.Context(), event)
+		handleErr = h.handler.HandlePullRequest(ctx, event)
 	case "issue_comment":
-		handleErr = h.handler.HandleIssueComment(r.Context(), event)
+		handleErr = h.handler.HandleIssueComment(ctx, event)
 	}
 
 	// Checked before the error branch below, and instead of the
@@ -115,6 +139,10 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	metrics.WebhookEvent(eventType, "dispatched")
 	if handleErr != nil {
+		// The one place this error is logged: the orchestrator returns it
+		// rather than logging it, and without this line a 500 left only
+		// a metric behind.
+		slog.ErrorContext(ctx, "handling webhook delivery failed", append(attrs, "error", handleErr)...)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

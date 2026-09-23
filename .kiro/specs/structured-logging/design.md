@@ -67,6 +67,58 @@ func New(w io.Writer, level slog.Level) *slog.Logger
 setup — `logging.ParseLevel` never errors, so a startup failure can never
 originate from a log-level typo.
 
+## Decision 2: Lifecycle events at the boundaries, not at every step (Requirement 2)
+
+Requirement 1.5 left the Server logging only on error paths, so a
+healthy Server at `info` was silent. Requirement 2 adds a fixed set of
+events, placed where a unit of work enters or leaves a component:
+
+```mermaid
+flowchart LR
+    W[webhook handler] -->|info: dispatched / debug: skipped<br/>warn: 401, 400 / error: 500| O[orchestrator]
+    O -->|warn: rejected<br/>info: runner job created| J[Runner Job]
+    J -->|info: result received + lock transition| O
+    O -->|info: operation finished| C[PR comment]
+    S[sweep] -->|warn: timed out| O
+```
+
+| Where | Event | Level |
+|---|---|---|
+| `cmd/server` | server starting (addresses, level) / stopped | info |
+| `internal/github` webhook handler | delivery dispatched | info |
+| | delivery skipped (event type or action turnip ignores) | debug |
+| | signature invalid (401), payload unparseable (400) | warn |
+| | handler error (500) | error |
+| `executeOne` | Operation rejected, with its reason | warn |
+| | Runner Job created | info |
+| | Operation finished, with outcome | info |
+| `HandleResult` | result received, with the Lock transition | info |
+| sweep | Operation timed out | warn |
+| comment trigger | permission check errored | error |
+| | trigger refused for lack of permission | info |
+| unlock / PR close | Lock released | info |
+
+The webhook handler is the one place that sees every delivery and every
+status it answers, so it owns the "why was this a 500" line: the
+orchestrator returns the error, and logging it again at every level it
+passes through would multiply the same failure.
+
+Rejections are logged at `warn` uniformly, whether a policy refusal
+("locked by PR #12") or an infrastructure one ("acquiring lock: dial
+tcp …"). *Alternative considered*: classify each rejection site as
+`info` or `error`. *Rejected because* `executeOne` has around fifteen
+rejection sites and the distinction lives in the reason text, which the
+record carries; one level with the reason attached is enough to find
+either kind, and a misclassified site would hide an error at `info`.
+
+`executeOne` builds one `*slog.Logger` carrying owner, repo, PR number,
+project and operation, so each of its events is one short call and the
+fields cannot drift between them. This is a local derived from the
+process default, not an injected logger — Decision 1 still holds.
+
+No record includes tool output (Requirement 2.9): outcomes, IDs and
+change counts only.
+
 ## Package Layout
 
 ```

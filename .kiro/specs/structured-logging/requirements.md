@@ -57,6 +57,52 @@ in production don't depend on parsing free-form sentences.
    existing log sites, not new observability call sites (the `metrics`
    slice covers new signals, as metrics rather than logs)
 
+### Requirement 2: A Healthy Server Is Not a Silent One (amendment)
+
+**User Story:** As a platform operator, I want the Server to log what it
+is doing at `info`, and every failure it answers with, so that its pod's
+log is enough to follow a pull request through turnip without first
+lowering the level or reading metrics.
+
+Requirement 1.5 kept this slice to the call sites that already existed,
+and every one of those was an error path. The consequence, found in
+production debugging: at the default `info` level a working Server
+logged nothing at all, and several failures were answered without a log
+line either (a webhook handler error answered 500, a signature failure
+401, an infrastructure failure turned into a PR-comment-only rejection).
+This requirement supersedes 1.5 for the events listed below.
+
+#### Acceptance Criteria
+
+1. WHEN the Server starts serving, THE Server SHALL log at `info` the
+   HTTP and gRPC addresses it listens on and the effective log level;
+   WHEN it has shut down cleanly, it SHALL log that at `info`
+2. WHEN the webhook handler answers a delivery with a non-2xx status,
+   THE Server SHALL log why — `warn` for a failed signature or an
+   unparseable payload, `error` for a handler error — with the
+   delivery's `X-GitHub-Delivery` ID
+3. WHEN a delivery is dispatched to the orchestrator, THE Server SHALL
+   log at `info` its event type, action, repository, pull request
+   number and delivery ID; a delivery skipped without dispatch SHALL be
+   logged at `debug`
+4. THE Server SHALL log at `info` when a Runner Job is created for an
+   Operation (with the Operation ID and Job name), when an Operation's
+   result is received (with its success and the Lock transition it
+   caused), and when an Operation finishes (with its outcome)
+5. WHEN an Operation is rejected before or instead of running, THE
+   Server SHALL log the rejection reason at `warn` — the same reason the
+   pull request comment shows
+6. WHEN the sweep times out an Operation, THE Server SHALL log it at
+   `warn`
+7. WHEN a GitHub permission check fails with an error (as opposed to
+   answering "no"), THE Server SHALL log that error at `error`; a
+   trigger refused for lack of permission SHALL be logged at `info`
+8. WHEN a Lock is released by an unlock command or a pull request
+   closing, THE Server SHALL log it at `info`
+9. Log records SHALL NOT contain tool output (plan text, diffs) — only
+   identifiers, outcomes and error values. Tool output can carry
+   secrets and belongs to the pull request comment
+
 ## Out of Scope
 
 - Metrics, health/readiness endpoints, dashboards — `metrics` (Slice 9)

@@ -57,16 +57,33 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		metrics.ObserveOperationDuration(t.Project.Tool, t.Operation, time.Since(start))
 	}()
 
+	// Every event below concerns this one Target, so its identity is
+	// attached once rather than repeated (and left to drift) per call.
+	log := slog.With(
+		"owner", repo.Owner,
+		"repo", repo.Name,
+		"pr_number", pr.Number,
+		"project", t.Project.Name,
+		"operation", t.Operation,
+	)
+	// The reason is what the pull request comment shows. Logged as well,
+	// because some of these are infrastructure failures (Redis, the
+	// Kubernetes API) that otherwise reach only the comment.
+	reject := func(reason string) github.ProjectResult {
+		log.WarnContext(ctx, "operation rejected", "reason", reason)
+		return rejectedResult(t, reason)
+	}
+
 	p, ok := o.plugins[t.Project.Tool]
 	if !ok {
-		return rejectedResult(t, fmt.Sprintf("tool %q is not supported", t.Project.Tool))
+		return reject(fmt.Sprintf("tool %q is not supported", t.Project.Tool))
 	}
 
 	// Resolved before any Lock is acquired: a refused ServiceAccount must
 	// not leave a Lock held for an Operation that never runs.
 	serviceAccount, err := resolveServiceAccount(t.Project, o.runnerServiceAccount, o.allowedOverrides)
 	if err != nil {
-		return rejectedResult(t, err.Error())
+		return reject(err.Error())
 	}
 
 	// Repository-scoped rather than per-Project, but resolved in the same
@@ -74,7 +91,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	// Lock held for an Operation that never runs.
 	submodules, err := resolveSubmodules(t.Clone, o.cloneSubmodules, o.allowedOverrides)
 	if err != nil {
-		return rejectedResult(t, err.Error())
+		return reject(err.Error())
 	}
 
 	isPlan := t.Operation == p.GetPlanOperation()
@@ -97,7 +114,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	// changes, by which point the author's belief about what they applied
 	// is wrong with nothing on the page to correct it.
 	if !isPlan && len(t.ExtraArgs) > 0 {
-		return rejectedResult(t, fmt.Sprintf(
+		return reject(fmt.Sprintf(
 			"%q does not accept arguments (got %s); it replays the scope the plan recorded. Pass arguments to %q instead.",
 			t.Operation, strings.Join(t.ExtraArgs, " "), p.GetPlanOperation(),
 		))
@@ -125,7 +142,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		acquired, _, err := o.locks.AcquireForPlan(ctx, key, pr.Number, pullRequestURL(repo.Owner, repo.Name, pr.Number), t.TriggeredBy)
 		if err != nil {
 			metrics.LockAttempt("rejected")
-			return rejectedResult(t, fmt.Sprintf("acquiring lock: %v", err))
+			return reject(fmt.Sprintf("acquiring lock: %v", err))
 		}
 		if !acquired {
 			metrics.LockAttempt("rejected")
@@ -133,9 +150,9 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 			if err != nil || !status.Locked {
 				// The holder could not be determined, so the message says
 				// the Project is locked without inventing a reference.
-				return rejectedResult(t, "locked by another PR")
+				return reject("locked by another PR")
 			}
-			rejected := rejectedResult(t, fmt.Sprintf("locked by PR #%d", status.PRNumber))
+			rejected := reject(fmt.Sprintf("locked by PR #%d", status.PRNumber))
 			// The URL was already in the status being read; carrying it
 			// lets the comment link to the blocking pull request rather
 			// than merely naming a number (Requirement 7.2).
@@ -149,11 +166,11 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	} else {
 		locked, err := o.locks.IsLockedByPR(ctx, key, pr.Number)
 		if err != nil || !locked {
-			return rejectedResult(t, "no lock (or a different PR's lock) is held; a new plan is required")
+			return reject("no lock (or a different PR's lock) is held; a new plan is required")
 		}
 		status, err := o.locks.GetLockStatus(ctx, key)
 		if err != nil {
-			return rejectedResult(t, fmt.Sprintf("reading lock: %v", err))
+			return reject(fmt.Sprintf("reading lock: %v", err))
 		}
 		// One condition where there were two, and the refusals are worded
 		// apart on purpose: "nothing was ever recorded" and "what was
@@ -162,9 +179,9 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		switch status.State {
 		case lock.StatePlanReady:
 		case lock.StatePlanStale:
-			return rejectedResult(t, "the recorded plan is no longer valid — a new commit, a failed plan, or an operation that did not complete has superseded it. Re-plan before retrying.")
+			return reject("the recorded plan is no longer valid — a new commit, a failed plan, or an operation that did not complete has superseded it. Re-plan before retrying.")
 		default:
-			return rejectedResult(t, "no plan recorded; a new plan is required")
+			return reject("no plan recorded; a new plan is required")
 		}
 		// Every mutating Operation replays the recorded plan, not just the
 		// apply: a sync that ran unscoped after a scoped diff would change
@@ -177,9 +194,9 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		plan, err := o.locks.GetPlan(ctx, key, pr.Number)
 		if err != nil {
 			if errors.Is(err, lock.ErrNoPlan) {
-				return rejectedResult(t, "no plan recorded; a new plan is required")
+				return reject("no plan recorded; a new plan is required")
 			}
-			return rejectedResult(t, fmt.Sprintf("retrieving plan: %v", err))
+			return reject(fmt.Sprintf("retrieving plan: %v", err))
 		}
 		planData = plan.Data
 		execArgs = plan.Args
@@ -235,7 +252,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		CreatedAt:         time.Now(),
 	}
 	if err := o.records.Create(ctx, rec); err != nil {
-		return rejectedResult(t, fmt.Sprintf("creating operation record: %v", err))
+		return reject(fmt.Sprintf("creating operation record: %v", err))
 	}
 
 	// Subscribe before creating the Job: publishDone must never be able to
@@ -270,7 +287,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	})
 	if err != nil {
 		o.deleteRecord(ctx, operationID)
-		return rejectedResult(t, fmt.Sprintf("building job: %v", err))
+		return reject(fmt.Sprintf("building job: %v", err))
 	}
 
 	created, err := o.jobs.Create(ctx, job)
@@ -284,21 +301,27 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 				Text:    fmt.Sprintf("creating Runner Job: %v", err),
 			})
 		}
-		return rejectedResult(t, fmt.Sprintf("creating job: %v", err))
+		return reject(fmt.Sprintf("creating job: %v", err))
 	}
+	log.InfoContext(ctx, "runner job created", "operation_id", operationID, "job", created.Name)
 	if err := o.records.SetJobName(ctx, operationID, created.Name); err != nil {
 		slog.ErrorContext(ctx, "recording job name for operation", "operation_id", operationID, "error", err)
 	}
 
 	<-done
 	if waitErr != nil {
-		return rejectedResult(t, fmt.Sprintf("waiting for result: %v", waitErr))
+		return reject(fmt.Sprintf("waiting for result: %v", waitErr))
 	}
 	outcome := "failure"
 	if waitResult.Success {
 		outcome = "success"
 	}
 	metrics.OperationDispatched(t.Project.Tool, t.Operation, outcome)
+	log.InfoContext(ctx, "operation finished",
+		"operation_id", operationID,
+		"outcome", outcome,
+		"duration", time.Since(start).Round(time.Millisecond).String(),
+	)
 	return waitResult
 }
 

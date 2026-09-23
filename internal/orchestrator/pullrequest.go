@@ -163,6 +163,7 @@ func (o *Orchestrator) handlePRClosed(ctx context.Context, client github.GitHubC
 				continue
 			}
 			if tr.Released {
+				slog.InfoContext(ctx, "lock released on PR close", "lock_key", key, "pr_number", prNumber)
 				unlocked = append(unlocked, project.Name)
 			}
 		}

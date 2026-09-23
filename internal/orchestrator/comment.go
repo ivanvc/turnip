@@ -47,6 +47,17 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 
 	authorizer := github.NewAuthorizer(client)
 	isCollaborator, err := authorizer.IsCollaborator(ctx, owner, repoName, event.Comment.Author)
+	if err != nil {
+		// Answered below as "no permission", which is what the author
+		// sees; the actual failure is only ever visible here.
+		slog.ErrorContext(ctx, "checking collaborator permission",
+			"owner", owner, "repo", repoName, "pr_number", event.PullRequest.Number,
+			"actor", event.Comment.Author, "error", err)
+	} else if !isCollaborator {
+		slog.InfoContext(ctx, "refusing comment trigger from a non-collaborator",
+			"owner", owner, "repo", repoName, "pr_number", event.PullRequest.Number,
+			"actor", event.Comment.Author)
+	}
 	if err != nil || !isCollaborator {
 		_, postErr := client.PostComment(ctx, owner, repoName, event.PullRequest.Number,
 			fmt.Sprintf("@%s does not have permission to trigger operations on this repository.", event.Comment.Author))
@@ -271,6 +282,13 @@ func (o *Orchestrator) handleUnlock(ctx context.Context, cfg *config.Config, cmd
 	}
 
 	hasWrite, err := authorizer.HasWritePermission(ctx, repo.Owner, repo.Name, author)
+	if err != nil {
+		slog.ErrorContext(ctx, "checking write permission for unlock",
+			"owner", repo.Owner, "repo", repo.Name, "pr_number", prNumber, "actor", author, "error", err)
+	} else if !hasWrite {
+		slog.InfoContext(ctx, "refusing unlock from an author without write permission",
+			"owner", repo.Owner, "repo", repo.Name, "pr_number", prNumber, "actor", author)
+	}
 	if err != nil || !hasWrite {
 		return fmt.Sprintf("@%s does not have write permission required to unlock.", author)
 	}
@@ -285,6 +303,7 @@ func (o *Orchestrator) handleUnlock(ctx context.Context, cfg *config.Config, cmd
 		tr, err := o.locks.Apply(ctx, key, prNumber, lock.EventUnlocked, nil)
 		switch {
 		case err == nil && tr.Released:
+			slog.InfoContext(ctx, "lock released via unlock command", "lock_key", key, "pr_number", prNumber, "actor", author)
 			unlocked = append(unlocked, project.Name)
 		case err == nil:
 			// No Lock was held for this Project. Releasing reported success

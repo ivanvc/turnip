@@ -139,6 +139,19 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 	}
 	ev, planRec := o.lockEventFor(rec, result.Success, summary, result.PlanData)
 	tr, lockErr := o.locks.Apply(ctx, rec.ProjectKey, rec.PRNumber, ev, planRec)
+	if lockErr == nil {
+		slog.InfoContext(ctx, "operation result received",
+			"operation_id", operationID,
+			"lock_key", rec.ProjectKey,
+			"pr_number", rec.PRNumber,
+			"operation", rec.Operation,
+			"success", result.Success,
+			"lock_event", string(ev),
+			"lock_from", string(tr.From),
+			"lock_to", string(tr.To),
+			"lock_released", tr.Released,
+		)
+	}
 	switch {
 	case lockErr != nil:
 		slog.ErrorContext(ctx, "applying lock event", "operation_id", operationID, "event", string(ev), "error", lockErr)
