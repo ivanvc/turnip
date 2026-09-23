@@ -2364,7 +2364,7 @@ that set one (`execute.go:198`, `execute.go:284`, `result.go:93`,
 |---|---|---|
 | plan with changes | `success` | `+1 ~4 -2` |
 | plan with none | `success` | `no changes` |
-| scoped plan | `success` | `+0 ~1 -0 · -l name=api` |
+| scoped plan | `success` | `+0 ~1 -0, -l name=api` |
 | timed out | `timed out` | the diagnostic already built |
 | failed | `failure` | `exit N`, or `ErrorMessage` when set |
 

@@ -67,13 +67,13 @@ func TestParseChangedReleases(t *testing.T) {
 // inflating the count a reviewer reads.
 func TestParseChangedReleases_IgnoresTurnipsOwnAnnotations(t *testing.T) {
 	withTranscript := strings.Join([]string{
-		"# turnip · /turnip/src/env · helmfile v0.169.0",
-		"# turnip · helmfile --environment staging diff",
+		"@@ turnip: /turnip/src/env, helmfile v0.169.0 @@",
+		"@@ turnip: helmfile --environment staging diff @@",
 		"Comparing release=web, chart=charts/web",
 		"web, Deployment (apps) has changed:",
 		"  some diff body",
 		"Comparing release=api, chart=charts/api",
-		"# turnip · exit 0 · 1.2s",
+		"@@ turnip: exit 0 in 1.2s @@",
 	}, "\n")
 
 	assert.Equal(t, 1, parseChangedReleases(withTranscript),

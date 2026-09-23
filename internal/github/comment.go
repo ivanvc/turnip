@@ -2,6 +2,7 @@ package github
 
 import (
 	"fmt"
+	"html"
 	"strings"
 )
 
@@ -395,7 +396,7 @@ func buildFooter(results []ProjectResult) string {
 		}
 	}
 
-	return body + "\n`/turnip apply` · `/turnip unlock`"
+	return body + "\n`/turnip apply` or `/turnip unlock`"
 }
 
 // buildDetailSectionPart renders one self-contained <details> piece
@@ -429,6 +430,13 @@ func buildDetailSectionPart(r ProjectResult, chunk string, part, total int) stri
 // carries the whole per-Project verdict: status, name, Operation, and
 // what changed.
 //
+// It is interpolated into <summary>, an HTML element GitHub does not parse
+// markdown inside: code is <code>, not backticks, and every value is
+// HTML-escaped — the Project name comes from turnip.yaml, and one carrying
+// "</summary>" would otherwise rewrite the comment's structure. Plain
+// punctuation joins the parts; the name is in code, as the headline above
+// the sections renders it.
+//
 // Counts are rendered only for a successful Operation. A failure reports
 // no usable counts — presenting its zeroes would make a run that never
 // completed look like one that planned nothing.
@@ -441,9 +449,10 @@ func summaryLine(r ProjectResult) string {
 		detail = fmt.Sprintf("+%d ~%d -%d", r.Changes.Add, r.Changes.Change, r.Changes.Destroy)
 	}
 
-	line := fmt.Sprintf("%s %s · %s · %s", statusMark(r.Success), r.ProjectName, r.Operation, detail)
+	line := fmt.Sprintf("%s <code>%s</code>: %s, %s",
+		statusMark(r.Success), html.EscapeString(r.ProjectName), html.EscapeString(r.Operation), detail)
 	if marker := scopeMarker(r.ScopeArgs); marker != "" {
-		line += " · " + marker
+		line += ", " + marker
 	}
 	return line
 }
@@ -461,10 +470,10 @@ const scopeMarkerWidth = 40
 // tool gains a flag; this reports what was passed, and the reader, who
 // knows their own tool, decides what it meant.
 //
-// The span is widened past the longest backtick run in the arguments, for
-// the same reason the output fence is: an argument carrying a backtick
-// would otherwise close the span and render the rest as markdown, inside a
-// comment authored by turnip.
+// The arguments come from the trigger comment and land inside <summary>,
+// so they are HTML-escaped — which is also what keeps an argument carrying
+// "</code>" or a backtick from breaking out. Truncated before escaping, so
+// the cut can never land inside an entity such as "&amp;".
 func scopeMarker(args []string) string {
 	if len(args) == 0 {
 		return ""
@@ -474,24 +483,7 @@ func scopeMarker(args []string) string {
 	if runes := []rune(joined); len(runes) > scopeMarkerWidth {
 		joined = string(runes[:scopeMarkerWidth-1]) + "…"
 	}
-
-	longest, run := 0, 0
-	for _, r := range joined {
-		if r == '`' {
-			run++
-			longest = max(longest, run)
-			continue
-		}
-		run = 0
-	}
-
-	tick := strings.Repeat("`", longest+1)
-	// A span whose content starts or ends with a backtick needs padding
-	// spaces, which CommonMark strips when rendering.
-	if strings.HasPrefix(joined, "`") || strings.HasSuffix(joined, "`") {
-		return tick + " " + joined + " " + tick
-	}
-	return tick + joined + tick
+	return "<code>" + html.EscapeString(joined) + "</code>"
 }
 
 // nextSteps prints the commands that act on this Project alone.

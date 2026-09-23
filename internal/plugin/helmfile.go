@@ -54,26 +54,24 @@ func (p *HelmfilePlugin) Execute(ctx context.Context, operation string, opts Exe
 	args = append(args, operation)
 	args = append(args, opts.ExtraArgs...)
 
-	stdout, stderr, exitCode, err := p.run(ctx, opts.WorkingDir, "helmfile", args, opts.ToolVersion, opts.OnOutput)
+	lines, exitCode, err := p.run(ctx, opts.WorkingDir, "helmfile", args, opts.ToolVersion, opts.OnOutput)
 	if err != nil {
 		return nil, err
 	}
 
-	output := string(stdout)
-	if len(stderr) > 0 {
-		if output != "" {
-			output += "\n"
-		}
-		output += string(stderr)
-	}
-
 	var summary ChangeSummary
 	if operation == "diff" {
-		summary.Change = parseChangedReleases(strings.TrimRight(output, "\n"))
+		// stdout only. Helmfile writes "Comparing release=" and each
+		// release's diff there, and its progress and errors ("Building
+		// dependency", "Adding repo", a failed helm diff) to stderr — which,
+		// interleaved into the record, would otherwise read as the body of
+		// whichever release preceded it and count an unchanged one as
+		// changed.
+		summary.Change = parseChangedReleases(strings.TrimRight(streamText(lines, "stdout"), "\n"))
 	}
 
 	return &ExecuteResult{
-		Output:        output,
+		Output:        outputText(lines),
 		ChangeSummary: summary,
 		PlanData:      nil,
 		ExitCode:      exitCode,

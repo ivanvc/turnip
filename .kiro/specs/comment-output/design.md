@@ -22,7 +22,7 @@ that lives elsewhere. So the work divides in two: decide what
 **4 changes across 3 projects** — 1 with no changes, 1 failed.
 
 <details>
-<summary>✅ infra · +0 ~4 -0</summary>
+<summary>✅ <code>infra</code>: diff, +0 ~4 -0</summary>
 
 ```diff
 <Output verbatim>
@@ -34,18 +34,22 @@ that lives elsewhere. So the work divides in two: decide what
 </details>
 
 <details>
-<summary>✅ apps · no changes</summary>
+<summary>✅ <code>apps</code>: diff, no changes</summary>
 ...
 </details>
 
 <details>
-<summary>❌ edge · failed</summary>
+<summary>❌ <code>edge</code>: diff, failed</summary>
 ...
 </details>
 
 This pull request holds locks on `infra` until applied or released.
-`/turnip apply` · `/turnip unlock`
+`/turnip apply` or `/turnip unlock`
 ```
+
+Labels use plain punctuation and `<code>` inside `<summary>`, as revised
+by Slice 33's Decision 10; the operation name on the summary line was
+added there too.
 
 No summary table — global Requirements 10.2 and 17.3 were amended for
 this slice. The scanning a table provided comes from the `<summary>`
@@ -226,7 +230,7 @@ comment nobody can re-render.
 | A Project failed | its section prints re-plan only, never apply |
 | Counts unavailable | summary line omits them; no zeros are invented |
 | Contention | the whole comment is the rejection; no sections, no apply invitation |
-| Project name containing backticks | rendered inside the summary line as plain text, not inline code, so it cannot break out |
+| Project name containing backticks or markup | rendered in `<code>` and HTML-escaped, so it cannot break out of `<summary>` (Slice 33, Decision 10) |
 | A single section larger than the whole budget | tier 2 of Decision 6: bytes are cut from the front of that section's output and its `<details>` and fence are reopened verbatim. Reachable only when the section's scaffold alone exceeds the budget, since `splitDetailSection` otherwise pre-sizes every piece |
 | Every section dropped, nothing left | cannot occur: tier 1 stops at the last section and hands it to tier 2 |
 

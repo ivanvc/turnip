@@ -189,3 +189,99 @@ is the only ordering constraint inside the Runner half.
     happens to look unchanged.
   - The marker is per Project: a trigger with arguments and no names,
     resolving to two Projects, marks both.
+
+## Amendment: output replayed as it happened, labels as written (Requirements 8–10)
+
+Reported from a real Helmfile diff: the trailer sat between the manifests
+and Helmfile's own stderr, which had been written first (Requirement 8,
+Decision 9). Reviewing the same comment: turnip's `#` lines looked like
+the tool's own, the scope marker's backticks rendered literally inside
+`<summary>`, and labels leaned on a decorative ` · ` separator
+(Requirements 9–10, Decisions 2 and 10, both revised in place).
+
+- [x] 14. The seam captures one ordered record
+  - [x] 14.1 `OutputLine` and the new `commandRunner` signature
+    - Returns `(lines []OutputLine, exitCode int, err error)` per
+      Decision 9; the transcript's lines are tagged `stdout`
+    - _Requirements: 8.1, 8.5_
+  - [x] 14.2 One consumer for both pipes
+    - Both scanners send `(stream, line)` to one channel; a single
+      goroutine appends to the record and calls `onOutput`, in that
+      order, so the two views share one sequence
+    - No lock held across `onOutput` (Decision 9, the reporter may block)
+    - Scanner errors still surface as today
+    - _Requirements: 8.1, 8.4_
+  - [x] 14.3 The trailer closes the record
+    - Appended only after both scanners have drained, then mirrored to
+      `onOutput`
+    - Remove the code comment that calls the misplacement cosmetic
+    - _Requirements: 8.2, 3.5_
+  - [x] 14.4 Real-process tests in `command_test.go`
+    - stdout, stderr, stdout with sleeps between: returned in that order,
+      header first, trailer last
+    - The sequence passed to `onOutput` equals the returned record
+    - Existing assertions ported from the two buffers to the record
+    - _Requirements: 8.1, 8.2, 8.4_
+
+- [x] 15. The Helmfile plugin composes from the record
+  - [x] 15.1 `Output` is every line's text, joined in record order —
+    the `stdout + "\n" + stderr` join goes
+    - _Requirements: 8.1_
+  - [x] 15.2 The change count reads stdout only
+    - `parseChangedReleases` receives the record's stdout lines
+    - Tests: an unchanged last release followed by stderr counts no
+      change; a stderr line between two releases changes neither
+    - Mutation check: passing the whole record must fail one of them
+    - _Requirements: 8.6_
+  - [x] 15.3 `fakeRunner` returns a record
+    - Fixtures state their interleaving explicitly rather than as two
+      buffers
+    - _Requirements: 8.5_
+
+- [x] 16. Checkpoint - output is in execution order
+  - `go build ./...`, `go test -race ./...` and golangci-lint all pass.
+  - A Helmfile diff whose stderr precedes its diff renders in that order
+    in the comment, with the trailer as the fence's last line.
+  - Multi-command readiness (3.5): nothing in the seam or the Plugin
+    assumes one command per Operation — each call produces its own
+    complete record.
+
+- [x] 17. The transcript speaks as `@@ turnip: … @@`
+  - [x] 17.1 `transcriptPrefix` becomes `@@ turnip: `; every line closes
+    with ` @@`
+    - Provenance: `@@ turnip: <dir>, <tool> <version> @@`
+    - Command: `@@ turnip: <resolved argv> @@`
+    - Trailer: `@@ turnip: exit <code> in <duration> @@`
+    - _Requirements: 9.1, 9.2, 9.3_
+  - [x] 17.2 The change-count parser still skips every transcript line
+    - Existing trailer-after-unchanged-release test ported to the new
+      marker
+    - _Requirements: 9.1_
+
+- [x] 18. Labels in plain punctuation, rendered as HTML where they sit in HTML
+  - [x] 18.1 Summary line per Decision 10's table, for every outcome and
+    for a scoped Operation; the `(output part N/M)` suffix unchanged
+    - _Requirements: 10.1, 10.2_
+  - [x] 18.2 Project name and scope marker in `<code>`, each through
+    `html.EscapeString`; the marker truncated before escaping; the
+    backtick-widening logic removed
+    - Tests: `<`, `&` and `</summary>` in a project name and in an
+      argument render escaped; a long argument containing `&` is never
+      cut mid-entity; dropping the escape fails a specific test
+    - _Requirements: 10.3, 10.4_
+  - [x] 18.3 Footer: `` `/turnip apply` or `/turnip unlock` ``
+    - _Requirements: 10.1_
+
+- [x] 19. Documentation
+  - `docs/usage.md`: the transcript example, the summary-line examples,
+    and the sentence naming the annotation prefix
+  - _Requirements: 7.2, 9.1, 10.2_
+
+- [x] 20. Checkpoint - the amendment is done
+  - `go build ./...`, `go test -race ./...` and golangci-lint all pass.
+  - `grep -rn "·" --include=*.go internal cmd` finds no display string.
+  - A scoped Helmfile diff renders in execution order, framed by
+    highlighted `@@ turnip:` lines, under a summary line whose `<code>`
+    renders as code.
+  - Slice 35's roadmap row already carries the new title format; its
+    implementation inherits Requirement 10.5.

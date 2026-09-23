@@ -333,10 +333,10 @@ recorded. Those are covered in their own sections above.
 
   Below it, one collapsible section per project. Each section's heading
   stays visible while collapsed and carries that project's status and
-  change counts (`✅ web · diff · +1 ~4 -2`), so a run across many
+  change counts (✅ `web`: diff, +1 ~4 -2), so a run across many
   projects is scannable at a glance. When the operation ran with extra
   arguments, the heading carries them too
-  (`✅ web · diff · +0 ~1 -0 · -l name=api`), so you can tell a scoped
+  (✅ `web`: diff, +0 ~1 -0, `-l name=api`), so you can tell a scoped
   run from one that looked at the whole project without expanding it. Expanding one shows the full command
   output, followed by the commands that act on **that project alone**:
 
@@ -348,16 +348,21 @@ recorded. Those are covered in their own sections above.
 
 ### What turnip ran
 
-Each project's output opens and closes with turnip's own lines, marked
-`# turnip · ` so they are never confused with the tool's:
+Each project's output opens and closes with turnip's own lines, written
+as `@@ turnip: … @@` so they are never confused with the tool's — GitHub
+highlights them the way it highlights a diff's hunk headers:
 
-```
-# turnip · env/staging · helmfile v0.169.0
-# turnip · helmfile --environment staging diff -l name=api
+```diff
+@@ turnip: env/staging, helmfile v0.169.0 @@
+@@ turnip: helmfile --environment staging diff -l name=api @@
 Comparing release=api, chart=charts/api
 ...
-# turnip · exit 0 · 4.2s
+@@ turnip: exit 0 in 4.2s @@
 ```
+
+In between is the tool's output exactly as it was written: its standard
+output and standard error interleaved in the order they arrived, not one
+after the other — so a warning appears where it happened, not at the end.
 
 They record what actually ran, including arguments turnip supplies that
 you never typed — `--environment` above comes from the project's own

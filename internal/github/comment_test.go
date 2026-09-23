@@ -210,7 +210,7 @@ func TestBuildConsolidatedComment_SummaryLineCarriesStatusAndCounts(t *testing.T
 	})
 	require.Len(t, bodies, 1)
 
-	assert.Contains(t, bodies[0], "<summary>✅ infra · diff · +1 ~4 -2</summary>")
+	assert.Contains(t, bodies[0], "<summary>✅ <code>infra</code>: diff, +1 ~4 -2</summary>")
 }
 
 // Requirement 2.3: a Project that reported no changes says so, rather than
@@ -221,7 +221,7 @@ func TestBuildConsolidatedComment_NoChangesSaysSoRatherThanZeros(t *testing.T) {
 	})
 	require.Len(t, bodies, 1)
 
-	assert.Contains(t, bodies[0], "<summary>✅ apps · diff · no changes</summary>")
+	assert.Contains(t, bodies[0], "<summary>✅ <code>apps</code>: diff, no changes</summary>")
 	assert.NotContains(t, bodies[0], "+0 ~0 -0")
 }
 
@@ -235,7 +235,7 @@ func TestBuildConsolidatedComment_FailureShowsNoCounts(t *testing.T) {
 	})
 	require.Len(t, bodies, 1)
 
-	assert.Contains(t, bodies[0], "<summary>❌ edge · diff · failed</summary>")
+	assert.Contains(t, bodies[0], "<summary>❌ <code>edge</code>: diff, failed</summary>")
 	assert.NotContains(t, bodies[0], "+9 ~9 -9",
 		"counts from an Operation that did not complete must not be shown")
 }
@@ -464,7 +464,7 @@ func TestBuildConsolidatedComment_ScopeMarker(t *testing.T) {
 			ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: "no changes",
 		}})
 		require.Len(t, parts, 1)
-		assert.NotContains(t, parts[0], "·  ·")
+		assert.Contains(t, parts[0], "<summary>✅ <code>web</code>: diff, no changes</summary>")
 	})
 
 	t.Run("verbatim, uninterpreted", func(t *testing.T) {
@@ -473,7 +473,8 @@ func TestBuildConsolidatedComment_ScopeMarker(t *testing.T) {
 			ScopeArgs: []string{"-l", "name=api"},
 		}})
 		require.Len(t, parts, 1)
-		assert.Contains(t, parts[0], "-l name=api")
+		assert.Contains(t, parts[0], "<summary>✅ <code>web</code>: diff, no changes, <code>-l name=api</code></summary>",
+			"<code>, not backticks: GitHub does not parse markdown inside <summary>")
 	})
 
 	t.Run("truncated, without splitting a rune", func(t *testing.T) {
@@ -484,25 +485,33 @@ func TestBuildConsolidatedComment_ScopeMarker(t *testing.T) {
 		assert.Contains(t, marker, "…")
 	})
 
-	t.Run("an argument carrying a backtick cannot close the span", func(t *testing.T) {
-		marker := scopeMarker([]string{"-l", "name=`x`"})
-		// The delimiter must be longer than any run inside it.
-		delim := 0
-		for delim < len(marker) && marker[delim] == '`' {
-			delim++
-		}
-		inner := strings.Trim(marker, "`")
-		run, longest := 0, 0
-		for _, r := range inner {
-			if r == '`' {
-				run++
-				longest = max(longest, run)
-				continue
-			}
-			run = 0
-		}
-		assert.Less(t, longest, delim, "a run inside must not close the span")
+	t.Run("an argument carrying markup is escaped, not rendered", func(t *testing.T) {
+		parts := BuildConsolidatedComment([]ProjectResult{{
+			ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: "x",
+			ScopeArgs: []string{"-l", "name=</code></summary><a href=x>`&`"},
+		}})
+		require.Len(t, parts, 1)
+		assert.Contains(t, parts[0],
+			"<code>-l name=&lt;/code&gt;&lt;/summary&gt;&lt;a href=x&gt;`&amp;`</code></summary>")
+		assert.Equal(t, 1, strings.Count(parts[0], "</summary>"), "the argument cannot close the summary")
+		assert.NotContains(t, parts[0], "<a href")
 	})
+
+	t.Run("truncated before escaping, so no entity is cut", func(t *testing.T) {
+		// The 39th and 40th runes are "&"; escaping first would put the cut
+		// inside "&amp;".
+		marker := scopeMarker([]string{strings.Repeat("a", 38) + "&&&"})
+		assert.Equal(t, "<code>"+strings.Repeat("a", 38)+"&amp;…</code>", marker)
+	})
+}
+
+// A Project name comes from turnip.yaml and lands in the same <summary>.
+func TestBuildConsolidatedComment_ProjectNameIsEscapedInTheSummary(t *testing.T) {
+	parts := BuildConsolidatedComment([]ProjectResult{{
+		ProjectName: "a<b>&c", Tool: "helmfile", Operation: "diff", Success: true, Output: "x",
+	}})
+	require.Len(t, parts, 1)
+	assert.Contains(t, parts[0], "<summary>✅ <code>a&lt;b&gt;&amp;c</code>: diff, no changes</summary>")
 }
 
 // Requirement 2: the footer says applying replays a recorded scope, and
@@ -527,7 +536,7 @@ func TestBuildConsolidatedComment_FooterIsScopeAware(t *testing.T) {
 
 	assert.NotContains(t, withScope, "/turnip apply -l",
 		"a command carrying the arguments would be refused if anyone pasted it")
-	assert.Contains(t, withScope, "`/turnip apply`")
+	assert.Contains(t, withScope, "`/turnip apply` or `/turnip unlock`")
 }
 
 // Per Project, not once per comment. ParseTriggers stops collecting

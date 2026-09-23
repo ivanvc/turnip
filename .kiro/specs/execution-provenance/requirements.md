@@ -52,6 +52,9 @@ Terms additional to the global spec's glossary:
   typed — today only `--environment <env>`, from the Project's `config`.
 - **Resolved_Command**: the argv turnip actually passes to the tool —
   Injected_Arguments, the Operation, and Trailing_Arguments, in that order.
+- **Output_Record** *(amendment)*: one command's output as a single
+  sequence of lines in the order they arrived, each tagged with the
+  stream it came from — the Execution_Transcript's lines included.
 
 ## Requirements
 
@@ -221,6 +224,113 @@ scrutinises most.*
    of what ran, and SHALL state that it carries arguments but never the
    environment
 
+### Requirement 8: Output is replayed as it happened (amendment)
+
+**User Story:** As a reader of a pull request comment or a live log, I
+want a command's output in the order the tool produced it, stdout and
+stderr interleaved as they were written, so that the record does not
+tell a different story from the run.
+
+*Why this is an amendment, not a new slice.* Requirement 3.5 already
+asks for the transcript "in execution order", and this slice introduced
+the header and trailer whose placement made the violation visible.
+The Helmfile plugin composed `Output` as all of stdout followed by all of
+stderr, so on a real diff the trailer (`# turnip · exit 0 · 13.46s`)
+landed after the manifests and before the `Adding repo …` lines Helmfile
+had written to stderr *first*. The out-of-scope entry below that called
+this cosmetic is withdrawn: grouping by stream misstates chronology,
+and misstated chronology is misleading, not cosmetic. With more than one
+command (Slice 7's `init` then `plan`) the first command's stderr would
+land after the second command's trailer, breaking 3.5 outright.
+
+The same grouping carried a second defect, older than this slice (the
+join dates from Slice 2): the Helmfile change count treats any non-empty
+line after a `Comparing release=` line as that release's diff, so stderr
+appended after the last release made an unchanged last release count as
+changed. It is fixed here because it cannot be fixed separately —
+interleaving puts stderr lines *between* releases, so the count has to
+stop reading stderr either way.
+
+#### Acceptance Criteria
+
+1. THE captured output of a command SHALL be one Output_Record: stdout
+   and stderr lines interleaved in the order they arrived, never grouped
+   by stream
+2. THE Execution_Transcript's header SHALL be the first line of a
+   command's Output_Record and its trailer SHALL be the last — after
+   every line of either stream
+3. WHERE an Operation runs more than one command, each command's
+   Output_Record SHALL be complete, trailer included, before the next
+   command's begins
+4. THE live output stream (`onOutput`) and the captured Output SHALL
+   present a command's lines in the same order
+5. Every line SHALL keep the stream it came from, so a consumer other
+   than the rendered comment — the change count, Slice 26's live view —
+   can tell them apart
+6. A value a Plugin derives from output (a change count) SHALL be
+   computed only from the stream that carries the tool's result, so a
+   line on the other stream cannot alter it. For Helmfile that is stdout:
+   observed with helmfile 1.7.4, `Comparing release=` lines and diff
+   bodies are written to stdout, and progress and errors (`Building
+   dependency`, `Adding repo`, a failed `helm diff`) to stderr
+
+*Rationale for 8.1 over exact ordering: see design.md Decision 9 — two
+pipes give arrival order, which is exact within a stream and
+near-exact across them; the one arrangement that would be exact across
+them loses 8.5.*
+
+### Requirement 9: turnip's annotations stand out from the tool's (amendment)
+
+**User Story:** As a reader, I want turnip's lines in the output to look
+unlike anything the tool prints, so that I never mistake one for the
+other.
+
+*Why.* The transcript was prefixed `#` so it would render as a muted
+comment. But `#` is the tools' own annotation syntax — Terraform's
+`# aws_instance.web will be created`, Helm's `# Source:` — so turnip's
+voice was styled exactly like the tool's, and muted besides.
+
+#### Acceptance Criteria
+
+1. Every Execution_Transcript line SHALL have the form
+   `@@ turnip: <text> @@`, which a `diff` fence renders as a hunk header
+   — highlighted, and unlike any line Helmfile, Helm, Terraform or Pulumi
+   prints
+2. THE text between the markers SHALL be written as a phrase, not as
+   fields joined by a separator glyph (Requirement 10.1)
+3. Requirement 6.1 is unchanged: no annotation begins with `+` or `-`
+
+### Requirement 10: Display labels use plain punctuation and render as written (amendment)
+
+**User Story:** As a reader, I want labels that read as ordinary text and
+render the way they are written, so that the comment neither looks
+machine-decorated nor shows raw markup.
+
+*Why.* Labels joined fields with ` · `, a decorative glyph that reads as
+generated rather than written. Separately, the scope marker was wrapped
+in backticks inside `<summary>`, which is an HTML element: GitHub renders
+backticks there literally, so the marker showed its own delimiters.
+
+#### Acceptance Criteria
+
+1. THE Server and Runner SHALL NOT join fields of a display label with a
+   decorative separator glyph (`·`, `•`, and the like); labels use plain
+   punctuation — a colon after the subject, commas between what follows,
+   and words (`or`, `in`) where a phrase reads better
+2. THE per-Project summary line SHALL read
+   `<status> <code><project></code>: <operation>, <outcome>`, followed,
+   where the Operation ran with Trailing_Arguments, by
+   `, <code><arguments></code>`; `<outcome>` is the change counts,
+   `no changes`, or `failed`
+3. Inside an HTML element, code SHALL be rendered with `<code>`, never
+   with backticks
+4. Every user-supplied value rendered inside an HTML element — Project
+   names and Trailing_Arguments — SHALL be HTML-escaped, and a value
+   truncated for width SHALL be truncated before it is escaped, so the
+   cut never splits an entity
+5. Check-run titles, which GitHub renders as plain text, SHALL follow
+   10.1 without markup
+
 ### Note: what Slice 18 changed underneath this
 
 Slice 18 landed after these requirements were written. Three things it
@@ -245,10 +355,13 @@ changed are load-bearing here:
 - **Classifying which arguments narrow scope.** Unchanged from Slice 20,
   and for its reason: a list of scope-affecting flags needs updating every
   time a tool gains one. This slice displays; it does not interpret.
-- **Distinguishing stdout from stderr in the transcript.** `execCommand`
+- ~~**Distinguishing stdout from stderr in the transcript.** `execCommand`
   already tags every line with its stream and the two are concatenated
   without a marker (`helmfile.go:62-68`). Using that tag is a real
-  improvement and a separate change; this slice must not make it harder.
+  improvement and a separate change; this slice must not make it harder.~~
+  *Withdrawn by Requirement 8.* The concatenation this entry described
+  is what put stderr after the trailer. Interleaving is now in scope;
+  *styling* stderr differently in the comment remains out of it.
 - **Serving output while it runs.** Slice 26 owns that. This slice is
   shaped so Slice 26 inherits the transcript rather than reimplementing it.
 - **Recording the concrete version that actually ran under a floating
