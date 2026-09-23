@@ -12,10 +12,12 @@ least one changed file — no comment needed. For Helmfile, "plan" means
 `helmfile diff`.
 
 Each triggered project gets its own check run
-(`turnip/<project>/<operation>`, e.g. `turnip/web/diff`) and a
+(`turnip/<operation>/<project>`, e.g. `turnip/diff/web`) and a
 consolidated PR comment summarizing every project touched by that PR
 (a verdict line up top, then one collapsible section per project) — see
-"What you'll see on the PR" below.
+"What you'll see on the PR" below. A single `turnip` check sums the pull
+request up; it is the one to require in branch protection — see
+"Requiring turnip before merge".
 
 ### Draft pull requests
 
@@ -321,11 +323,56 @@ refuses to act on a pull request from a fork, on one that is closed or
 merged, and refuses a mutating operation whose project has no valid plan
 recorded. Those are covered in their own sections above.
 
+## Requiring turnip before merge
+
+Mark **`turnip`** as a required status check in branch protection. Don't
+require the per-project checks (`turnip/diff/web` and so on): a pull
+request that doesn't touch `web` never reports `turnip/diff/web`, so
+requiring it blocks every such pull request forever.
+
+`turnip` answers one question: **has every plan this pull request made
+been carried out** — applied, or found to have nothing to apply? turnip
+never applies on merge, and merging releases the locks, so a plan left
+unapplied at merge would stay unapplied.
+
+| What's going on | `turnip` shows |
+|---|---|
+| No project's files changed | `skipped` — passes; there is nothing to plan |
+| Plans ran, nothing applied yet | **nothing** — GitHub shows the required check as "Expected — Waiting for status to be reported", which blocks the merge without a red ❌ |
+| Some projects applied, others waiting | in progress, e.g. "1/3 projects applied" |
+| Every project applied, or its plan found nothing to apply | `success` |
+| An apply (or `sync`) failed | `failure` |
+| `turnip.yaml` is invalid | `failure` |
+| An affected project uses a tool this server can't run | `failure`, naming the project and tool |
+
+Details worth knowing:
+
+- **Red means the author has something to fix.** A project waiting on
+  another pull request's lock, or a plan that failed and needs re-running,
+  keeps `turnip` from passing without turning it red.
+- **Whether a no-change plan needs an apply depends on the tool.** A plan
+  that finds nothing to apply counts as done — except for Helmfile, whose
+  `sync` acts even when the diff is empty, so a Helmfile project always
+  needs its apply or sync.
+- **`/turnip unlock` does not satisfy it.** Unlocking abandons a plan; it
+  doesn't carry it out. Push a new commit, or apply, to move `turnip`.
+- **Every project planned on the commit counts**, including one you
+  planned by name that the change doesn't touch — it took a lock and has a
+  plan waiting.
+- **Each commit starts fresh.** A push resets `turnip` to "Expected" on
+  the new commit until its plans are applied again.
+- **A repository with no `turnip.yaml` never reports `turnip`.** Requiring
+  it there blocks every pull request.
+
 ## What you'll see on the PR
 
 - **Check runs**, one per (project, operation), named
-  `turnip/<project>/<operation>` — `in_progress` while the Runner Job is
+  `turnip/<operation>/<project>` — `in_progress` while the Runner Job is
   executing, then `success`/`failure` with the tool's own output attached.
+  Operation first, so every `diff` (or every `sync`) lists together.
+- **The `turnip` check**, one per commit, once there is something to say:
+  whether every plan this pull request made has been carried out. See
+  "Requiring turnip before merge".
 - **A PR comment** consolidating every project touched by that trigger.
   It opens with a **verdict line** — the total change across every
   project, and how many reported no changes or failed — so you can tell

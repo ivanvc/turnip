@@ -45,8 +45,12 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 34 | What a Pull Request Must Satisfy Before an Apply | `apply-requirements` | Not Started | Slices 4, 6, 20 |
 | 35 | What the Checks List Says | `check-run-titles` | Not Started | Slices 6, 33, 37 |
 | 36 | A Blocked Operation Blocks the Merge, Visibly | `check-run-refusals` | Not Started | Slices 6, 32, 35, 37 |
-| 37 | One Check Branch Protection Can Require | `aggregate-check-run` | Not Started | Slices 6, 17 |
+| 37 | One Check Branch Protection Can Require | `aggregate-check-run` | Complete | Slices 6, 17 |
 | 38 | Encrypting the Runner-to-Server Channel | `runner-server-tls` | Not Started | Slice 25 |
+| 39 | Runner Pod Resources | `runner-resources` | Not Started | Slices 5, 13 |
+| 40 | Bounding How Long a Runner Runs | `runner-timeouts` | Not Started | Slices 5, 6 |
+| 41 | Runner Pods Run Without Disruption | `runner-disruption` | Not Started | Slices 5, 39, 40 |
+| 42 | The Workspace on a Per-Runner Volume | `runner-workspace-volume` | Not Started | Slices 12, 39 |
 
 ## Slice Details
 
@@ -2242,10 +2246,10 @@ this key is unlike its neighbours. `knownOverridePaths` stays at two.
 `mergeable_state` (`clean`/`blocked`/`behind`/`unstable`): it folds in
 required status checks, which is why Atlantis ships
 `--gh-allow-mergeable-bypass-apply` — "enable ability to use `mergeable`
-mode with required apply status check". If turnip's own
-`turnip/<project>/<operation>` checks are required by branch protection,
-the pull request cannot be `clean` until an apply runs and the apply will
-not run until it is `clean`.
+mode with required apply status check". If turnip's own `turnip` check
+(Slice 37) is required by branch protection — and by design it cannot pass
+until every plan is applied — the pull request cannot be `clean` until an
+apply runs and the apply will not run until it is `clean`.
 
 Use the **`mergeable` boolean**, which reports conflicts only. Then
 `mergeable` means "no merge conflict", `approved` means "someone signed
@@ -2280,7 +2284,7 @@ requirements need the Backlog's per-repository server configuration.
 
 ### Slice 37: One Check Branch Protection Can Require (`aggregate-check-run`)
 
-**Goal**: Give an operator a check run name that always reports, so that
+**Goal**: Give an operator one check run name that always reports, so that
 requiring turnip is possible at all.
 
 **What's wrong today**: turnip creates one check run per (Project,
@@ -2290,43 +2294,36 @@ per pull request. Mark `turnip/web/diff` required and any pull request
 that does not touch `web` never reports it — and blocks forever with
 nothing wrong. There is no name today that an operator can safely require.
 
-**Prior art, and it is unambiguous.** Atlantis publishes both, and the
-naming carries the relationship:
+**Delivers** (settled 2026-09-23; spec in `aggregate-check-run/`):
 
-| Name | Title |
-|---|---|
-| `atlantis/plan` | `1/1 projects planned successfully.` |
-| `atlantis/plan: environments/aws/cicd/default` | `Plan: 0 to add, 0 to change, 0 to destroy.` |
-| `atlantis/apply` | `1/1 projects applied successfully.` |
-| `atlantis/apply: environments/aws/cicd/default` | `Apply succeeded.` |
-
-The aggregate is `<tool>/<command>`; the per-Project run extends it with
-`: <project>`. The short name is what branch protection requires; the
-detail rows sort directly beneath it.
-
-**Delivers**: one additional check run per Operation kind, summarising
-every Project the trigger resolved — reported whatever that set is,
-**including empty**, which is the case that makes requiring it safe.
-
-**Open question, to settle before implementing: the naming scheme.**
-turnip's per-Project name is `turnip/<project>/<operation>` — Project
-first. Atlantis's is command-first. The difference is not cosmetic on a
-repository with many similar environments: command-first groups every plan
-together so "did all the plans pass" reads as one block, where
-Project-first interleaves each Project's plan and apply.
-
-Adopting `turnip/<operation>` and `turnip/<operation>: <project>` is a
-**breaking change** for anyone who has marked the current name required.
-There is one installation today, so it is nearly free now and expensive
-later. Worth deciding deliberately rather than inheriting.
-
-**What the aggregate says is its own question**, and the reason this is
-not folded into Slice 36: what it reports when Projects disagree (one
-failed, four succeeded), whether an empty match is success or a distinct
-state, and whether the per-Project runs remain at all once a reader has a
-summary. Atlantis's "1/1 projects planned successfully" answers the first
-by counting rather than by verdict, which composes with the verdict line
-turnip already builds for the comment.
+- **One check named `turnip`**, reporting a verdict on the pull request
+  rather than the outcome of a command. Operations are named in each
+  tool's own vocabulary (`diff`/`plan`/`preview`, `apply`/`sync`/`up`), so
+  any role-named aggregate would borrow one tool's word; a verdict needs
+  none. A stronger verdict later arrives as a setting, not a second name.
+- **What it asserts: every plan this pull request made has been carried
+  out** — applied, or found to have nothing to apply. turnip never applies
+  on merge and a merge releases the Locks, so a plan-only gate would let a
+  pull request merge with its plans unapplied and nothing left to apply
+  them.
+- **A per-pull-request, per-commit record** in Redis of each Project's
+  latest Outcome, derived from the `lock.Event` each Operation already
+  produces. Not read off the Lock: a Lock is released for reasons that
+  mean opposite things (applied, nothing to apply, a first plan that
+  failed, an unlock), and a Lock another pull request holds was never
+  this one's. Unlocking does not satisfy the check.
+- **Absent until the first apply** (a required check shows GitHub's
+  "Expected", which blocks without being red); then in progress while
+  anything awaits its apply; `success` when all are done; `failure` only
+  for something the author must fix — a failed apply, an invalid
+  `turnip.yaml`, an affected Project whose tool has no Plugin; `skipped`
+  when nothing is affected. A Project waiting on another pull request's
+  Lock blocks, and is never red.
+- **Per-Project checks renamed** to `turnip/<operation>/<project>`, so
+  every `diff` or every `sync` lists together. Breaking, and pre-1.0.
+- **HA without a lock**: any instance writes its Project's field, reads
+  the whole record, and publishes; after publishing it re-reads the
+  record's version and publishes again if it moved.
 
 **First of the three check-run slices**, and nothing blocks it. Slices 35
 and 36 both follow: 35 so its title sweep covers the check this one adds,
@@ -2348,7 +2345,7 @@ is the fragile arrangement described above.
 **What's wrong today**: turnip already computes the informative string and
 then puts it where it takes a click to see. A completed plan sets
 `Title: "success"` and `Summary: "add: 1, change: 4, destroy: 2"`, so the
-checks list reads `turnip/web/diff — success`, which says nothing the ✅
+checks list reads `turnip/diff/web — success`, which says nothing the ✅
 does not. The good string is one field away.
 
 The timeout path wastes it most: `timeoutDiagnostic` already builds
@@ -2370,7 +2367,8 @@ that set one (`execute.go:198`, `execute.go:284`, `result.go:93`,
 
 **The name is an identity, not a label.** None of this may move into the
 check run's *name*: branch protection's required-status-checks match on
-it, so `turnip/<project>/<operation>` has to stay stable. A name carrying
+it, so `turnip` and `turnip/<operation>/<project>` (Slice 37) have to
+stay stable. A name carrying
 change counts would mint a new required check on every run and never
 satisfy protection. Titles are free to change precisely because nothing
 matches on them.
@@ -2470,11 +2468,13 @@ the two drift, and a check whose title read `queued` would recreate the
 problem this slice is fixing.
 
 **Depends on Slice 37 for its point to land.** Per-Project check names
-are fragile as *required* checks: if `turnip/web/diff` is required, a pull
+are fragile as *required* checks: if `turnip/diff/web` is required, a pull
 request that does not touch `web` never reports it and blocks forever,
 with no Lock involved. Blocking the merge visibly only means something
 once there is a check an operator can actually require, which is Slice
-37.
+37's `turnip`. That check already keeps a Lock-blocked Project from
+passing and never reports it red; what this slice adds is the reason, on
+the Project's own check.
 
 ---
 
@@ -2531,6 +2531,378 @@ it read the certificate once at boot into a static
 `Orchestrator` construction. Invisible at a ten-year expiry; a recurring
 total outage at any renewal interval, which a restart appears to fix.
 Requirement 2 of the slice exists to prevent it.
+
+### Slice 39: Runner Pod Resources (`runner-resources`)
+
+**Goal**: Give every Runner Pod CPU, memory and ephemeral-storage requests
+and limits, with each request equal to its limit, so the scheduler
+reserves what a Job actually uses and a cluster autoscaler has a real
+number to scale on.
+
+**What is missing**: `internal/jobs` sets no `resources` on any container,
+so every Runner Pod is BestEffort. The scheduler places it as though it
+needs nothing, the autoscaler never adds a node on its account, and under
+node pressure it is the first Pod the kubelet evicts. An evicted Runner is
+not retried (`BackoffLimit` is 0, correctly) and, once started, is not
+noticed either — Slice 40 covers that; this slice keeps it from being
+evicted for want of a size.
+
+**Why request equals limit.** Mirroring the two puts the Pod in the
+Guaranteed QoS class — last in line for node-pressure eviction — and
+makes what the scheduler reserved the same as what the Job can consume. A
+Runner is a CI job: bursting past its request buys a little speed, and
+the price is being evicted or OOM-killed from a node that was never sized
+for it.
+
+**Ephemeral storage is not covered by QoS, so it is its own resource.**
+The QoS class looks only at CPU and memory. Under disk pressure the
+kubelet ranks Pods by how far their disk use exceeds their
+*ephemeral-storage request* — and a Runner with none is always over it,
+so it is evicted first however its CPU and memory are set. The workspace
+(`/turnip/src`) is an `emptyDir` on the node's disk, and it is where
+Terraform puts `.terraform` — modules and providers — so this is the
+resource that grows once Terraform Projects are onboarded. A request
+lets the scheduler avoid a nearly full node and the autoscaler provision
+disk; the equal limit makes a Runner that outgrows it fail loudly (the
+kubelet evicts it) rather than fill the node for every other Pod on it.
+The Pod-level limit counts the `emptyDir` volumes, the containers'
+writable layers and their logs together.
+
+**Configuration, in two layers.**
+
+| Layer | Form | Role |
+|---|---|---|
+| Server environment | one quantity per resource, e.g. `TURNIP_RUNNER_CPU`, `TURNIP_RUNNER_MEMORY`, `TURNIP_RUNNER_EPHEMERAL_STORAGE` | the operator's default for every Runner |
+| `turnip.yaml` | `runner.resources: {cpu: …, memory: …, ephemeralStorage: …}` on a Project | a Project that needs more (a large state refresh, many providers) or less |
+
+One value per resource, not a request and a limit: the premise is that
+they are equal, and two fields invite setting them apart.
+
+**No default in code or in the kustomize manifests** — by decision, not
+omission. The right size depends on the tool, the size of the state and
+the node shapes of the cluster; any number turnip picked would be wrong
+for most deployments while *looking* chosen. Unset means what it means
+today: no `resources` at all. `docs/configuration.md` documents the
+variables and the `turnip.yaml` field beside the other Runner settings;
+`docs/deployment.md` explains why an autoscaled cluster needs them set
+and gives starting points per tool — marked as starting points, not
+defaults.
+
+**Open questions for the slice's requirements:**
+
+- **Is a Project's value gated?** `turnip.yaml` is read from the pull
+  request's head commit, so a Project value is settable by whoever opens
+  the pull request. Resources grant no *access* — by Slice 31's rule
+  ("gate what grants capability") that argues for ungated — but they do
+  grant *cost*: `cpu: 64` makes an autoscaler buy a node. Either put it
+  behind `TURNIP_ALLOWED_OVERRIDES` like `serviceAccount`, or leave it
+  open and document a namespace `LimitRange` as the ceiling, which
+  Kubernetes enforces at admission with no turnip code.
+- **Which containers.** The clone and tool-provisioning init containers
+  run before the main one, and a Pod's effective request is the larger of
+  its biggest init container and its main container. Setting the same
+  values on all of them is the simple answer, and costs nothing because
+  init containers do not run alongside the main one.
+- **Validation.** A malformed quantity should fail at Server start (the
+  environment) and at `turnip.yaml` validation (a Project), with the
+  latter reported on the pull request like any other config error — not
+  discovered when the Job is rejected by the API server.
+- **Unschedulable.** A size no node can satisfy leaves the Pod Pending.
+  Slice 31's Decision 3 (fail fast on `Unschedulable` rather than by
+  timeout) applies unchanged; whichever slice lands first builds it.
+
+**Relation to other entries**: Slice 41 relies on this slice for
+node-pressure eviction. Slice 42 moves the workspace off the node's disk
+when an operator opts in, after which the ephemeral-storage value only
+has to cover the containers' own use. The Backlog's top-level `runner:` block would
+need to say whether `resources` merges per field or replaces as a whole.
+
+### Slice 40: Bounding How Long a Runner Runs (`runner-timeouts`)
+
+**Goal**: A Runner that goes silent, hangs or dies after it started is
+stopped and reported as a failure the ordinary way, instead of holding
+its check run, its Lock and its node until something else gives up.
+Three pieces: an idle timeout the Runner enforces, an absolute deadline
+Kubernetes enforces, and detection of a started Runner whose Job ended
+without a result. Sizing is Slice 39's and eviction Slice 41's; this
+slice is only about time.
+
+**What happens today.** Once an Operation's first line reaches the
+Server, nothing looks at output timing again: the Runner and the plugins
+have no idle or overall timeout, and the sweep only claims Operations
+that never started. A silent Runner — slow or hung, indistinguishable —
+leaves the check run "in progress", the Lock held and the Pod running.
+At 24 hours (`operationTTL`) the Redis record expires and the dispatching
+Server instance posts "waiting for result: context deadline exceeded",
+without moving the Lock; if that instance restarted meanwhile, nothing is
+posted at all. The Pod runs until its process exits on its own.
+
+**The tools cannot be relied on to bound themselves.** Terraform has no
+run-wide timeout — resource timeouts are per provider — though an apply
+prints `Still creating... [10s elapsed]` and is rarely silent for long.
+The silent cases are elsewhere:
+
+| Tool | Silent while |
+|---|---|
+| Helm / Helmfile | `--wait` until its own `--timeout`; rendering a large chart; hooks |
+| Terraform | waiting on a state lock (`-lock-timeout`); provider downloads; a provider call with no resource timeout |
+| Pulumi | a hung plugin or policy pack |
+
+**Decision 1 — the Runner enforces it.** It sees every line as it is
+produced, it is alive when the tool is not, and it needs no Server
+bookkeeping — which fits a stateless Server better than a Server-side
+watchdog would. After N minutes with no line on either stream, it stops
+the tool and reports a failure whose message says so. Because that is an
+ordinary result, the Lock transition, check run and comment all follow
+the existing path; a stopped mutating Operation takes the same "failed
+part-way, plan is stale" edge any failed apply does.
+
+**Decision 2 — what counts as output.** A line on the tool's stdout or
+stderr resets the clock. turnip's own `@@ turnip:` lines do not — they
+say nothing about whether the tool is alive. The transcript's trailer
+records the stop, so the comment says what happened where the exit code
+would be.
+
+**Decision 3 — stop gracefully, then forcefully.** `exec.CommandContext`
+sends `SIGKILL` on cancellation, and the Runner forwards no signal to the
+tool today. Killing Terraform outright leaves its state lock held — the
+next plan then fails on a lock nobody owns. So the Runner sends an
+interrupt first, waits a grace period, and only then kills
+(`exec.Cmd.Cancel` and `WaitDelay`). The same handling belongs on the
+Runner's own `SIGTERM` — sent by the kubelet on eviction and on this slice's
+deadline — which today terminates the Runner without telling the tool.
+
+**Precedent**: CI systems bound silence rather than, or as well as,
+duration — CircleCI's `no_output_timeout`, 10 minutes by default.
+
+**Decision 4 — an absolute deadline, enforced by Kubernetes.** The idle
+timeout needs a working Runner; a Runner that is itself wedged cannot
+report anything. `activeDeadlineSeconds` on the Job, from a Server setting
+(e.g. `TURNIP_RUNNER_DEADLINE`), is the backstop, and Kubernetes enforces
+it even if every Server instance has restarted. It must be comfortably
+larger than the idle timeout, or it fires first and the comment loses the
+clearer "no output" message. Slice 41's PodDisruptionBudget depends on
+it: without a deadline, a hung Runner holds its node against drains.
+
+**Decision 5 — a started Runner whose Job ended is noticed.** A Runner
+killed by its deadline, evicted, or OOM-killed sends no result, and today
+nothing would notice: the sweep claims only Operations that never
+started. The sweep's scan extends to started Operations whose Job has a
+`Failed` condition (e.g. reason `DeadlineExceeded`) or whose Pod is gone,
+and finalizes them as failures with that diagnostic — the way it already
+finalizes a start timeout, through the same claim so a late result and
+the sweep cannot both finalize. This is what removes the 24-hour hang,
+rather than merely making it rarer.
+
+Cleanup stays with the Job's `ttlSecondsAfterFinished`: the Server never
+deletes a Runner Job, and a deadline-killed Job is *finished*, so the TTL
+now reaches the case it could not before.
+
+**Open questions for the slice's requirements:**
+
+- **Defaults or not?** Both the idle timeout and the deadline are Server
+  settings. Slice 39's rule is no default for sizing values, where any
+  default is wrong for someone; these are closer to safety bounds, and
+  without a deadline Slice 41's PDB can block drains indefinitely.
+  Recommendation: generous defaults (the deadline in hours), documented
+  as safety bounds rather than sizing choices. For the owner to decide.
+- **Per-Project override.** A Project whose Helm releases legitimately
+  wait longer than the Server's value needs more. Ungated by Slice 31's
+  rule (it grants nothing), but it lets a pull request lengthen how long
+  it can hold a node.
+- **Warn before stopping?** A line in the output at, say, half the limit
+  ("no output for N minutes") would make a slow-but-alive run legible in
+  the live view (Slice 26) before it is stopped.
+
+**Relation to other entries**: Slice 41 depends on this slice's deadline
+for its PDB. The start-timeout sweep this slice extends is Slice 6's
+(Requirement 8).
+
+### Slice 41: Runner Pods Run Without Disruption (`runner-disruption`)
+
+**Goal**: A Runner is a CI job — once it starts, it runs to completion on
+the node it started on. Nothing turnip can influence should evict it
+partway through a plan or apply.
+
+**What is missing**: `internal/jobs` sets no priority and no annotations
+on a Runner, and nothing in `deploy/` guards Runner Pods against
+eviction. An evicted Runner is not retried (`BackoffLimit` is 0 — a
+retried apply is exactly the drift locking prevents), so every eviction
+is a failed Operation.
+
+**The scheduler never relocates a running Pod.** kube-scheduler places a
+Pod once. A running Runner is disrupted only by being *evicted*, and each
+source of eviction has its own control — there is no single setting:
+
+| Source | Control | Where |
+|---|---|---|
+| Scheduler preemption — a higher-priority Pod needs room | Runner priority at least that of what it could be preempted for | this slice: operator-named `priorityClassName` |
+| Node-pressure eviction by the kubelet | Guaranteed QoS: requests equal to limits | Slice 39 |
+| Autoscaler scale-down or consolidation | autoscaler annotations | this slice: always set |
+| `kubectl drain`, managed node upgrades, descheduler | a PodDisruptionBudget | this slice: one static PDB in `deploy/base` |
+| A Runner that hangs, holding all of the above | a Job deadline | Slice 40 |
+| Spot interruption, node failure | none in the Pod spec | out of scope — Slice 31's node selector places Runners on on-demand capacity |
+
+**1 — Priority, named by the operator.** Preemption is the one
+disruption the scheduler itself performs, and it honours
+PodDisruptionBudgets only on a best-effort basis. A Runner at the default
+priority of 0 is a candidate whenever something higher cannot be placed.
+The Server sets `priorityClassName` from `TURNIP_RUNNER_PRIORITY_CLASS`;
+the PriorityClass itself is cluster-scoped and the operator's to create,
+so turnip neither ships one nor defaults the name. Server-only — a
+Project choosing its own priority is choosing whom it may preempt.
+
+**2 — Autoscaler annotations, always set.** Every Runner Pod carries:
+
+| Annotation | Read by |
+|---|---|
+| `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"` | Kubernetes cluster-autoscaler, on scale-down |
+| `karpenter.sh/do-not-disrupt: "true"` | Karpenter, on consolidation and drift — it does not read the former |
+
+Never configurable: no operator gains anything from letting an autoscaler
+remove a Runner mid-apply to reclaim a node minutes sooner, and on a
+cluster running neither autoscaler they are inert. They overlap with the
+PDB below, and are kept anyway: cluster-autoscaler reads `safe-to-evict`
+before it considers a node at all, which is cheaper than planning a
+scale-down and having the PDB refuse it.
+
+**3 — One static PodDisruptionBudget, not one per Runner.** Drains and
+managed node upgrades go through the Eviction API, which honours only
+PDBs. There is no `minAvailable` on a Pod or a Job — only a PDB carries
+one — but it need not be created per Operation. `deploy/base` ships one
+PDB selecting `app.kubernetes.io/name: turnip-runner`:
+
+- **`minAvailable` set to a large sentinel integer.** Eviction is allowed
+  only while healthy Pods exceed `minAvailable`, so a number no deployment
+  reaches refuses every voluntary eviction of a running Runner. The
+  natural `maxUnavailable: 0` is not accepted for Job Pods: Kubernetes
+  restricts a PDB over Pods whose controller has no scale subresource to
+  an integer `minAvailable`. The manifest carries a comment saying why the
+  number is what it is.
+- **`unhealthyPodEvictionPolicy: AlwaysAllow`**, so a Runner stuck
+  Pending or crash-looping never blocks a drain — only a running one does.
+- **The Pod template carries the selector label.** Today it is on the Job
+  only (`build.go`), and a PDB selects Pods.
+
+*Alternative considered*: a PDB per Operation (`minAvailable: 1`,
+selecting the Operation ID, owned by the Job so it is collected with it).
+*Rejected because* it needs RBAC for `policy/poddisruptionbudgets`, an
+API call and a failure path per Operation, and buys nothing the static
+one does not.
+
+Managed providers respect a PDB only up to a provider-specific limit
+during upgrades, then fail the upgrade or force the eviction. The PDB
+delays and signals; it is not a guarantee, and `docs/deployment.md` says
+so.
+
+**Depends on Slice 40.** A hung Runner is healthy as far as the PDB is
+concerned, so without Slice 40's Job deadline the PDB would hold it on its
+node — blocking drains — until the provider forces the upgrade. The PDB
+must not ship before that deadline does.
+
+**Open question**: a priority no node can satisfy leaves the Pod Pending;
+Slice 31's Decision 3 (fail fast on `Unschedulable`) applies, as it does
+to Slice 39's sizes.
+
+**Relation to other entries**: Slice 31 opens the same pod template for
+scheduling fields, and the Backlog's Azure Workload Identity entry opens
+it for metadata — the annotations here are the first metadata turnip
+sets, so whichever of the three lands first builds that seam.
+
+### Slice 42: The Workspace on a Per-Runner Volume (`runner-workspace-volume`)
+
+**Goal**: Let an operator put a Runner's workspace on a volume of its own
+— created with the Pod, sized for it, deleted with it — instead of the
+node's disk, for when Terraform's modules and providers make a workspace
+heavier than a node should carry.
+
+`emptyDir` stays the default and a fully supported configuration, not a
+stopgap: sized by Slice 39's ephemeral-storage value, it is the right
+answer for most deployments. The volume is an option an operator turns
+on, never a migration every deployment is expected to make.
+
+**Principle: every Runner starts empty and leaves nothing behind.** A run
+depends on nothing a previous run left, and no storage outlives the run
+that used it. This is the property the slice must not trade away, and the
+reason for the one alternative it rejects outright (below).
+
+**What is there today**: the workspace (`/turnip/src`) is an `emptyDir`
+on the node's disk, as are the small `tools` and `bin` volumes. No tool
+cache location is set (`HOME`, `HELM_CACHE_HOME`, `PULUMI_HOME`,
+`TF_PLUGIN_CACHE_DIR`), so Helm's repository cache, Pulumi's plugins and
+anything else a tool keeps under its home directory land on the
+container's writable layer — also the node's disk. Slice 39's
+ephemeral-storage value makes all of it schedulable and bounded; this
+slice is for when bounding it on the node is the wrong answer.
+
+**Decision 1 — a generic ephemeral volume, opted into by the operator.**
+`volumes[].ephemeral.volumeClaimTemplate`: Kubernetes creates the claim
+with the Pod and deletes it with the Pod, so there is nothing for turnip
+to clean up and nothing that grows across runs.
+
+| Setting | Form | Effect |
+|---|---|---|
+| Server environment | `TURNIP_RUNNER_WORKSPACE_STORAGE_CLASS` | set: the workspace is an ephemeral volume of that class; unset: `emptyDir`, as today |
+| Server environment | `TURNIP_RUNNER_WORKSPACE_SIZE` | the claim's size, required when a storage class is set — a Server that has one without the other refuses to start |
+| `turnip.yaml` | a repository-level workspace size | a repository whose clone and providers need more (or less) than the Server's value |
+
+No default size in code or kustomize, for Slice 39's reason: the right
+number depends on the repository.
+
+**Decision 2 — tool caches follow the workspace.** A volume that holds
+the clone but not the caches solves half the problem. The Runner points
+each tool's cache into the workspace volume (a directory beside the
+clone, not inside it, so it is never mistaken for repository content):
+`HOME`, `HELM_CACHE_HOME`, `PULUMI_HOME`, `TF_PLUGIN_CACHE_DIR`. On
+`emptyDir` this changes where on the node's disk they go; on a volume it
+takes them off the node. The cache still dies with the Pod — it exists
+to avoid a second download *within* a run, not across runs.
+
+**What it costs, which is why it is opt-in:**
+
+- **Start latency.** Every Runner waits for a claim to be provisioned and
+  attached — often tens of seconds on cloud block storage — and that
+  counts against the start timeout (Slice 6, Requirement 8).
+- **A cluster dependency.** A StorageClass with dynamic provisioning and
+  `volumeBindingMode: WaitForFirstConsumer`, so a zonal disk is created
+  in the zone the Pod was scheduled to rather than pinning the Pod to
+  wherever the disk landed.
+- **Density.** Nodes limit how many volumes can be attached at once,
+  which caps how many Runners a node can run regardless of CPU and
+  memory.
+
+**Rejected: a cache shared across Runners** (a long-lived volume of
+providers and modules). It is the obvious way to save downloads, and it
+is rejected, not deferred:
+
+- It breaks the principle above — a run would depend on what earlier
+  runs left, and two runs of the same commit could behave differently.
+- It grows without bound. Needing to keep enlarging a long-lived volume
+  is one of the operational costs turnip exists to remove, not
+  reintroduce.
+- It thrashes and contends: concurrent Runners writing one cache need
+  locking the tools do not all provide, and eviction policy becomes
+  turnip's problem.
+- It is shared between pull requests: what one pull request's run puts
+  in the cache, the next one executes.
+
+**Open questions for the slice's requirements:**
+
+- **Repository or Project?** The workspace holds the whole clone, which
+  argues for a repository-level size; a Project with unusually many
+  providers argues for per-Project. Interacts with the Backlog's
+  top-level `runner:` block.
+- **Gated?** The same question as Slice 39's resources: a size grants
+  cost, not access.
+- **Does the start timeout need to know?** If provisioning routinely takes
+  a large share of it, either the timeout grows when a volume is in use,
+  or the documentation says to size it accordingly.
+
+**Relation to other entries**: Slice 39's ephemeral-storage value still
+applies — to the containers' writable layers, logs and the small `tools`
+and `bin` volumes — and can shrink once the workspace is on a volume.
+Slice 12 owns the workspace's layout; this slice changes where it lives,
+not what is in it.
 
 ---
 
@@ -3033,6 +3405,41 @@ up when it stopped building tool images.
 
 Not urgent while the pilot targets the cluster turnip itself runs in,
 which is also the case that needs no credentials at all.
+
+### A failed Operation's output loses the transcript's highlighting
+
+Slice 33's Decision 8 says a failure renders in the same `diff` fence as
+a success. The code never did: `fencesFor` (`comment.go`) still chooses
+`diff` only on success, and
+`TestBuildConsolidatedComment_FailureKeepsAPlainFence` pins the plain
+fence, so the spec and the code disagree about a behaviour both claim.
+
+It matters more since the Slice 33 amendment. The transcript's
+`@@ turnip: … @@` lines are highlighted as hunk headers *only inside a
+`diff` fence*, so a failed run — the one a reader scrutinises hardest,
+and the one whose trailer carries the non-zero exit — is the one where
+turnip's lines blend into the tool's.
+
+The plain fence has a real reason, recorded in that test: a failure's
+body is often an error message, and diff highlighting colours any
+column-0 `-` red. Decision 8's answer was that the same YAML can appear
+on success, where the red is already accepted. Neither side has been
+weighed against the other since the transcript changed what the fence
+is for.
+
+Options, none chosen:
+
+- **One `diff` fence for both**, as Decision 8 states. Consistent, and
+  the transcript is always highlighted; an error line that starts with
+  `-` is coloured as a removal.
+- **Keep the plain fence** and amend Decision 8 to say so, accepting
+  that a failure's transcript is not highlighted.
+- **Fence per stream** is not an option while the output is one
+  interleaved record (Slice 33, Requirement 8) — splitting it back by
+  stream is exactly what that amendment undid.
+
+Small either way; what it needs is the decision, then Decision 8 and the
+test brought into agreement with it.
 
 ## Notes
 

@@ -69,9 +69,27 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	// The reason is what the pull request comment shows. Logged as well,
 	// because some of these are infrastructure failures (Redis, the
 	// Kubernetes API) that otherwise reach only the comment.
+	//
+	// A refused plan also leaves the Project unplanned on this commit, and
+	// the pull request's record has to say so, or the aggregate check could
+	// pass without it (aggregate-check-run Requirement 4.4). A refused
+	// Mutating_Operation ran nothing and changes nothing (4.7). Neither
+	// applies once the Job exists: from then on the Operation's outcome is
+	// HandleResult's or the sweep's to record, and a late "not planned"
+	// from here could overwrite it.
+	dispatched := false
 	reject := func(reason string) github.ProjectResult {
 		log.WarnContext(ctx, "operation rejected", "reason", reason)
-		return rejectedResult(t, reason)
+		rejected := rejectedResult(t, reason)
+		if p, ok := o.plugins[t.Project.Tool]; ok && !dispatched && t.Operation == p.GetPlanOperation() {
+			ref := prRef{Owner: repo.Owner, Repo: repo.Name, PRNumber: pr.Number, HeadSHA: pr.HeadSHA}
+			entry := ProjectEntry{Outcome: OutcomeNotPlanned, Operation: t.Operation, Tool: t.Project.Tool}
+			if err := o.recordOutcome(ctx, client, ref, t.Project.Name, entry); err != nil {
+				log.ErrorContext(ctx, "recording refused plan for the aggregate check", "error", err)
+				rejected = appendAggregateNote(rejected, err)
+			}
+		}
+		return rejected
 	}
 
 	p, ok := o.plugins[t.Project.Tool]
@@ -303,6 +321,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		}
 		return reject(fmt.Sprintf("creating job: %v", err))
 	}
+	dispatched = true
 	log.InfoContext(ctx, "runner job created", "operation_id", operationID, "job", created.Name)
 	if err := o.records.SetJobName(ctx, operationID, created.Name); err != nil {
 		slog.ErrorContext(ctx, "recording job name for operation", "operation_id", operationID, "error", err)
@@ -362,6 +381,11 @@ func rejectedResult(t Target, reason string) github.ProjectResult {
 	}
 }
 
+// checkRunName is a Project_Check's name. Operation first, so every diff —
+// or every sync — lists together in the checks tab. The name is the check
+// run's identity (branch protection matches on it), which is why the
+// operator is pointed at the aggregate `turnip` check instead: this one
+// only exists on pull requests that touch its Project.
 func checkRunName(projectName, operation string) string {
-	return fmt.Sprintf("turnip/%s/%s", projectName, operation)
+	return fmt.Sprintf("turnip/%s/%s", operation, projectName)
 }

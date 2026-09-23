@@ -451,6 +451,18 @@ func TestExecuteOne_MutatingOperationsRefuseArguments(t *testing.T) {
 // The other half of the same rule, guarding against an over-broad refusal:
 // a plan still accepts arguments, because it is the Operation whose output
 // a human reviews.
+// The Project_Check is named Operation first, so every diff lists together
+// in the checks tab (aggregate-check-run Requirement 2.1).
+func TestExecuteOne_ProjectCheckIsNamedOperationFirst(t *testing.T) {
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
+	o, _ := testOrchestrator(t, &fakeLockManager{}, jobsClient)
+	client := &fakeExecuteClient{}
+
+	o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+
+	assert.Equal(t, "turnip/diff/helm-a", client.createdCheckRun.Name)
+}
+
 func TestExecuteOne_PlanStillAcceptsArguments(t *testing.T) {
 	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
 	o, _ := testOrchestrator(t, &fakeLockManager{}, jobsClient)

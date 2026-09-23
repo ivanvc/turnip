@@ -489,7 +489,7 @@ Account permissions untouched (every entry "No access"):
 
 | Permission | Level | Why |
 |---|---|---|
-| Checks | Read & write | creating/updating the per-project check runs |
+| Checks | Read & write | creating/updating the per-project check runs and the `turnip` check |
 | Contents | Read-only | fetching `turnip.yaml` and diffing changed files |
 | Issues | Read & write | GitHub represents PR comments as issue comments under the hood — this is what lets turnip post and edit them |
 | Pull requests | Read & write | reading PR metadata, listing changed files |

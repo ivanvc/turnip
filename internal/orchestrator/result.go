@@ -167,6 +167,8 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 		pr.LockNote = lockNoteFor(ev, tr)
 	}
 
+	pr = o.recordFinishedOutcome(ctx, client, rec, ev, pr)
+
 	if err := o.records.Delete(ctx, operationID); err != nil {
 		slog.ErrorContext(ctx, "deleting operation record", "operation_id", operationID, "error", err)
 	}

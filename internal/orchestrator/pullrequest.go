@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/ivanvc/turnip/internal/config"
 	"github.com/ivanvc/turnip/internal/github"
@@ -102,6 +103,10 @@ func (o *Orchestrator) handlePlanTrigger(ctx context.Context, client github.GitH
 		if errors.Is(err, ErrConfigMissing) {
 			return nil
 		}
+		// An invalid configuration is the author's to fix, so a required
+		// `turnip` check fails for it, rather than waiting forever with the
+		// reason only in the comment (aggregate-check-run Requirement 7.1).
+		o.markAutomaticVerdict(ctx, client, prRefFor(event), o.records.MarkConfigInvalid)
 		_, postErr := client.PostComment(ctx, event.Repository.Owner, event.Repository.Name, event.PullRequest.Number, configErrorComment(err))
 		return postErr
 	}
@@ -113,24 +118,84 @@ func (o *Orchestrator) handlePlanTrigger(ctx context.Context, client github.GitH
 
 	matched := config.MatchProjects(cfg.Projects, modifiedFiles)
 	if len(matched) == 0 {
+		// Nothing to plan is reported, as `skipped`: without it, requiring
+		// `turnip` would block every pull request that touches no Project
+		// (aggregate-check-run Requirement 6.3).
+		o.markAutomaticVerdict(ctx, client, prRefFor(event), o.records.MarkEmpty)
 		return nil
 	}
 
-	targets := planTargetsFor(matched, o.plugins, cfg.Clone)
+	targets, unsupported := planTargetsFor(matched, o.plugins, cfg.Clone)
 
 	// Detach from the request context: the webhook HTTP handler responds
 	// as soon as this method returns, but executing Targets can take far
 	// longer than GitHub's webhook delivery timeout allows for. Run it in
 	// the background on a context stripped of the request's cancellation
 	// (but not its values), and return immediately.
-	go o.runTargetsAndPost(context.WithoutCancel(ctx), client, event.Repository, *event.PullRequest, event.Installation.ID, targets)
+	go o.runTargetsAndPost(context.WithoutCancel(ctx), client, event.Repository, *event.PullRequest, event.Installation.ID, targets, unsupported)
 
 	return nil
 }
 
-func (o *Orchestrator) runTargetsAndPost(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, installationID int64, targets []Target) {
+func (o *Orchestrator) runTargetsAndPost(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, installationID int64, targets []Target, unsupported []config.Project) {
+	notices := o.recordUnsupported(ctx, client, repo, pr, unsupported)
+	if len(targets) == 0 {
+		// With nothing planned there is no result for a notice to ride on,
+		// so it is posted on its own — the rule HandleIssueComment applies
+		// to an orphaned notice.
+		if len(notices) > 0 {
+			if _, err := client.PostComment(ctx, repo.Owner, repo.Name, pr.Number, strings.Join(notices, "\n")); err != nil {
+				slog.ErrorContext(ctx, "posting unsupported-tool notice", "owner", repo.Owner, "repo", repo.Name, "pr_number", pr.Number, "error", err)
+			}
+		}
+		return
+	}
 	results := o.executeTargets(ctx, client, repo, pr, installationID, targets)
-	o.postResults(ctx, client, repo, pr.Number, results)
+	o.postResults(ctx, client, repo, pr.Number, results, notices...)
+}
+
+// recordUnsupported records each affected Project whose tool this Server
+// has no Plugin for, and returns a notice for each to lead the comment.
+// It is a configuration problem — turnip.yaml asks this Server for
+// something it cannot do — so the aggregate check fails for it rather
+// than waiting on a plan that will never run (aggregate-check-run
+// Requirement 7.3).
+func (o *Orchestrator) recordUnsupported(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, unsupported []config.Project) []string {
+	ref := prRef{Owner: repo.Owner, Repo: repo.Name, PRNumber: pr.Number, HeadSHA: pr.HeadSHA}
+	var notices []string
+	for _, project := range unsupported {
+		entry := ProjectEntry{Outcome: OutcomeUnsupported, Tool: project.Tool}
+		if err := o.recordOutcome(ctx, client, ref, project.Name, entry); err != nil {
+			slog.ErrorContext(ctx, "recording unsupported project for the aggregate check", "owner", repo.Owner, "repo", repo.Name, "pr_number", pr.Number, "project", project.Name, "error", err)
+		}
+		notices = append(notices, fmt.Sprintf(
+			"Project `%s` uses `%s`, which this turnip server cannot run, so it was not planned. The `%s` check fails until turnip.yaml changes.",
+			project.Name, project.Tool, aggregateCheckName))
+	}
+	return notices
+}
+
+// markAutomaticVerdict records a whole-commit fact the automatic plan found
+// — an invalid configuration, or nothing affected — and publishes it.
+// There is no comment for a failure here to join, so it is logged; the
+// next trigger or push on the pull request publishes again.
+func (o *Orchestrator) markAutomaticVerdict(ctx context.Context, client github.GitHubClient, ref prRef, mark func(context.Context, prRef) error) {
+	err := mark(ctx, ref)
+	if err == nil {
+		err = o.publishAggregate(ctx, client, ref)
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "publishing the aggregate check", "owner", ref.Owner, "repo", ref.Repo, "pr_number", ref.PRNumber, "error", err)
+	}
+}
+
+func prRefFor(event *github.WebhookEvent) prRef {
+	return prRef{
+		Owner:    event.Repository.Owner,
+		Repo:     event.Repository.Name,
+		PRNumber: event.PullRequest.Number,
+		HeadSHA:  event.PullRequest.HeadSHA,
+	}
 }
 
 func (o *Orchestrator) handlePRClosed(ctx context.Context, client github.GitHubClient, event *github.WebhookEvent) error {

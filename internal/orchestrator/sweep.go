@@ -102,8 +102,8 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 		pr.LockNote = lockNoteFor(ev, tr)
 	}
 
+	client := o.installationClient(rec.InstallationID)
 	if rec.CheckRunID != 0 {
-		client := o.installationClient(rec.InstallationID)
 		err := client.UpdateCheckRun(ctx, rec.Owner, rec.Repo, rec.CheckRunID, github.CheckRunOptions{
 			Name:       checkRunName(rec.Project.Name, rec.Operation),
 			Status:     "completed",
@@ -126,6 +126,8 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 	// No jobs.Client.Delete call either (Requirement 8.6): a Runner that
 	// connects after this point may still be running real tool work — the
 	// Job's TTL is this path's cleanup mechanism.
+
+	pr = o.recordFinishedOutcome(ctx, client, rec, ev, pr)
 
 	if err := o.records.Delete(ctx, operationID); err != nil {
 		slog.ErrorContext(ctx, "deleting timed-out operation record", "operation_id", operationID, "error", err)

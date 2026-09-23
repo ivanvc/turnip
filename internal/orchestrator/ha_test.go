@@ -15,9 +15,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ivanvc/turnip/internal/config"
 	"github.com/ivanvc/turnip/internal/github"
 	pb "github.com/ivanvc/turnip/internal/grpc/turnip/v1"
 	"github.com/ivanvc/turnip/internal/lock"
+	"github.com/ivanvc/turnip/internal/rpc"
 )
 
 // ha_test.go validates Requirement 1.1-1.3 of the ha-validation slice
@@ -279,4 +281,91 @@ func TestHA_ConcurrentLockAcquisitionAcrossInstancesExactlyOneWinner(t *testing.
 		}
 	}
 	assert.Equal(t, numEvents-1, rejectedCount, "exactly one PR should have acquired the lock; every other one should be rejected as already locked")
+}
+
+// haOperation puts an Operation Record for project into the shared Redis,
+// as the instance that dispatched it would have, so a different instance
+// can finalise it.
+func haOperation(t *testing.T, o *Orchestrator, owner, project, operation string) string {
+	t.Helper()
+	id := uuid.NewString()
+	require.NoError(t, o.records.Create(context.Background(), &OperationRecord{
+		OperationID:   id,
+		ProjectKey:    owner + "/repo/" + project,
+		Project:       config.Project{Name: project, Tool: "helmfile"},
+		Owner:         owner,
+		Repo:          "repo",
+		PRNumber:      1,
+		HeadSHA:       "sha",
+		Operation:     operation,
+		StartDeadline: time.Now().Add(5 * time.Minute).Unix(),
+		CreatedAt:     time.Now(),
+	}))
+	return id
+}
+
+// TestHA_AggregateCheckAcrossInstancesCarriesEveryResult validates
+// aggregate-check-run's checkpoint: two Projects of one pull request, each
+// finalised on a different instance at the same moment, end with one
+// `turnip` verdict covering both. Neither instance has any in-process
+// knowledge of the other's result — only the shared record.
+func TestHA_AggregateCheckAcrossInstancesCarriesEveryResult(t *testing.T) {
+	addr := realTestRedisAddr(t)
+
+	run := func(t *testing.T, webSucceeds bool) *github.CheckRunOptions {
+		t.Helper()
+		gh := newFakeChecksClient()
+		a := newHAOrchestrator(t, addr, gh)
+		b := newHAOrchestrator(t, addr, gh)
+		owner := "owner-" + uuid.NewString()[:8]
+		ref := prRef{Owner: owner, Repo: "repo", PRNumber: 1, HeadSHA: "sha"}
+
+		// Both Projects planned, as the automatic plan would leave them.
+		for _, project := range []string{"helm-a", "helm-b"} {
+			require.NoError(t, a.records.WriteOutcome(context.Background(), ref, project, ProjectEntry{Outcome: OutcomeAwaitingApply, Operation: "diff"}))
+		}
+		require.Nil(t, gh.current(), "plans under review publish nothing")
+
+		opA := haOperation(t, a, owner, "helm-a", "apply")
+		opB := haOperation(t, a, owner, "helm-b", "apply")
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			assert.NoError(t, a.HandleResult(context.Background(), opA, rpc.OperationResult{Success: webSucceeds}))
+		})
+		wg.Go(func() {
+			assert.NoError(t, b.HandleResult(context.Background(), opB, rpc.OperationResult{Success: true}))
+		})
+		wg.Wait()
+		return gh.current()
+	}
+
+	for i := range 20 {
+		t.Run(fmt.Sprintf("both-succeed-%d", i), func(t *testing.T) {
+			cur := run(t, true)
+			require.NotNil(t, cur)
+			assert.Equal(t, "success", cur.Conclusion)
+			assert.Equal(t, "2/2 projects applied", cur.Title)
+		})
+		t.Run(fmt.Sprintf("one-fails-%d", i), func(t *testing.T) {
+			cur := run(t, false)
+			require.NotNil(t, cur)
+			assert.Equal(t, "failure", cur.Conclusion)
+		})
+	}
+}
+
+// A narrower re-plan after a failed apply must not turn the verdict green:
+// the record keeps the failure it never looked at.
+func TestHA_NarrowerReplanDoesNotHideAFailure(t *testing.T) {
+	addr := realTestRedisAddr(t)
+	gh := newFakeChecksClient()
+	a := newHAOrchestrator(t, addr, gh)
+	b := newHAOrchestrator(t, addr, gh)
+	owner := "owner-" + uuid.NewString()[:8]
+
+	require.NoError(t, a.HandleResult(context.Background(), haOperation(t, a, owner, "helm-a", "apply"), rpc.OperationResult{Success: false}))
+	require.Equal(t, "failure", gh.current().Conclusion)
+
+	require.NoError(t, b.HandleResult(context.Background(), haOperation(t, b, owner, "helm-b", "diff"), rpc.OperationResult{Success: true}))
+	assert.Equal(t, "failure", gh.current().Conclusion)
 }

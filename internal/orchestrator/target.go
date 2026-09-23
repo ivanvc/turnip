@@ -43,15 +43,20 @@ type Target struct {
 }
 
 // planTargetsFor builds one Target per matched Project at its tool's
-// GetPlanOperation(), TriggeredBy "auto" (Requirement 2.3). A Project
-// whose tool isn't in the registry is silently skipped — this shouldn't
-// normally happen, since config.Parse already rejects an unsupported
-// Tool value before a Project can reach here.
-func planTargetsFor(matched []config.Project, plugins PluginRegistry, clone config.CloneSpec) []Target {
-	targets := make([]Target, 0, len(matched))
+// GetPlanOperation(), TriggeredBy "auto" (Requirement 2.3).
+//
+// A Project whose tool has no registered Plugin gets no Target, and is
+// returned in unsupported instead. That is reachable: config.Parse accepts
+// every tool turnip knows the name of, while a Server registers Plugins
+// only for the tools it can run. The caller reports those Projects rather
+// than dropping them, since an affected Project nobody plans must not let
+// the aggregate check pass (aggregate-check-run Requirement 7.3).
+func planTargetsFor(matched []config.Project, plugins PluginRegistry, clone config.CloneSpec) (targets []Target, unsupported []config.Project) {
+	targets = make([]Target, 0, len(matched))
 	for _, project := range matched {
 		p, ok := plugins[project.Tool]
 		if !ok {
+			unsupported = append(unsupported, project)
 			continue
 		}
 		targets = append(targets, Target{
@@ -61,7 +66,7 @@ func planTargetsFor(matched []config.Project, plugins PluginRegistry, clone conf
 			Clone:       clone,
 		})
 	}
-	return targets
+	return targets, unsupported
 }
 
 // selection carries everything target resolution needs beyond the command

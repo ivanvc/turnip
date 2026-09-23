@@ -66,6 +66,32 @@ later than expected, with no explanation in the PR.
   every retry failed, GitHub's API was very likely degraded at that
   moment — check GitHub's own status page.
 
+## The `turnip` check
+
+**Symptom**: the required `turnip` check blocks a merge, or shows
+something unexpected. What each state means is in `docs/usage.md`
+("Requiring turnip before merge"); these are the ones that surprise.
+
+- **"Expected — Waiting for status to be reported" after a plan**: by
+  design. `turnip` appears with the first apply; until then the pull
+  request is under review, and the check blocks without being red. Apply
+  (or sync) each project to move it.
+- **Stuck in progress after everything was applied**: look at the check's
+  summary for the project that isn't done. Usually it is one planned by
+  name that the change doesn't touch — it counts too — or one whose plan
+  was refused because another pull request holds its lock. Apply it, or
+  push a commit so the next plan starts from a fresh record.
+- **`failure` naming an unsupported tool**: an affected project in
+  `turnip.yaml` uses a tool this server has no plugin for. Change the
+  project's `uses`, or stop the change touching it.
+- **Blocks every pull request in a repository**: that repository has no
+  `turnip.yaml`, so turnip never reports `turnip` there. Don't require it
+  on repositories that don't use turnip.
+- **A note in the PR comment saying the `turnip` check could not be
+  updated**: a Redis or GitHub error while publishing. The operation
+  itself is unaffected, and the next result for the same commit publishes
+  the check again.
+
 ## Runner execution errors
 
 **Symptom**: the check run/comment reports a failure with no tool output,

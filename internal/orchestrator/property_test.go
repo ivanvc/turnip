@@ -43,7 +43,8 @@ func TestProperty_PREventTriggersPlanOperations(t *testing.T) {
 		}
 		registry := testRegistry()
 
-		targets := planTargetsFor(matched, registry, config.CloneSpec{})
+		targets, unsupported := planTargetsFor(matched, registry, config.CloneSpec{})
+		require.Empty(t, unsupported)
 
 		require.Len(t, targets, len(matched))
 		for i, target := range targets {
