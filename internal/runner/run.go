@@ -21,7 +21,7 @@ type resultReporter interface {
 
 type pluginSelector func(tool string) (plugin.Plugin, error)
 
-type cloner func(ctx context.Context, dir, repoURL, commitSHA, baseRef, token, submodules string) error
+type cloner func(ctx context.Context, dir, repoURL, commitSHA, baseRef, submodules string) error
 
 // selectPlugin resolves cfg.Tool to a Plugin (Requirement 6.1). Today only
 // "helmfile" (Slice 2) exists; Slice 7 adds Terraform and Pulumi.
@@ -96,7 +96,7 @@ func runCloneWith(ctx context.Context, cfg Config, rep resultReporter, clone clo
 		return reportCloneFailure(ctx, rep, "clone: TURNIP_WORKSPACE_DIR is required when cloning", stderr)
 	}
 
-	if err := clone(ctx, cfg.WorkspaceDir, cfg.RepoURL, cfg.CommitSHA, cfg.BaseRef, cfg.GitHubToken, cfg.CloneSubmodules); err != nil {
+	if err := clone(ctx, cfg.WorkspaceDir, cfg.RepoURL, cfg.CommitSHA, cfg.BaseRef, cfg.CloneSubmodules); err != nil {
 		// Same wording and same path-stripping the Runner used when it
 		// owned the clone, so what reaches the pull request is unchanged.
 		message := stripWorkspacePath(cfg.WorkspaceDir, fmt.Sprintf("clone failed: %v", err))
@@ -207,12 +207,14 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 	// this runs, so one pass covers turnip's own lines and the tool's
 	// alike.
 	//
-	// It closes a gap wider than the transcript: redact has only ever been
-	// applied to clone failures, so a tool that echoed a token into its
-	// output has never been redacted at all. Adding a line built from
-	// trigger-supplied tokens is what made that worth fixing now; the gap
-	// predates it.
-	clean := func(s string) string { return redact(strip(s), "", cfg.GitHubToken) }
+	// There is no longer a token to scrub here. The Runner's process
+	// holds no GitHub credential at all: git asks turnip's credential
+	// helper for one at the moment it needs it, and that is a separate
+	// invocation whose output goes to git rather than to this stream.
+	// The redaction this used to perform guarded a hazard that no longer
+	// exists — and Slice 24's tests assert the absence rather than trust
+	// this comment.
+	clean := strip
 
 	// OnOutput fans out to two places for every (stream, line), and the
 	// first must never wait on the second (Requirement 4.7): write it to

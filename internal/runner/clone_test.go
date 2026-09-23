@@ -51,14 +51,14 @@ func TestClone_ChecksOutExactCommit(t *testing.T) {
 	repoDir, firstSHA, secondSHA := newGitFixture(t)
 
 	dest := filepath.Join(t.TempDir(), "checkout")
-	require.NoError(t, Clone(context.Background(), dest, repoDir, firstSHA, "", "", ""))
+	require.NoError(t, Clone(context.Background(), dest, repoDir, firstSHA, "", ""))
 
 	content, err := os.ReadFile(filepath.Join(dest, "marker.txt"))
 	require.NoError(t, err)
 	assert.Equal(t, "first", string(content))
 
 	dest2 := filepath.Join(t.TempDir(), "checkout2")
-	require.NoError(t, Clone(context.Background(), dest2, repoDir, secondSHA, "", "", ""))
+	require.NoError(t, Clone(context.Background(), dest2, repoDir, secondSHA, "", ""))
 
 	content2, err := os.ReadFile(filepath.Join(dest2, "marker.txt"))
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestClone_NonexistentCommitFails(t *testing.T) {
 	repoDir, _, _ := newGitFixture(t)
 
 	dest := filepath.Join(t.TempDir(), "checkout")
-	err := Clone(context.Background(), dest, repoDir, "0000000000000000000000000000000000000000", "", "", "")
+	err := Clone(context.Background(), dest, repoDir, "0000000000000000000000000000000000000000", "", "")
 	require.Error(t, err)
 }
 
@@ -82,7 +82,7 @@ func TestClone_TokenNeverAppearsInErrors(t *testing.T) {
 	badRemote := "file://" + filepath.Join(t.TempDir(), "does-not-exist.git")
 
 	dest := filepath.Join(t.TempDir(), "checkout")
-	err := Clone(context.Background(), dest, badRemote, "abc123", "", token, "")
+	err := Clone(context.Background(), dest, badRemote, "abc123", "", "")
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), token)
 }
@@ -147,7 +147,7 @@ func TestClone_MergesBaseIntoHead(t *testing.T) {
 	repoDir, headSHA, baseRef := newDivergingFixture(t, 1, false)
 
 	dest := filepath.Join(t.TempDir(), "checkout")
-	require.NoError(t, Clone(context.Background(), dest, repoDir, headSHA, baseRef, "", ""))
+	require.NoError(t, Clone(context.Background(), dest, repoDir, headSHA, baseRef, ""))
 
 	featureContent, err := os.ReadFile(filepath.Join(dest, "feature.txt"))
 	require.NoError(t, err)
@@ -162,7 +162,7 @@ func TestClone_EmptyBaseRefSkipsMerge(t *testing.T) {
 	repoDir, headSHA, _ := newDivergingFixture(t, 1, false)
 
 	dest := filepath.Join(t.TempDir(), "checkout")
-	require.NoError(t, Clone(context.Background(), dest, repoDir, headSHA, "", "", ""))
+	require.NoError(t, Clone(context.Background(), dest, repoDir, headSHA, "", ""))
 
 	assert.FileExists(t, filepath.Join(dest, "feature.txt"))
 	assert.NoFileExists(t, filepath.Join(dest, "base.txt"))
@@ -172,7 +172,7 @@ func TestClone_MergeConflictReturnsDistinguishableError(t *testing.T) {
 	repoDir, headSHA, baseRef := newDivergingFixture(t, 1, true)
 
 	dest := filepath.Join(t.TempDir(), "checkout")
-	err := Clone(context.Background(), dest, repoDir, headSHA, baseRef, "", "")
+	err := Clone(context.Background(), dest, repoDir, headSHA, baseRef, "")
 
 	require.Error(t, err)
 	var conflictErr *MergeConflictError
@@ -188,7 +188,7 @@ func TestClone_FallsBackToUnshallowFetchWhenHistoryDivergesBeyondDepth(t *testin
 	repoDir, headSHA, baseRef := newDivergingFixture(t, mergeFetchDepth+10, false)
 
 	dest := filepath.Join(t.TempDir(), "checkout")
-	require.NoError(t, Clone(context.Background(), dest, repoDir, headSHA, baseRef, "", ""))
+	require.NoError(t, Clone(context.Background(), dest, repoDir, headSHA, baseRef, ""))
 
 	featureContent, err := os.ReadFile(filepath.Join(dest, "feature.txt"))
 	require.NoError(t, err)

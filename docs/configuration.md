@@ -116,12 +116,11 @@ App can already read grants no permission the repository doesn't already
 have — but an operator may still have reason to refuse an expensive fetch,
 so it reuses the same list rather than inventing a second mechanism.
 
-Submodules are fetched with the same installation token as the repository
-itself, and therefore reach **only repositories your GitHub App is
-installed on**. A submodule on the repository's own host works whatever
+Submodules are fetched with the same installation credential as the
+repository itself, and therefore reach **only repositories your GitHub App
+is installed on**. A submodule on the repository's own host works whatever
 form `.gitmodules` writes it in — SSH, `git://`, an explicit port — because
-turnip rewrites those to authenticated HTTPS; it holds no SSH key and
-never will. A submodule hosted anywhere else is reported by name *before*
+turnip rewrites those to HTTPS; it holds no SSH key and never will. A submodule hosted anywhere else is reported by name *before*
 anything is fetched, rather than failing later as a generic authentication
 error.
 
@@ -411,9 +410,12 @@ Secret; everything else comes from a ConfigMap an overlay fills in — see
 needs to set itself, whichever install path you use.
 
 The Runner container's own environment variables (`TURNIP_OPERATION_ID`,
-`TURNIP_REPO_URL`, `TURNIP_GITHUB_TOKEN`, and so on) are internal
-plumbing the Server sets automatically on every Job it creates — nothing
-here for an operator to configure directly.
+`TURNIP_REPO_URL`, and so on) are internal plumbing the Server sets
+automatically on every Job it creates — nothing here for an operator to
+configure directly.
+
+**No GitHub credential is among them.** See
+[`docs/deployment.md`](deployment.md#how-a-runner-gets-its-github-credential).
 
 ## Setting up the GitHub App
 

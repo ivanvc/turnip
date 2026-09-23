@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -46,6 +47,17 @@ type OperationResult struct {
 type OperationHandler interface {
 	HandleLog(ctx context.Context, operationID string, line LogLine) error
 	HandleResult(ctx context.Context, operationID string, result OperationResult) error
+	// CloneCredential returns the GitHub credential operationID's clone
+	// should use. operationID is always the authenticated one — see
+	// FetchCloneCredential.
+	CloneCredential(ctx context.Context, operationID string) (CloneCredential, error)
+}
+
+// CloneCredential is what a Runner fetches instead of being handed a
+// token in its Pod spec.
+type CloneCredential struct {
+	Token     string
+	ExpiresAt time.Time
 }
 
 // Option configures a Server. NewServer took no options before Slice 25,
@@ -81,7 +93,13 @@ func NewServer(handler OperationHandler, opts ...Option) *grpc.Server {
 	// Pod spec, which is what this replaces — and the token it captures is
 	// audience-scoped, short-lived, and authorizes writing to exactly one
 	// Operation.
-	s := grpc.NewServer(grpc.StreamInterceptor(streamAuthInterceptor(o.auth)))
+	s := grpc.NewServer(
+		grpc.StreamInterceptor(streamAuthInterceptor(o.auth)),
+		// Both kinds, so "an RPC added later is authenticated" is true
+		// whichever kind its author reaches for. Installing only one is
+		// the defect Slice 24 found in this function.
+		grpc.UnaryInterceptor(unaryAuthInterceptor(o.auth)),
+	)
 	pb.RegisterOperationServiceServer(s, &operationServer{handler: handler})
 	return s
 }
@@ -89,6 +107,37 @@ func NewServer(handler OperationHandler, opts ...Option) *grpc.Server {
 type operationServer struct {
 	pb.UnimplementedOperationServiceServer
 	handler OperationHandler
+}
+
+// FetchCloneCredential returns the credential for the Operation the
+// caller was authenticated as.
+//
+// The request is ignored, and that is the design rather than an
+// oversight: the parameter is named "_" so that adding a field to it and
+// reading it here requires deleting this comment first. A Runner
+// authenticated for one Operation asking for another's token is the
+// cross-repository theft this whole slice narrows the blast radius of;
+// the way it is prevented is by there being nothing to read.
+func (s *operationServer) FetchCloneCredential(ctx context.Context, _ *pb.FetchCloneCredentialRequest) (*pb.FetchCloneCredentialResponse, error) {
+	operationID, ok := OperationIDFromContext(ctx)
+	if !ok {
+		// Unreachable while the unary interceptor is installed, which it
+		// unconditionally is. Refusing rather than proceeding means a
+		// future refactor that removes it fails loudly instead of handing
+		// credentials to anyone who asks.
+		return nil, status.Error(codes.Unauthenticated, "rpc: credential request reached handler unauthenticated")
+	}
+
+	cred, err := s.handler.CloneCredential(ctx, operationID)
+	if err != nil {
+		slog.ErrorContext(ctx, "could not mint a clone credential", "operation_id", operationID, "error", err)
+		return nil, status.Error(codes.Internal, "rpc: could not mint a clone credential")
+	}
+
+	return &pb.FetchCloneCredentialResponse{
+		Token:         cred.Token,
+		ExpiresAtUnix: cred.ExpiresAt.Unix(),
+	}, nil
 }
 
 // ExecuteOperation receives a Runner's start/log/result stream and

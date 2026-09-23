@@ -71,7 +71,7 @@ see `OperationStart`. That leaves two shapes:
 - carry the operation id in metadata alongside the token, and do both in
   the interceptor
 
-**The second.** Requirement 5 asks for a check every RPC passes through,
+**The second.** Requirement 4 asks for a check every RPC passes through,
 and binding in the handler protects the one RPC that exists today while
 silently not protecting the next one — the same hazard Slice 18 designed
 around when it put the argument refusal on `!isPlan` rather than on a list
@@ -120,7 +120,7 @@ one in production.
 
 The requirements left this to the design. Validating the token locally
 against the API server's JWKS would avoid the cluster-scoped grant
-Requirement 7 describes, and it is rejected on correctness rather than on
+Requirement 6 describes, and it is rejected on correctness rather than on
 effort.
 
 A local verifier can check the signature, the audience and the expiry. It
@@ -135,12 +135,13 @@ calling an API that does it, and the failure is silent in the direction
 that matters.
 
 **The cost is accepted, not dismissed**: `TokenReview` is cluster-scoped,
-so turnip asks for its first ClusterRole. Requirement 7 exists to make an
+so turnip asks for its first ClusterRole. Requirement 6 exists to make an
 operator's acceptance of that deliberate.
 
 ## Decision 5: Encryption is a separate axis, and has its own slice
 
-An earlier version of this design made TLS Requirement 4 here, arguing
+An earlier version of this design made TLS a requirement of this slice —
+numbered 4, before the renumbering that followed its removal — arguing
 that a bearer token on a plaintext channel makes the authentication
 decorative. That argument is real but it proved too much: it treats "the
 credential could be stolen by an attacker with network position" as

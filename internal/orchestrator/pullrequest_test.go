@@ -60,8 +60,8 @@ func (f *fakePRClient) CreateCheckRun(ctx context.Context, owner, repo string, o
 func (f *fakePRClient) UpdateCheckRun(ctx context.Context, owner, repo string, checkRunID int64, opts github.CheckRunOptions) error {
 	return nil
 }
-func (f *fakePRClient) GenerateInstallationToken(ctx context.Context) (string, error) {
-	return "token", nil
+func (f *fakePRClient) GenerateInstallationToken(ctx context.Context, _ github.TokenScope) (github.InstallationToken, error) {
+	return github.InstallationToken{Token: "token"}, nil
 }
 
 func (f *fakePRClient) postedComments() []string {

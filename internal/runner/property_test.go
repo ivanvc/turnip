@@ -51,7 +51,7 @@ func TestProperty_RunnerClonesCorrectCommit(t *testing.T) {
 		i := rapid.IntRange(0, commitCount-1).Draw(rt, "commitIndex")
 		dest := filepath.Join(t.TempDir(), "checkout")
 
-		require.NoError(rt, Clone(context.Background(), dest, repoDir, shas[i], "", "", ""))
+		require.NoError(rt, Clone(context.Background(), dest, repoDir, shas[i], "", ""))
 
 		content, err := os.ReadFile(filepath.Join(dest, "marker.txt"))
 		require.NoError(rt, err)
@@ -122,7 +122,7 @@ func TestProperty_RunnerClonesCorrectCommit_WithBaseMerge(t *testing.T) {
 		i := rapid.IntRange(0, headCount-1).Draw(rt, "headCommitIndex")
 		dest := filepath.Join(t.TempDir(), "checkout")
 
-		require.NoError(rt, Clone(context.Background(), dest, repoDir, headSHAs[i], "main", "", ""))
+		require.NoError(rt, Clone(context.Background(), dest, repoDir, headSHAs[i], "main", ""))
 
 		headContent, err := os.ReadFile(filepath.Join(dest, "head-marker.txt"))
 		require.NoError(rt, err)

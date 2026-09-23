@@ -91,8 +91,8 @@ func (c *haFakeClient) UpdateCheckRun(ctx context.Context, owner, repo string, c
 	return nil
 }
 
-func (c *haFakeClient) GenerateInstallationToken(ctx context.Context) (string, error) {
-	return "fake-token", nil
+func (c *haFakeClient) GenerateInstallationToken(ctx context.Context, _ github.TokenScope) (github.InstallationToken, error) {
+	return github.InstallationToken{Token: "fake-token"}, nil
 }
 
 func (c *haFakeClient) commentsFor(prNumber int) []string {

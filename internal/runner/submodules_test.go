@@ -80,7 +80,7 @@ func TestClone_InitialisesSubmodules(t *testing.T) {
 	parentDir, headSHA := newSubmoduleFixture(t)
 
 	dest := filepath.Join(t.TempDir(), "checkout")
-	require.NoError(t, Clone(context.Background(), dest, parentDir, headSHA, "", "", config.SubmodulesTopLevel))
+	require.NoError(t, Clone(context.Background(), dest, parentDir, headSHA, "", config.SubmodulesTopLevel))
 
 	content, err := os.ReadFile(filepath.Join(dest, "sub", "chart.yaml"))
 	require.NoError(t, err, "submodule was not checked out")
@@ -93,7 +93,7 @@ func TestClone_ModeNoneLeavesSubmoduleEmptyWithoutFailing(t *testing.T) {
 	parentDir, headSHA := newSubmoduleFixture(t)
 
 	dest := filepath.Join(t.TempDir(), "checkout")
-	require.NoError(t, Clone(context.Background(), dest, parentDir, headSHA, "", "", config.SubmodulesNone))
+	require.NoError(t, Clone(context.Background(), dest, parentDir, headSHA, "", config.SubmodulesNone))
 
 	assert.NoFileExists(t, filepath.Join(dest, "sub", "chart.yaml"),
 		"mode none must not fetch the submodule")
@@ -107,7 +107,7 @@ func TestClone_EmptyModeDefaultsToTopLevel(t *testing.T) {
 	parentDir, headSHA := newSubmoduleFixture(t)
 
 	dest := filepath.Join(t.TempDir(), "checkout")
-	require.NoError(t, Clone(context.Background(), dest, parentDir, headSHA, "", "", ""))
+	require.NoError(t, Clone(context.Background(), dest, parentDir, headSHA, "", ""))
 
 	assert.FileExists(t, filepath.Join(dest, "sub", "chart.yaml"))
 }
@@ -119,7 +119,7 @@ func TestClone_NoSubmodulesIsANoOp(t *testing.T) {
 	repoDir, firstSHA, _ := newGitFixture(t)
 
 	dest := filepath.Join(t.TempDir(), "checkout")
-	require.NoError(t, Clone(context.Background(), dest, repoDir, firstSHA, "", "", config.SubmodulesRecursive))
+	require.NoError(t, Clone(context.Background(), dest, repoDir, firstSHA, "", config.SubmodulesRecursive))
 
 	assert.FileExists(t, filepath.Join(dest, "marker.txt"))
 }
@@ -153,7 +153,7 @@ func TestInitSubmodules_ForeignHostIsReportedBeforeAnyFetch(t *testing.T) {
 		return nil, errors.New("should not have been called")
 	})
 
-	err := initSubmodules(context.Background(), run, dir, "https://github.com/owner/repo", "tok", config.SubmodulesTopLevel)
+	err := initSubmodules(context.Background(), run, dir, "https://github.com/owner/repo", nil, config.SubmodulesTopLevel)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "charts", "the failure names the submodule")
@@ -163,26 +163,39 @@ func TestInitSubmodules_ForeignHostIsReportedBeforeAnyFetch(t *testing.T) {
 	}
 }
 
-// Requirement 4.3, in the submodule path specifically: git's own output can
-// echo a rewritten URL carrying the token, and it must not reach the error.
-func TestInitSubmodules_TokenNeverAppearsInAFailure(t *testing.T) {
-	const token = "ghs_exampletokenvalue"
+// Nothing turnip hands git carries a credential — not an argument, not
+// an environment entry. This replaces an older test that asserted a
+// leaked token was redacted out of a failure message: with no credential
+// in the URL, git has none to echo, and asserting its absence at the
+// source is stronger than scrubbing it downstream.
+func TestInitSubmodules_NoCredentialReachesGit(t *testing.T) {
 	dir := t.TempDir()
 	writeGitmodules(t, dir)
 
-	run, _ := recordingGit(func(args []string) ([]byte, error) {
+	var sawArgs [][]string
+	var sawEnv [][]string
+	run := func(_ context.Context, _, _ string, args, env []string) ([]byte, error) {
+		sawArgs = append(sawArgs, args)
+		sawEnv = append(sawEnv, env)
 		if slices.Contains(args, "config") {
 			return []byte("submodule.sub.url https://github.com/owner/charts\n"), nil
 		}
-		// git echoing an authenticated URL back in its failure output.
-		return []byte("fatal: could not read https://x-access-token:" + token + "@github.com/owner/charts"),
-			errors.New("exit status 128")
-	})
+		return nil, nil
+	}
 
-	err := initSubmodules(context.Background(), run, dir, "https://github.com/owner/repo", token, config.SubmodulesTopLevel)
+	require.NoError(t, initSubmodules(context.Background(), run, dir,
+		"https://github.com/owner/repo", nil, config.SubmodulesTopLevel))
 
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), token, "the installation token leaked into a reported error")
+	require.NotEmpty(t, sawArgs)
+	for i, args := range sawArgs {
+		joined := strings.Join(append(slices.Clone(args), sawEnv[i]...), " ")
+		assert.NotContains(t, joined, "x-access-token")
+		assert.NotContains(t, joined, "ghs_")
+		// userinfo carrying a password, i.e. "scheme://user:secret@host".
+		// A bare "git@host" is the *source* of a rewrite rule, not a
+		// credential, so it is allowed through.
+		assert.NotRegexp(t, `://[^/@\s]*:[^/@\s]*@`, joined, "no credential-bearing URL form")
+	}
 }
 
 func TestInitSubmodules_RecursiveAddsTheFlag(t *testing.T) {
@@ -196,7 +209,7 @@ func TestInitSubmodules_RecursiveAddsTheFlag(t *testing.T) {
 		return nil, nil
 	})
 
-	require.NoError(t, initSubmodules(context.Background(), run, dir, "https://github.com/owner/repo", "tok", config.SubmodulesRecursive))
+	require.NoError(t, initSubmodules(context.Background(), run, dir, "https://github.com/owner/repo", nil, config.SubmodulesRecursive))
 
 	var update []string
 	for _, args := range *calls {
@@ -238,9 +251,11 @@ func TestGitURLHost(t *testing.T) {
 // The assertion that pins the *derivation*: a fixed prefix list passes the
 // plain SSH case and fails this one, so without an explicit port the
 // central claim of Decision 3 would go untested.
-func TestAuthenticatedHTTPS_RewritesEveryFormIncludingAnExplicitPort(t *testing.T) {
-	const token = "ghs_exampletokenvalue"
-	want := "https://x-access-token:" + token + "@github.com/owner/charts"
+func TestHTTPSEquivalent_RewritesEveryFormIncludingAnExplicitPort(t *testing.T) {
+	// No credential in the rewrite: git asks turnip's credential helper
+	// when it reaches the host. The rewrite's only job is the scheme,
+	// because turnip holds no SSH key.
+	const want = "https://github.com/owner/charts"
 
 	for _, raw := range []string{
 		"https://github.com/owner/charts",
@@ -251,36 +266,37 @@ func TestAuthenticatedHTTPS_RewritesEveryFormIncludingAnExplicitPort(t *testing.
 		"git@github.com:owner/charts",
 		"github.com:owner/charts",
 	} {
-		assert.Equalf(t, want, authenticatedHTTPS(raw, token), "authenticatedHTTPS(%q)", raw)
+		assert.Equalf(t, want, httpsEquivalent(raw), "httpsEquivalent(%q)", raw)
 	}
 
-	assert.Empty(t, authenticatedHTTPS("../helm-charts", token),
+	assert.Empty(t, httpsEquivalent("../helm-charts"),
 		"a relative URL names no host and needs no rewrite")
 }
 
-func TestSubmoduleConfigEnv_DerivesAnExactRewritePerURL(t *testing.T) {
-	const token = "ghs_exampletokenvalue"
+func TestSubmoduleConfigEntries_DeriveAnExactRewritePerURL(t *testing.T) {
 	urls := []submoduleURL{{name: "charts", url: "ssh://git@github.com:22/owner/charts"}}
 
-	env := submoduleConfigEnv(urls, "github.com", token)
+	env := gitConfigEnv(submoduleConfigEntries(urls, "github.com"))
 
 	require.NotEmpty(t, env)
-	// One derived entry plus the five nested-submodule prefixes.
-	assert.Equal(t, "GIT_CONFIG_COUNT=6", env[0])
-	assert.Len(t, env, 1+2*6, "each entry contributes a KEY and a VALUE")
+	// One derived entry plus the four nested-submodule prefixes. The
+	// https prefix is no longer among them: with no credential in the
+	// rewrite, an https URL needs no rewriting at all.
+	assert.Equal(t, "GIT_CONFIG_COUNT=5", env[0])
+	assert.Len(t, env, 1+2*5, "each entry contributes a KEY and a VALUE")
 
 	joined := strings.Join(env, "\n")
-	assert.Contains(t, joined,
-		"GIT_CONFIG_KEY_0=url.https://x-access-token:"+token+"@github.com/owner/charts.insteadOf")
+	assert.Contains(t, joined, "GIT_CONFIG_KEY_0=url.https://github.com/owner/charts.insteadOf")
 	assert.Contains(t, joined, "GIT_CONFIG_VALUE_0=ssh://git@github.com:22/owner/charts",
 		"the rewrite is keyed on the exact URL found, which a prefix rule would miss")
+	assert.NotContains(t, joined, "x-access-token",
+		"no credential rides the git configuration any more")
 }
 
 func TestSubmoduleConfigEnv_NoTokenMeansNoRewrites(t *testing.T) {
 	urls := []submoduleURL{{name: "charts", url: "https://github.com/owner/charts"}}
 
-	assert.Nil(t, submoduleConfigEnv(urls, "github.com", ""))
-	assert.Nil(t, submoduleConfigEnv(urls, "", "tok"))
+	assert.Nil(t, submoduleConfigEntries(urls, ""))
 }
 
 // newSubmoduleMergeFixture is newSubmoduleFixture plus a diverging base
@@ -326,7 +342,7 @@ func TestClone_InitialisesSubmodulesAfterTheMerge(t *testing.T) {
 	parentDir, headSHA, baseRef := newSubmoduleMergeFixture(t)
 
 	dest := filepath.Join(t.TempDir(), "checkout")
-	require.NoError(t, Clone(context.Background(), dest, parentDir, headSHA, baseRef, "", config.SubmodulesTopLevel))
+	require.NoError(t, Clone(context.Background(), dest, parentDir, headSHA, baseRef, config.SubmodulesTopLevel))
 
 	// The merge really happened...
 	assert.FileExists(t, filepath.Join(dest, "feature.txt"))
@@ -354,7 +370,7 @@ func TestInitSubmodules_FetchFailureFailsTheCloneNamingTheSubmodule(t *testing.T
 			"Failed to clone 'charts' a second time, aborting"), errors.New("exit status 1")
 	})
 
-	err := initSubmodules(context.Background(), run, dir, "https://github.com/owner/repo", "tok", config.SubmodulesTopLevel)
+	err := initSubmodules(context.Background(), run, dir, "https://github.com/owner/repo", nil, config.SubmodulesTopLevel)
 
 	require.Error(t, err, "an unfetchable submodule must fail the clone, not be skipped")
 	assert.Contains(t, err.Error(), "charts", "git's message names the submodule and must reach the caller")
@@ -377,7 +393,7 @@ func TestInitSubmodules_NotFoundSuggestsTheAppIsNotInstalled(t *testing.T) {
 			"fatal: repository 'https://github.com/owner/charts/' not found"), errors.New("exit status 1")
 	})
 
-	err := initSubmodules(context.Background(), run, dir, "https://github.com/owner/repo", "tok", config.SubmodulesTopLevel)
+	err := initSubmodules(context.Background(), run, dir, "https://github.com/owner/repo", nil, config.SubmodulesTopLevel)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not installed",
@@ -396,7 +412,7 @@ func TestInitSubmodules_OtherFailuresCarryNoAccessHint(t *testing.T) {
 		return []byte("fatal: unable to access: server certificate verification failed"), errors.New("exit status 1")
 	})
 
-	err := initSubmodules(context.Background(), run, dir, "https://github.com/owner/repo", "tok", config.SubmodulesTopLevel)
+	err := initSubmodules(context.Background(), run, dir, "https://github.com/owner/repo", nil, config.SubmodulesTopLevel)
 
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "not installed")

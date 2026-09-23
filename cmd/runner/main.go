@@ -29,5 +29,12 @@ func main() {
 		os.Exit(runner.RunClone(ctx, cfg))
 	}
 
+	// git invokes this as `<runner> credential get` while cloning, so the
+	// credential never has to exist anywhere git could persist it. Same
+	// single-binary dispatch as the clone above.
+	if len(os.Args) > 2 && os.Args[1] == "credential" {
+		os.Exit(runner.RunCredential(ctx, cfg, os.Args[2], os.Stdin, os.Stdout, os.Stderr))
+	}
+
 	os.Exit(runner.Run(ctx, cfg))
 }

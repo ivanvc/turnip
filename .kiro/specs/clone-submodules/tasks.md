@@ -327,3 +327,22 @@ the stage before it compiles.
   ]
 }
 ```
+
+- [x] 15. The submodule rewrites stop carrying a credential
+      (runner-token-delivery amendment, Slice 24)
+  - `submoduleConfigEnv` embedded the installation token in
+    `url.<authenticated>.insteadOf` entries, which reached git as
+    `GIT_CONFIG_VALUE_n` environment values — readable through `/proc` by
+    anything sharing the Pod's uid. It is now `submoduleConfigEntries`,
+    rewriting only the scheme
+  - The rewrite's useful half is unchanged: turnip holds no SSH key, so
+    `ssh://`, `git://` and `git@host:` forms still become `https://`. git
+    obtains the credential from turnip's credential helper when it
+    reaches the host
+  - An identity rewrite is now skipped. Every entry used to change the
+    URL by adding a credential, so even an `https://` source needed one;
+    with only the scheme to fix, an `https://` URL already has it right
+  - The host-mismatch refusal and `accessHint` are unchanged. Scoping the
+    token to the repositories `.gitmodules` names makes `accessHint`
+    *more* likely to be the right explanation, not less
+  - _Requirements: (Slice 24 amendment; see runner-token-delivery)_

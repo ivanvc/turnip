@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	gh "github.com/google/go-github/v90/github"
@@ -301,9 +302,22 @@ func TestClient_GetCollaboratorPermission(t *testing.T) {
 	assert.Equal(t, "write", got)
 }
 
-func TestClient_GenerateInstallationToken(t *testing.T) {
+// tokenMintServer stands in for GitHub's installation-token endpoint and
+// records the body it was asked with, which is where the scoping lives.
+func tokenMintServer(t *testing.T) (*Client, *map[string]any) {
+	t.Helper()
+	body := map[string]any{}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/app/installations/67890/access_tokens", func(w http.ResponseWriter, r *http.Request) {
+		// This endpoint is authenticated as the App, with a JWT — an
+		// installation token cannot mint another one. Asserted here
+		// because both transports produce a request this stub would
+		// otherwise answer identically, so nothing else would notice the
+		// wrong one being used until GitHub returned 401 in production.
+		assert.True(t, isAppJWT(r.Header.Get("Authorization")),
+			"the mint must authenticate as the App, not as the installation: %q", r.Header.Get("Authorization"))
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		writeJSON(t, w, map[string]string{"token": "test-installation-token"})
 	})
 	server := httptest.NewServer(mux)
@@ -314,9 +328,54 @@ func TestClient_GenerateInstallationToken(t *testing.T) {
 	client := auth.InstallationClient(67890)
 	client.itr.BaseURL = server.URL
 
-	token, err := client.GenerateInstallationToken(t.Context())
+	return client, &body
+}
+
+func TestClient_GenerateInstallationToken(t *testing.T) {
+	client, _ := tokenMintServer(t)
+
+	token, err := client.GenerateInstallationToken(t.Context(), TokenScope{Repositories: []string{"web"}})
 	require.NoError(t, err)
-	assert.Equal(t, "test-installation-token", token)
+	assert.Equal(t, "test-installation-token", token.Token)
+}
+
+// The narrowing is the point of the call, so it is asserted on the wire
+// rather than on the struct that was passed in.
+func TestClient_GenerateInstallationToken_NarrowsRepositoriesAndPermissions(t *testing.T) {
+	client, body := tokenMintServer(t)
+
+	_, err := client.GenerateInstallationToken(t.Context(), TokenScope{Repositories: []string{"web", "shared-modules"}})
+	require.NoError(t, err)
+
+	assert.Equal(t, []any{"web", "shared-modules"}, (*body)["repositories"])
+	assert.Equal(t, map[string]any{"contents": "read"}, (*body)["permissions"],
+		"the clone needs contents:read and nothing else")
+}
+
+// An empty scope is how a recursive submodule clone is permitted to reach
+// the whole installation (Requirement 1.4). Permissions are narrowed even
+// then — that half is never unknowable.
+func TestClient_GenerateInstallationToken_EmptyScopeStillNarrowsPermissions(t *testing.T) {
+	client, body := tokenMintServer(t)
+
+	_, err := client.GenerateInstallationToken(t.Context(), TokenScope{})
+	require.NoError(t, err)
+
+	assert.NotContains(t, *body, "repositories", "omitted, not empty — an empty list would scope to nothing")
+	assert.Equal(t, map[string]any{"contents": "read"}, (*body)["permissions"])
+}
+
+// Minting must not narrow the Client's own transport: the Server posts
+// comments and check runs through it, and neither survives contents:read.
+// This is the bug that would look like "dispatch works, reporting fails".
+func TestClient_GenerateInstallationToken_LeavesTheAPITransportUnscoped(t *testing.T) {
+	client, _ := tokenMintServer(t)
+
+	_, err := client.GenerateInstallationToken(t.Context(), TokenScope{Repositories: []string{"web"}})
+	require.NoError(t, err)
+
+	assert.Nil(t, client.itr.InstallationTokenOptions,
+		"the transport backing comments and check runs must stay unscoped")
 }
 
 // GetPullRequest is the only source of pull-request state on the
@@ -347,4 +406,29 @@ func TestClient_GetPullRequest_CarriesOpenState(t *testing.T) {
 			assert.Equal(t, tc.want, got.Open)
 		})
 	}
+}
+
+// isAppJWT reports whether an Authorization header carries a JWT signed
+// as the App, rather than an opaque installation token.
+func isAppJWT(header string) bool {
+	raw, ok := strings.CutPrefix(header, "Bearer ")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	head, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return false
+	}
+	var typ struct {
+		Alg string `json:"alg"`
+		Typ string `json:"typ"`
+	}
+	if err := json.Unmarshal(head, &typ); err != nil {
+		return false
+	}
+	return typ.Typ == "JWT" && typ.Alg != ""
 }

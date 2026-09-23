@@ -179,6 +179,29 @@ table fails). The cross-RPC assertion is
 it refused unauthenticated and handed the established Operation id when
 authenticated.
 
+
+- [x] 12. A unary interceptor beside the stream one
+      (runner-token-delivery amendment, Slice 24)
+  - **This slice's Requirement 4.2 was half true.** `NewServer` installed
+    `grpc.StreamInterceptor` and nothing else, so a unary RPC registered
+    on it was reached with **no authentication at all**. The claim that
+    "an RPC added later is authenticated without its author having to
+    remember" held for streaming RPCs and quietly failed for unary ones
+  - **The probe test did not catch it because the probe was streaming.**
+    `TestInterceptor_CoversAnRPCItWasNotWrittenFor` registered a
+    streaming method, so it asserted the property for the half of gRPC it
+    happened to use. Slice 24 needed a unary endpoint and found the hole
+  - `grpc.UnaryInterceptor` now shares the same check: both interceptors
+    call one `authorize` function, so the two kinds cannot drift apart
+  - `TestInterceptor_CoversAUnaryRPCItWasNotWrittenFor` is its sibling,
+    and was verified to fail with the interceptor removed — a probe that
+    passes either way proves nothing
+  - Refusals are also logged now, which they were not: a `TokenReview`
+    the Server had no permission to make refused every stream in silence,
+    on both sides, for as long as it took someone to notice a pull
+    request had never been answered
+  - _Requirements: 4.1, 4.2 (this slice); Slice 24 task 4_
+
 **Re-verified after the TLS split** (2026-09-22): encryption moved to
 Slice 38 (`runner-server-tls`) and everything above was removed from this
 slice — `internal/servertls`, `WithCertificate`, the TLS dial,

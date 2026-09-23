@@ -37,7 +37,6 @@ func genOperationParams(t *rapid.T) OperationParams {
 		Operation:   rapid.StringMatching(`[a-z]{2,10}`).Draw(t, "operation"),
 		RepoURL:     "https://github.com/" + rapid.StringMatching(`[a-z]{2,10}/[a-z]{2,10}`).Draw(t, "repoURL") + ".git",
 		CommitSHA:   rapid.StringMatching(`[a-f0-9]{40}`).Draw(t, "commitSHA"),
-		GitHubToken: rapid.StringMatching(`[A-Za-z0-9._-]{5,40}`).Draw(t, "githubToken"),
 		ServerAddr:  rapid.StringMatching(`[a-z0-9.-]{3,20}:[0-9]{2,5}`).Draw(t, "serverAddr"),
 		ExtraArgs:   rapid.SliceOfN(rapid.StringMatching(`--[a-z-]{2,10}`), 0, 3).Draw(t, "extraArgs"),
 		PlanData:    []byte(rapid.String().Draw(t, "planData")),
@@ -131,7 +130,7 @@ func TestProperty_TokenPropagationToCloneContainer(t *testing.T) {
 		require.Len(t, job.Spec.Template.Spec.Containers, 1)
 
 		clone := envMap(initContainerNamed(t, "clone", job))
-		require.Equal(t, params.GitHubToken, clone["TURNIP_GITHUB_TOKEN"])
+		require.NotContains(t, clone, "TURNIP_GITHUB_TOKEN")
 
 		main := envMap(job.Spec.Template.Spec.Containers[0])
 		require.NotContains(t, main, "TURNIP_GITHUB_TOKEN")

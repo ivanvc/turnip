@@ -1,6 +1,8 @@
 package jobs
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -35,7 +37,6 @@ func testParams() OperationParams {
 		RepoURL:     "https://github.com/acme/repo.git",
 		CommitSHA:   "abc123",
 		BaseRef:     "main",
-		GitHubToken: "ghs_token",
 		ServerAddr:  "server.turnip.svc:9443",
 		ExtraArgs:   []string{"--quiet"},
 		PlanData:    []byte("plan-bytes"),
@@ -98,22 +99,22 @@ func TestBuildJob_EveryStrategyClonesInAnInitContainer(t *testing.T) {
 	}
 }
 
-// The GitHub token is set on the clone container and nowhere else. The
-// tool's process has no use for an installation token, and under
-// run-in-image that process runs in a vendor image executing arbitrary
-// tool plugins.
-func TestBuildJob_GitHubTokenReachesOnlyTheCloneContainer(t *testing.T) {
+// No container carries a GitHub credential any more. The clone asks the
+// Server for one when git needs it, so reading this Pod — or the etcd
+// behind it — yields nothing worth having.
+func TestBuildJob_NoContainerCarriesAGitHubCredential(t *testing.T) {
 	for tool := range toolImages {
 		t.Run(tool, func(t *testing.T) {
 			job, err := BuildJob(testProject(tool), testParams())
 			require.NoError(t, err)
 
-			clone := envMap(initContainerNamed(t, "clone", job))
-			assert.Equal(t, "ghs_token", clone["TURNIP_GITHUB_TOKEN"])
-
-			main := envMap(mainContainer(t, job))
-			assert.NotContains(t, main, "TURNIP_GITHUB_TOKEN",
-				"the tool's process never needs it, and under run-in-image that process is a vendor image")
+			spec := job.Spec.Template.Spec
+			for _, c := range append(slices.Clone(spec.InitContainers), spec.Containers...) {
+				for _, e := range c.Env {
+					assert.NotContains(t, e.Name, "GITHUB_TOKEN", "container %q", c.Name)
+					assert.NotContains(t, strings.ToLower(e.Value), "ghs_", "container %q env %q", c.Name, e.Name)
+				}
+			}
 		})
 	}
 }

@@ -32,13 +32,20 @@ type OperationRecord struct {
 	HeadSHA        string         `json:"head_sha"`
 	Operation      string         `json:"operation"`
 	ExtraArgs      []string       `json:"extra_args,omitempty"`
-	TriggeredBy    string         `json:"triggered_by"`
-	CheckRunID     int64          `json:"check_run_id,omitempty"`
-	JobName        string         `json:"job_name,omitempty"`
-	StartDeadline  int64          `json:"start_deadline"`
-	Started        bool           `json:"started"`
-	Finalized      bool           `json:"finalized"`
-	CreatedAt      time.Time      `json:"created_at"`
+	// TokenRepositories is the repository scope this Operation's clone
+	// credential is minted for, resolved at dispatch — when the Project,
+	// the commit and the submodule mode are all in hand — and consumed
+	// when the Runner fetches. Empty means the installation's full
+	// breadth, which a recursive submodule clone requires (Slice 24,
+	// Requirement 1.4). Not a secret: it is a list of repository names.
+	TokenRepositories []string  `json:"token_repositories,omitempty"`
+	TriggeredBy       string    `json:"triggered_by"`
+	CheckRunID        int64     `json:"check_run_id,omitempty"`
+	JobName           string    `json:"job_name,omitempty"`
+	StartDeadline     int64     `json:"start_deadline"`
+	Started           bool      `json:"started"`
+	Finalized         bool      `json:"finalized"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 func operationKey(operationID string) string {

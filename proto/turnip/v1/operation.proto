@@ -13,6 +13,28 @@ option go_package = "github.com/ivanvc/turnip/internal/grpc/turnip/v1";
 // whole stream.
 service OperationService {
   rpc ExecuteOperation(stream ExecuteOperationRequest) returns (ExecuteOperationResponse);
+
+  // FetchCloneCredential returns the GitHub credential this Operation's
+  // clone should use. The Runner asks for it at the moment git needs it,
+  // rather than being handed it in its Pod spec.
+  rpc FetchCloneCredential(FetchCloneCredentialRequest) returns (FetchCloneCredentialResponse);
+}
+
+// FetchCloneCredentialRequest is deliberately empty.
+//
+// Which Operation's credential to return is decided by the caller's
+// authenticated identity and by nothing else. A field naming the
+// Operation would let a Runner authenticated for one Operation ask for
+// another's token — and under scoped tokens that may be a different
+// repository. An implementation cannot read a field that does not exist.
+message FetchCloneCredentialRequest {}
+
+message FetchCloneCredentialResponse {
+  string token = 1;
+  // Advisory: the helper does not enforce it and git never sees it. It
+  // exists so an expired credential fails legibly rather than as an
+  // unexplained 401 from GitHub.
+  int64 expires_at_unix = 2;
 }
 
 message ExecuteOperationRequest {
@@ -31,7 +53,12 @@ message OperationStart {
   string operation = 5;
   string repo_url = 6;
   string commit_sha = 7;
-  string github_token = 8;
+  // 8 was github_token. The Runner used to return to the Server a
+  // credential the Server had minted and never read. Reserved rather than
+  // recycled, so a future field cannot inherit the number and be silently
+  // decoded as a token by a peer built before this change.
+  reserved 8;
+  reserved "github_token";
   map<string, string> tool_config = 9;
   repeated string extra_args = 10;
   bytes plan_data = 11;

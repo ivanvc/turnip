@@ -194,8 +194,11 @@ var _ lock.LockManager = (*fakeLockManager)(nil)
 // needs: CreateCheckRun, UpdateCheckRun, GenerateInstallationToken.
 type fakeExecuteClient struct {
 	github.GitHubClient
-	createCheckRunErr    error
-	generateTokenErr     error
+	createCheckRunErr error
+	generateTokenErr  error
+	// gitmodules is served by GetFile for .gitmodules; absent means the
+	// repository declares no submodules. Read-only after construction.
+	gitmodules           []byte
 	updateCheckRunCalled int
 	// createdCheckRun/updatedCheckRun capture the last options each call
 	// received, so tests can assert what the checks tab would show —
@@ -210,6 +213,11 @@ type fakeExecuteClient struct {
 	mu              sync.Mutex
 	createdCheckRun github.CheckRunOptions
 	updatedCheckRun github.CheckRunOptions
+	// tokenScope records what the last mint was asked to cover, so a test
+	// can assert the Operation narrowed the credential rather than merely
+	// obtaining one. Written from the same per-Target goroutines as the
+	// two above, and guarded for the same reason.
+	tokenScope github.TokenScope
 }
 
 func (f *fakeExecuteClient) CreateCheckRun(ctx context.Context, owner, repo string, opts github.CheckRunOptions) (int64, error) {
@@ -228,11 +236,25 @@ func (f *fakeExecuteClient) UpdateCheckRun(ctx context.Context, owner, repo stri
 	f.mu.Unlock()
 	return nil
 }
-func (f *fakeExecuteClient) GenerateInstallationToken(ctx context.Context) (string, error) {
-	if f.generateTokenErr != nil {
-		return "", f.generateTokenErr
+
+// GetFile serves .gitmodules for the token-scope lookup. The embedded
+// GitHubClient is nil, so without this every execute test would panic the
+// moment scoping started reading the repository.
+func (f *fakeExecuteClient) GetFile(_ context.Context, _, _, path, _ string) ([]byte, error) {
+	if path == ".gitmodules" && f.gitmodules != nil {
+		return f.gitmodules, nil
 	}
-	return "token", nil
+	return nil, github.ErrFileNotFound
+}
+
+func (f *fakeExecuteClient) GenerateInstallationToken(ctx context.Context, scope github.TokenScope) (github.InstallationToken, error) {
+	f.mu.Lock()
+	f.tokenScope = scope
+	f.mu.Unlock()
+	if f.generateTokenErr != nil {
+		return github.InstallationToken{}, f.generateTokenErr
+	}
+	return github.InstallationToken{Token: "token"}, nil
 }
 
 // fakeJobCreator publishes a scripted result to the operation-done

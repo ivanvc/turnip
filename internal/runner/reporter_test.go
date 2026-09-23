@@ -161,7 +161,6 @@ func testCfg() Config {
 		Operation:   "diff",
 		RepoURL:     "https://github.com/acme/repo.git",
 		CommitSHA:   "abc123",
-		GitHubToken: "ghs_token",
 	}
 }
 

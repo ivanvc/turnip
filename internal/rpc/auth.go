@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -60,39 +61,76 @@ type wrappedStream struct {
 
 func (w *wrappedStream) Context() context.Context { return w.ctx }
 
+// authorize is the whole check, shared by both interceptors so the two
+// kinds of RPC cannot drift apart.
+//
+// It returns the context a handler should see: the caller's, carrying the
+// Operation the credential was established to belong to.
+//
+// A nil Authenticator refuses everything rather than waving it through:
+// the failure mode of a misconfigured server should be "nothing works",
+// not "everything is open".
+func authorize(ctx context.Context, auth Authenticator, method string) (context.Context, error) {
+	if auth == nil {
+		slog.ErrorContext(ctx, "refusing rpc: no authenticator configured", "method", method)
+		return nil, status.Error(codes.Unauthenticated, "rpc: no authenticator configured")
+	}
+
+	token, operationID, err := credentialFromContext(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "refusing rpc: malformed credential", "method", method, "error", err)
+		return nil, status.Error(codes.Unauthenticated, err.Error())
+	}
+
+	if err := auth.Authenticate(ctx, token, operationID); err != nil {
+		if errors.Is(err, ErrNotBound) {
+			// Someone presented a valid credential for a different
+			// Operation. That is the forgery this check exists for, and
+			// it is the one refusal worth alerting on.
+			slog.ErrorContext(ctx, "refusing rpc: caller is not this operation's runner",
+				"method", method, "claimed_operation", operationID, "error", err)
+			return nil, status.Error(codes.PermissionDenied, err.Error())
+		}
+		slog.WarnContext(ctx, "refusing rpc: credential not accepted",
+			"method", method, "claimed_operation", operationID, "error", err)
+		return nil, status.Error(codes.Unauthenticated, err.Error())
+	}
+
+	return context.WithValue(ctx, operationIDKey{}, operationID), nil
+}
+
 // streamAuthInterceptor authenticates every stream before its handler
 // runs, whatever method it is for.
 //
 // This is deliberately not a check inside ExecuteOperation. An interceptor
 // protects the one RPC that exists today *and* the next one, whose author
 // will not think to add a check; a per-handler check protects only what
-// someone remembered. It is also why a nil Authenticator refuses
-// everything rather than waving it through: the failure mode of a
-// misconfigured server should be "nothing works", not "everything is
-// open".
+// someone remembered.
 func streamAuthInterceptor(auth Authenticator) grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		if auth == nil {
-			return status.Error(codes.Unauthenticated, "rpc: no authenticator configured")
-		}
-
-		ctx := ss.Context()
-		token, operationID, err := credentialFromContext(ctx)
+		ctx, err := authorize(ss.Context(), auth, info.FullMethod)
 		if err != nil {
-			return status.Error(codes.Unauthenticated, err.Error())
+			return err
 		}
+		return handler(srv, &wrappedStream{ServerStream: ss, ctx: ctx})
+	}
+}
 
-		if err := auth.Authenticate(ctx, token, operationID); err != nil {
-			if errors.Is(err, ErrNotBound) {
-				return status.Error(codes.PermissionDenied, err.Error())
-			}
-			return status.Error(codes.Unauthenticated, err.Error())
+// unaryAuthInterceptor is the same check for unary methods.
+//
+// It exists because Slice 25 installed only the stream interceptor, which
+// made its own Requirement 4.2 — "an RPC added later is authenticated
+// without its author having to remember" — true for streaming RPCs and
+// quietly false for unary ones. The probe test that was supposed to prove
+// the claim registered a streaming method, so nothing caught it. Slice 24
+// needed a unary endpoint and found the hole.
+func unaryAuthInterceptor(auth Authenticator) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		ctx, err := authorize(ctx, auth, info.FullMethod)
+		if err != nil {
+			return nil, err
 		}
-
-		return handler(srv, &wrappedStream{
-			ServerStream: ss,
-			ctx:          context.WithValue(ctx, operationIDKey{}, operationID),
-		})
+		return handler(ctx, req)
 	}
 }
 

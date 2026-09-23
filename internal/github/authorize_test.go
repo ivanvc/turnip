@@ -43,7 +43,7 @@ func (f *fakeGitHubClient) callCount() int {
 	return f.calls
 }
 
-func (f *fakeGitHubClient) GenerateInstallationToken(ctx context.Context) (string, error) {
+func (f *fakeGitHubClient) GenerateInstallationToken(ctx context.Context, _ TokenScope) (InstallationToken, error) {
 	panic("not used by Authorizer")
 }
 func (f *fakeGitHubClient) GetFile(ctx context.Context, owner, repo, path, ref string) ([]byte, error) {

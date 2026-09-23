@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	OperationService_ExecuteOperation_FullMethodName = "/turnip.v1.OperationService/ExecuteOperation"
+	OperationService_ExecuteOperation_FullMethodName     = "/turnip.v1.OperationService/ExecuteOperation"
+	OperationService_FetchCloneCredential_FullMethodName = "/turnip.v1.OperationService/FetchCloneCredential"
 )
 
 // OperationServiceClient is the client API for OperationService service.
@@ -35,6 +36,10 @@ const (
 // whole stream.
 type OperationServiceClient interface {
 	ExecuteOperation(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ExecuteOperationRequest, ExecuteOperationResponse], error)
+	// FetchCloneCredential returns the GitHub credential this Operation's
+	// clone should use. The Runner asks for it at the moment git needs it,
+	// rather than being handed it in its Pod spec.
+	FetchCloneCredential(ctx context.Context, in *FetchCloneCredentialRequest, opts ...grpc.CallOption) (*FetchCloneCredentialResponse, error)
 }
 
 type operationServiceClient struct {
@@ -58,6 +63,16 @@ func (c *operationServiceClient) ExecuteOperation(ctx context.Context, opts ...g
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type OperationService_ExecuteOperationClient = grpc.ClientStreamingClient[ExecuteOperationRequest, ExecuteOperationResponse]
 
+func (c *operationServiceClient) FetchCloneCredential(ctx context.Context, in *FetchCloneCredentialRequest, opts ...grpc.CallOption) (*FetchCloneCredentialResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FetchCloneCredentialResponse)
+	err := c.cc.Invoke(ctx, OperationService_FetchCloneCredential_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OperationServiceServer is the server API for OperationService service.
 // All implementations must embed UnimplementedOperationServiceServer
 // for forward compatibility.
@@ -71,6 +86,10 @@ type OperationService_ExecuteOperationClient = grpc.ClientStreamingClient[Execut
 // whole stream.
 type OperationServiceServer interface {
 	ExecuteOperation(grpc.ClientStreamingServer[ExecuteOperationRequest, ExecuteOperationResponse]) error
+	// FetchCloneCredential returns the GitHub credential this Operation's
+	// clone should use. The Runner asks for it at the moment git needs it,
+	// rather than being handed it in its Pod spec.
+	FetchCloneCredential(context.Context, *FetchCloneCredentialRequest) (*FetchCloneCredentialResponse, error)
 	mustEmbedUnimplementedOperationServiceServer()
 }
 
@@ -83,6 +102,9 @@ type UnimplementedOperationServiceServer struct{}
 
 func (UnimplementedOperationServiceServer) ExecuteOperation(grpc.ClientStreamingServer[ExecuteOperationRequest, ExecuteOperationResponse]) error {
 	return status.Error(codes.Unimplemented, "method ExecuteOperation not implemented")
+}
+func (UnimplementedOperationServiceServer) FetchCloneCredential(context.Context, *FetchCloneCredentialRequest) (*FetchCloneCredentialResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FetchCloneCredential not implemented")
 }
 func (UnimplementedOperationServiceServer) mustEmbedUnimplementedOperationServiceServer() {}
 func (UnimplementedOperationServiceServer) testEmbeddedByValue()                          {}
@@ -112,13 +134,36 @@ func _OperationService_ExecuteOperation_Handler(srv interface{}, stream grpc.Ser
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type OperationService_ExecuteOperationServer = grpc.ClientStreamingServer[ExecuteOperationRequest, ExecuteOperationResponse]
 
+func _OperationService_FetchCloneCredential_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchCloneCredentialRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OperationServiceServer).FetchCloneCredential(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OperationService_FetchCloneCredential_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OperationServiceServer).FetchCloneCredential(ctx, req.(*FetchCloneCredentialRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OperationService_ServiceDesc is the grpc.ServiceDesc for OperationService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var OperationService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "turnip.v1.OperationService",
 	HandlerType: (*OperationServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "FetchCloneCredential",
+			Handler:    _OperationService_FetchCloneCredential_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "ExecuteOperation",

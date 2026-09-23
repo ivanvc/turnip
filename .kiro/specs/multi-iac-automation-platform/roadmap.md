@@ -32,7 +32,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 21 | What a Bare Command Targets | `project-selection` | Complete | Slices 1, 6 |
 | 22 | Refuse Tool Arguments That Name an Executable | `tool-argument-policy` | Not Started | Slices 4, 6 |
 | 23 | Authorize on Permission Level, Not Call Success | `collaborator-authorization` | Complete | Slice 4 |
-| 24 | How the Runner Receives Its GitHub Token | `runner-token-delivery` | Not Started (unblocked by Slice 25) | Slices 5, 6, 25 |
+| 24 | How the Runner Receives Its GitHub Token | `runner-token-delivery` | Complete | Slices 5, 6, 25 |
 | 25 | Authenticating the Runner to the Server | `runner-authentication` | Complete | Slices 5, 6 |
 | 26 | Real-Time Operation Output | `operation-output-stream` | Not Started | Slices 5, 6 |
 | 27 | Authenticated and Encrypted Redis | `redis-tls-auth` | Not Started | Slices 3, 10 |
@@ -1145,14 +1145,21 @@ that runs the tool has no business carrying it", and the token is
 correctly absent from the main container's environment. That scoping is
 sound; it is the *delivery mechanism* that leaks, not the placement.
 
-**Three surfaces carry the same token, and this slice should own all
-three** rather than fixing the one that happens to be in front of us:
+**Four surfaces carry the same token, and this slice should own all
+four** rather than fixing the one that happens to be in front of us:
 
 | Surface | Where | Who can read it |
 |---|---|---|
 | Job/Pod spec env value | `internal/jobs/build.go` | anything with pod or job read in the namespace; etcd |
 | `.git/config` in the workspace | `internal/runner/clone.go`'s `git remote add` | any code running in the tool container — recorded in Slice 15 |
+| reported output | `internal/runner/clone.go`'s error paths, through the Runner's stream | anyone who can read the pull request the comment lands on |
 | `OperationStart` gRPC message | `internal/runner/reporter.go` | plaintext pod-to-pod traffic, on the clone-failure path only |
+
+The third was missed by an earlier draft of this entry and is the widest
+audience of the four — a credential in an error message travels into a
+pull request comment. It is closed today, and only, by `clone.go`'s
+`redact`/`redactArgs`. It is listed because this slice rewrites the
+delivery path those two functions guard.
 
 **Delivers**: a delivery mechanism that keeps the credential out of a
 widely-readable API object. Three candidates, and they are not
@@ -1236,7 +1243,7 @@ carries an `InstallationTokenOptions` field taking `Repositories` and
 `Permissions`; turnip simply never sets it.
 
 Minting `{Repositories: [...], Permissions: {contents: read}}` reduces
-what a leak is worth on **all three** surfaces at once and depends on
+what a leak is worth on **all four** surfaces at once and depends on
 nothing — not on Slice 25, not on the delivery mechanism. It is the only
 mitigation here that also helps against the surface a pull request can
 reach, short of never persisting the token.
@@ -1266,6 +1273,57 @@ about the token crossing plaintext gRPC, and in doing so observed that the
 Pod spec is the cheaper read — "retrievable without touching the network
 at all". That observation, not the rejected finding, is what this slice
 acts on.
+
+**Shipped 2026-09-22.** What landed, and two things this entry did not
+anticipate:
+
+- **A Runner Pod now carries no GitHub credential at all.** git asks
+  turnip's own binary, running as a git credential helper, which fetches
+  one over the channel Slice 25 authenticates at the moment git needs it.
+  The request message is empty: which Operation's credential to return is
+  decided by the authenticated identity, so the cross-repository theft a
+  naive fetch endpoint would allow is unreachable rather than forbidden.
+- **The token is scoped** to the repositories the clone will fetch, with
+  `contents: read`. Under `recursive` the repository scope stays wide,
+  because nested submodules are not enumerable before cloning them, and
+  narrowing must never be why a clone stops working.
+- **There was a fourth surface**, missed by the first three drafts of
+  this entry: a credential in an error message reaches a pull request
+  comment, which is a wider audience than any of the other three. It was
+  held closed only by `clone.go`'s `redact`/`redactArgs`.
+- **And there was a fifth token placement.** `submoduleConfigEnv` put the
+  token in `GIT_CONFIG_VALUE_n` environment values of the git
+  subprocess — readable through `/proc`. Both it and `embedToken` are
+  gone; redaction went with them, because the Runner process no longer
+  holds a credential to redact against.
+
+**Amendments made**: Slice 25 gains a unary interceptor — it had
+installed only the stream one, so a unary RPC was reachable with no
+authentication, and its own probe test was streaming and never noticed.
+Slice 2 `clone-submodules` loses the credential from its rewrites.
+
+**Still open, recorded here rather than fixed**: a finished Runner Pod
+lingers for the Job TTL of 15 minutes. It no longer holds a credential,
+so this is now only about Pod garbage collection rather than exposure.
+
+**Order within the slice, and its relationship to Slice 38.** Requirement
+1 (narrowing) depends on nothing and goes first. That is not just
+convenience: it decides what Requirement 2 puts on the wire. Slice 25
+landed authentication without encryption, so B moves the credential from
+the Pod spec — where pod-read and etcd reach it, passively and at rest —
+onto a plaintext channel, where capturing it needs node access or
+`CAP_NET_RAW`. That is a net improvement against the realistic adversary,
+and it is a much easier one to defend once the thing crossing the wire is
+a single-repository `contents: read` token rather than a key to the whole
+installation.
+
+**Slice 38 (`runner-server-tls`) is therefore listed as a preference, not
+a dependency.** The residual it closes is real and worth naming: without
+server verification a Runner *asks an unauthenticated peer for a
+credential*, so an attacker able to win routing to the Server's Service
+name becomes a participant rather than an observer. Requirement 1 bounds
+what they collect; Slice 38 is what stops them collecting it. If 38 is
+already scheduled when this slice starts, do it first.
 
 ---
 

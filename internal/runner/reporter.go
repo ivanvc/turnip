@@ -169,7 +169,6 @@ func (r *reporter) startMessage(resumed bool) *pb.OperationStart {
 		Operation:   r.cfg.Operation,
 		RepoUrl:     r.cfg.RepoURL,
 		CommitSha:   r.cfg.CommitSHA,
-		GithubToken: r.cfg.GitHubToken,
 		ToolConfig:  r.cfg.ToolConfig,
 		ExtraArgs:   r.cfg.ExtraArgs,
 		PlanData:    r.cfg.PlanData,

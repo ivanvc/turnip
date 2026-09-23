@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -76,15 +75,21 @@ var mergeIdentity = []string{"-c", "user.name=turnip", "-c", "user.email=turnip@
 // (Requirement 5.4). token authenticates against a private repository
 // (Requirement 5.2) and is never allowed to reach an error message or log
 // line this function produces.
-func Clone(ctx context.Context, dir, repoURL, commitSHA, baseRef, token, submodules string) error {
-	return cloneWith(ctx, execGit, dir, repoURL, commitSHA, baseRef, token, submodules)
+func Clone(ctx context.Context, dir, repoURL, commitSHA, baseRef, submodules string) error {
+	return cloneWith(ctx, execGit, dir, repoURL, commitSHA, baseRef, submodules)
 }
 
-func cloneWith(ctx context.Context, run gitRunner, dir, repoURL, commitSHA, baseRef, token, submodules string) error {
-	authedURL, err := embedToken(repoURL, token)
+func cloneWith(ctx context.Context, run gitRunner, dir, repoURL, commitSHA, baseRef, submodules string) error {
+	// No credential is assembled here and none is held. git asks turnip's
+	// own binary for one when it needs it, so nothing this function
+	// writes — a remote URL, an argument, an error message — can carry a
+	// token, and no cleanup step has to remember to remove one.
+	helper, err := credentialHelperEntry()
 	if err != nil {
-		return fmt.Errorf("runner: clone: build authenticated remote URL: %w", err)
+		return err
 	}
+	gitConfig := []gitConfigEntry{helper}
+	gitEnv := gitConfigEnv(gitConfig)
 
 	fetchRefspecs := []string{commitSHA + ":" + headRef}
 	if baseRef != "" {
@@ -94,7 +99,7 @@ func cloneWith(ctx context.Context, run gitRunner, dir, repoURL, commitSHA, base
 
 	steps := [][]string{
 		{"init", dir},
-		{"-C", dir, "remote", "add", "origin", authedURL},
+		{"-C", dir, "remote", "add", "origin", repoURL},
 		fetchArgs,
 		{"-C", dir, "checkout", headRef},
 	}
@@ -103,8 +108,8 @@ func cloneWith(ctx context.Context, run gitRunner, dir, repoURL, commitSHA, base
 		// Every step names its target directory explicitly (the "init"
 		// argument or "-C dir"), so none of them need — or should assume
 		// — a working directory that already exists.
-		if out, err := run(ctx, "", "git", args, nil); err != nil {
-			return fmt.Errorf("runner: clone: git %s: %w: %s", strings.Join(redactArgs(args, authedURL, token), " "), err, redact(string(out), authedURL, token))
+		if out, err := run(ctx, "", "git", args, gitEnv); err != nil {
+			return fmt.Errorf("runner: clone: git %s: %w: %s", strings.Join(args, " "), err, string(out))
 		}
 	}
 
@@ -112,11 +117,11 @@ func cloneWith(ctx context.Context, run gitRunner, dir, repoURL, commitSHA, base
 	// checkout: it is the merged tree's gitlinks that record which
 	// submodule commits belong to it (Decision 2).
 	if baseRef != "" {
-		if err := runMerge(ctx, run, dir, authedURL, token); err != nil {
+		if err := runMerge(ctx, run, dir, gitEnv); err != nil {
 			return err
 		}
 	}
-	return initSubmodules(ctx, run, dir, repoURL, token, submodules)
+	return initSubmodules(ctx, run, dir, repoURL, gitConfig, submodules)
 }
 
 // runMerge merges baseLocalRef into the already-checked-out headRef. If
@@ -129,14 +134,14 @@ func cloneWith(ctx context.Context, run gitRunner, dir, repoURL, commitSHA, base
 // conflict, whether on the first attempt or after the fallback, is
 // reported as a *MergeConflictError after aborting the merge to leave a
 // clean working tree.
-func runMerge(ctx context.Context, run gitRunner, dir, authedURL, token string) error {
+func runMerge(ctx context.Context, run gitRunner, dir string, gitEnv []string) error {
 	mergeArgs := append(append([]string{"-C", dir}, mergeIdentity...), "merge", "--no-ff", "-m", "turnip-merge", baseLocalRef)
 
 	out, err := run(ctx, "", "git", mergeArgs, nil)
 	if err != nil && strings.Contains(string(out), "refusing to merge unrelated histories") {
 		unshallowArgs := []string{"-C", dir, "fetch", "--unshallow", "origin"}
 		if unshallowOut, unshallowErr := run(ctx, "", "git", unshallowArgs, nil); unshallowErr != nil {
-			return fmt.Errorf("runner: clone: git %s: %w: %s", strings.Join(unshallowArgs, " "), unshallowErr, redact(string(unshallowOut), authedURL, token))
+			return fmt.Errorf("runner: clone: git %s: %w: %s", strings.Join(unshallowArgs, " "), unshallowErr, string(unshallowOut))
 		}
 		out, err = run(ctx, "", "git", mergeArgs, nil)
 	}
@@ -146,10 +151,10 @@ func runMerge(ctx context.Context, run gitRunner, dir, authedURL, token string) 
 
 	if strings.Contains(string(out), "CONFLICT") || strings.Contains(string(out), "Automatic merge failed") {
 		_, _ = run(ctx, "", "git", []string{"-C", dir, "merge", "--abort"}, nil)
-		return &MergeConflictError{Output: redact(string(out), authedURL, token)}
+		return &MergeConflictError{Output: string(out)}
 	}
 
-	return fmt.Errorf("runner: clone: git %s: %w: %s", strings.Join(redactArgs(mergeArgs, authedURL, token), " "), err, redact(string(out), authedURL, token))
+	return fmt.Errorf("runner: clone: git %s: %w: %s", strings.Join(mergeArgs, " "), err, string(out))
 }
 
 // MergeConflictError reports that a PR's base branch could not be merged
@@ -162,59 +167,4 @@ type MergeConflictError struct {
 
 func (e *MergeConflictError) Error() string {
 	return fmt.Sprintf("runner: clone: merge conflict: %s", e.Output)
-}
-
-const redactedRemote = "<redacted>"
-
-// embedToken returns repoURL with an "x-access-token:<token>@" userinfo
-// segment inserted, the standard way to authenticate an HTTPS git remote
-// with a GitHub App installation token. An empty token leaves repoURL
-// untouched, since there's no credential to embed — a plain local path or
-// an already-public remote (as used by this package's own tests) would
-// otherwise be corrupted by an empty userinfo segment.
-func embedToken(repoURL, token string) (string, error) {
-	if token == "" {
-		return repoURL, nil
-	}
-	u, err := url.Parse(repoURL)
-	if err != nil {
-		return "", err
-	}
-	u.User = url.UserPassword("x-access-token", token)
-	return u.String(), nil
-}
-
-// redactArgs redacts every secret out of each argument, so neither the
-// authenticated remote URL nor the raw token reaches an error message that
-// echoes the command. Matching is by substring rather than by whole
-// argument: submodule authentication passes the token inside a larger
-// GIT_CONFIG value, which a whole-argument comparison would miss.
-func redactArgs(args []string, authedURL, token string) []string {
-	redacted := make([]string, len(args))
-	for i, a := range args {
-		redacted[i] = redact(a, authedURL, token)
-	}
-	return redacted
-}
-
-// redact strips every occurrence of authedURL and of the installation
-// token out of s, so a git subprocess's own error/output text never leaks
-// either one.
-//
-// The token is a needle in its own right, not just as part of authedURL:
-// a rewritten submodule URL embeds the same token in a different string
-// (Requirement 4.3), which the authedURL needle alone would not strip.
-//
-// An empty secret is skipped rather than replaced. strings.ReplaceAll with
-// an empty old value inserts the placeholder between every character, and
-// both secrets are legitimately empty — embedToken treats an empty token
-// as a no-op, leaving authedURL equal to a plain unauthenticated URL.
-func redact(s, authedURL, token string) string {
-	for _, secret := range []string{authedURL, token} {
-		if secret == "" {
-			continue
-		}
-		s = strings.ReplaceAll(s, secret, redactedRemote)
-	}
-	return s
 }

@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -230,6 +231,84 @@ func probeDesc(record func(ctx context.Context)) *grpc.ServiceDesc {
 	}
 }
 
+// probeUnaryDesc is a unary method this package does not implement, whose
+// handler performs no check of its own.
+//
+// It exists because the streaming probe below passed for a server that
+// authenticated streams and nothing else. "An RPC added later is
+// authenticated" has to be asserted for both kinds, or it is a claim
+// about whichever kind the test happened to use.
+func probeUnaryDesc(record func(ctx context.Context)) *grpc.ServiceDesc {
+	return &grpc.ServiceDesc{
+		ServiceName: "turnip.test.v1.UnaryProbe",
+		HandlerType: (*any)(nil),
+		Methods: []grpc.MethodDesc{{
+			MethodName: "Ping",
+			Handler: func(_ any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+				in := &pb.ExecuteOperationResponse{}
+				if err := dec(in); err != nil {
+					return nil, err
+				}
+				h := func(ctx context.Context, _ any) (any, error) {
+					record(ctx)
+					return &pb.ExecuteOperationResponse{}, nil
+				}
+				if interceptor == nil {
+					return h(ctx, in)
+				}
+				return interceptor(ctx, in, &grpc.UnaryServerInfo{FullMethod: "/turnip.test.v1.UnaryProbe/Ping"}, h)
+			},
+		}},
+	}
+}
+
+func TestInterceptor_CoversAUnaryRPCItWasNotWrittenFor(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		reached int
+		gotID   string
+	)
+	record := func(ctx context.Context) {
+		mu.Lock()
+		defer mu.Unlock()
+		reached++
+		gotID, _ = OperationIDFromContext(ctx)
+	}
+
+	lis := bufconn.Listen(1024 * 1024)
+	server := NewServer(&fakeHandler{}, WithAuthenticator(&recordingAuth{}))
+	server.RegisterService(probeUnaryDesc(record), struct{}{})
+	go func() { _ = server.Serve(lis) }()
+	t.Cleanup(server.Stop)
+
+	conn, err := grpc.NewClient("passthrough:///bufconn",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	// Unauthenticated: refused, though the method's handler contains no
+	// check whatsoever.
+	err = conn.Invoke(context.Background(), "/turnip.test.v1.UnaryProbe/Ping",
+		&pb.ExecuteOperationResponse{}, &pb.ExecuteOperationResponse{})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	mu.Lock()
+	assert.Zero(t, reached, "a unary RPC nobody protected is still protected")
+	mu.Unlock()
+
+	// Authenticated: reaches the handler, and is handed the established
+	// Operation id it never asked for.
+	err = conn.Invoke(authedContext("op-unary"), "/turnip.test.v1.UnaryProbe/Ping",
+		&pb.ExecuteOperationResponse{}, &pb.ExecuteOperationResponse{})
+	require.NoError(t, err)
+	mu.Lock()
+	assert.Equal(t, 1, reached)
+	assert.Equal(t, "op-unary", gotID)
+	mu.Unlock()
+}
+
 func TestInterceptor_CoversAnRPCItWasNotWrittenFor(t *testing.T) {
 	var (
 		mu      sync.Mutex
@@ -287,4 +366,64 @@ func TestInterceptor_CoversAnRPCItWasNotWrittenFor(t *testing.T) {
 	mu.Lock()
 	assert.Equal(t, "op-probe", gotID)
 	mu.Unlock()
+}
+
+// The credential endpoint serves the Operation the caller was
+// authenticated as, and there is nothing in the request that could say
+// otherwise. This is the same property the streaming forgery test
+// asserts, on the endpoint where getting it wrong hands over a
+// repository credential rather than a forged result.
+func TestFetchCloneCredential_ServesTheAuthenticatedOperation(t *testing.T) {
+	handler := &fakeHandler{}
+	client, _ := serveWith(t, handler, WithAuthenticator(&recordingAuth{}))
+
+	resp, err := client.FetchCloneCredential(authedContext("op-authenticated"), &pb.FetchCloneCredentialRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, "ghs_for_op-authenticated", resp.GetToken())
+
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	assert.Equal(t, []string{"op-authenticated"}, handler.credentialFor)
+}
+
+func TestFetchCloneCredential_RefusedWithoutACredential(t *testing.T) {
+	handler := &fakeHandler{}
+	client, _ := serveWith(t, handler, WithAuthenticator(&recordingAuth{}))
+
+	_, err := client.FetchCloneCredential(context.Background(), &pb.FetchCloneCredentialRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	assert.Empty(t, handler.credentialFor, "no credential is minted for an unauthenticated caller")
+}
+
+// A caller whose credential is valid but belongs to another Operation is
+// refused before any token is minted — the cross-repository theft the
+// slice's Requirement 2.3 exists to prevent.
+func TestFetchCloneCredential_RefusedWhenBoundToAnotherOperation(t *testing.T) {
+	handler := &fakeHandler{}
+	client, _ := serveWith(t, handler,
+		WithAuthenticator(&recordingAuth{err: fmt.Errorf("%w: pod mismatch", ErrNotBound)}))
+
+	_, err := client.FetchCloneCredential(authedContext("op-someone-elses"), &pb.FetchCloneCredentialRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	assert.Empty(t, handler.credentialFor)
+}
+
+// A minting failure is not leaked verbatim to the Runner: it can name
+// repositories the caller was refused for.
+func TestFetchCloneCredential_MintFailureIsNotDetailedToTheCaller(t *testing.T) {
+	handler := &fakeHandler{credentialErr: errors.New("422 repository not covered: secret-repo")}
+	client, _ := serveWith(t, handler, WithAuthenticator(&recordingAuth{}))
+
+	_, err := client.FetchCloneCredential(authedContext("op-1"), &pb.FetchCloneCredentialRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	assert.NotContains(t, err.Error(), "secret-repo")
 }

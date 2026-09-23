@@ -26,9 +26,13 @@ type recordedHandlerCall struct {
 }
 
 type fakeHandler struct {
-	mu        sync.Mutex
-	calls     []recordedHandlerCall
-	resultErr error
+	mu            sync.Mutex
+	calls         []recordedHandlerCall
+	resultErr     error
+	credentialErr error
+	// credentialFor records the Operation each credential request was
+	// served for — the authenticated one, never one the caller named.
+	credentialFor []string
 }
 
 func (h *fakeHandler) HandleLog(ctx context.Context, operationID string, line LogLine) error {
@@ -36,6 +40,19 @@ func (h *fakeHandler) HandleLog(ctx context.Context, operationID string, line Lo
 	defer h.mu.Unlock()
 	h.calls = append(h.calls, recordedHandlerCall{kind: "log", operationID: operationID, log: line})
 	return nil
+}
+
+// CloneCredential records what it was asked for and answers with a
+// scripted credential. operationID is whatever the interceptor
+// established, which is the property the credential tests assert.
+func (h *fakeHandler) CloneCredential(ctx context.Context, operationID string) (CloneCredential, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.credentialFor = append(h.credentialFor, operationID)
+	if h.credentialErr != nil {
+		return CloneCredential{}, h.credentialErr
+	}
+	return CloneCredential{Token: "ghs_for_" + operationID}, nil
 }
 
 func (h *fakeHandler) HandleResult(ctx context.Context, operationID string, result OperationResult) error {

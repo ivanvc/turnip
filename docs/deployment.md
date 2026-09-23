@@ -221,6 +221,37 @@ one cannot live in a namespaced Role. turnip ships its own narrow
 which also carries `subjectaccessreviews` — turnip asks the cluster *who
 is this*, never *may they do X*.
 
+## How a Runner gets its GitHub credential
+
+**Nothing to configure. It is listed so you know what is and isn't there.**
+
+A Runner Pod carries no GitHub credential. Its spec has no token in any
+container, so reading the Pod — or the etcd behind it — yields nothing
+worth having. When git needs a credential it asks turnip's own binary,
+running as a git credential helper, which fetches one from the Server over
+the authenticated gRPC channel at that moment and hands it to git on a
+pipe. It is never written to a file, never put in a URL, and never passed
+as a command-line argument, so a failed clone leaves nothing behind in the
+workspace either.
+
+**What the credential can do.** It is scoped to the repositories that
+clone will actually fetch — the pull request's own repository, plus any
+submodule repositories declared in `.gitmodules` that live in the same
+account — with `contents: read` and nothing else. A leaked credential is
+worth one repository's source, not your whole installation.
+
+One exception, and it is deliberate: with
+`TURNIP_CLONE_SUBMODULES=recursive`, a submodule's own submodules are not
+declared anywhere turnip can read before cloning them, so the repository
+scope is left at the installation's full breadth. Permissions are still
+narrowed to `contents: read`. Narrowing must never be the reason a clone
+that worked yesterday stops working, so this widens rather than guesses.
+
+**What it does not protect against.** Not someone with cluster-admin, who
+can read anything. And not the tool your repository chooses to run: that
+executes with the workspace mounted, by design, and turnip has no way to
+know what it does with it.
+
 ## Runner-to-Server traffic is not encrypted
 
 Runners report their logs and results to the Server over gRPC, and that

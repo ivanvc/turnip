@@ -21,7 +21,6 @@ type Config struct {
 	RepoURL     string
 	CommitSHA   string
 	BaseRef     string
-	GitHubToken string
 	ToolConfig  map[string]string
 	ExtraArgs   []string
 	PlanData    []byte
@@ -48,10 +47,9 @@ type Config struct {
 	TokenFile string
 
 	// CloneSubmodules is the Submodule_Mode this Operation's clone uses:
-	// one of config.Submodules{None,TopLevel,Recursive}. Like GitHubToken
-	// it is set on the clone initContainer and deliberately absent from
-	// the container that runs the tool, so it is optional here and read
-	// only in clone mode. An empty value means top-level rather than
+	// one of config.Submodules{None,TopLevel,Recursive}. It is set on the
+	// clone initContainer and deliberately absent from the container that
+	// runs the tool, so it is optional here and read only in clone mode. An empty value means top-level rather than
 	// "off", so a Job built by an older Server still initialises
 	// submodules instead of silently producing an empty directory.
 	CloneSubmodules string
@@ -108,16 +106,10 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 		return Config{}, &MissingEnvVarsError{Names: missing}
 	}
 
-	// The three below are optional because each is set on some containers
-	// and deliberately absent from others — requiring them would make the
-	// Runner refuse to start in exactly the Jobs turnip builds.
-
-	// Set on the clone initContainer and nowhere else: the process that
-	// runs the tool has no use for a GitHub installation token, and under
-	// the run-in-image strategy that process is a vendor image executing
-	// arbitrary tool plugins. Clone also treats an empty token as "no
-	// credential to embed", which is what a public repository needs.
-	cfg.GitHubToken = env("TURNIP_GITHUB_TOKEN")
+	// The values below are optional because each is set on some
+	// containers and deliberately absent from others — requiring them
+	// would make the Runner refuse to start in exactly the Jobs turnip
+	// builds.
 
 	// Set only under the copy-out strategy. Under run-in-image the tool is
 	// already on the vendor image's own PATH, and pathWithToolsDir leaves

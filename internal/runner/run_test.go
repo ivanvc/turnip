@@ -244,7 +244,7 @@ func TestRunCloneWith_SuccessExitsZeroWithoutContactingTheServer(t *testing.T) {
 	rep := &fakeReporter{}
 	var stderr safeBuffer
 
-	clone := func(_ context.Context, dir, _, _, _, _, _ string) error {
+	clone := func(_ context.Context, dir, _, _, _, _ string) error {
 		assert.Equal(t, "/turnip/src", dir, "the clone lands in the mounted workspace, not a temporary directory")
 		return nil
 	}
@@ -259,7 +259,7 @@ func TestRunCloneWith_FailureReportsBeforeExitingNonZero(t *testing.T) {
 	rep := &fakeReporter{}
 	var stderr safeBuffer
 
-	clone := func(context.Context, string, string, string, string, string, string) error {
+	clone := func(context.Context, string, string, string, string, string) error {
 		return errors.New("commit not found")
 	}
 
@@ -276,7 +276,7 @@ func TestRunCloneWith_MergeConflictStaysDistinguishable(t *testing.T) {
 	rep := &fakeReporter{}
 	var stderr safeBuffer
 
-	clone := func(context.Context, string, string, string, string, string, string) error {
+	clone := func(context.Context, string, string, string, string, string) error {
 		return &MergeConflictError{Output: "CONFLICT (content): Merge conflict in main.tf"}
 	}
 
@@ -296,7 +296,7 @@ func TestRunCloneWith_MissingWorkspaceDirIsAConfigurationError(t *testing.T) {
 	var stderr safeBuffer
 
 	cloneCalled := false
-	clone := func(context.Context, string, string, string, string, string, string) error {
+	clone := func(context.Context, string, string, string, string, string) error {
 		cloneCalled = true
 		return nil
 	}
@@ -314,7 +314,7 @@ func TestRunCloneWith_ReportFailureStillExitsNonZero(t *testing.T) {
 	rep := &fakeReporter{reportErr: errors.New("server unreachable")}
 	var stderr safeBuffer
 
-	clone := func(context.Context, string, string, string, string, string, string) error {
+	clone := func(context.Context, string, string, string, string, string) error {
 		return errors.New("commit not found")
 	}
 
@@ -376,47 +376,6 @@ func TestRunWith_WorkspacePathStrippedFromWhatTheServerSees(t *testing.T) {
 	// The local mirror deliberately keeps the absolute path: `kubectl
 	// logs` is the one place it is still worth having.
 	assert.Contains(t, stdout.String(), "/tmp/turnip-runner-")
-}
-
-// The gap this closes is wider than the execution transcript: redact has
-// only ever been applied to clone failures, so a tool that echoed the
-// installation token into its own output was never redacted at all.
-//
-// Tested with the token in the tool's output rather than only in its
-// arguments, because a test that checked arguments alone would pass while
-// the real hazard remained.
-func TestRunWith_TokenInToolOutputIsRedacted(t *testing.T) {
-	const token = "ghs_exampletokenvalue"
-
-	p := &fakePlugin{
-		operations: []string{"diff"},
-		script: []outputLine{
-			{"stdout", "fetching with " + token},
-		},
-		result: &plugin.ExecuteResult{
-			ExitCode: 0,
-			Output:   "cloned https://x-access-token:" + token + "@github.com/acme/repo",
-		},
-	}
-	rep := &fakeReporter{}
-	var stdout, stderr safeBuffer
-
-	cfg := testRunConfig()
-	cfg.GitHubToken = token
-
-	exitCode := runWith(context.Background(), cfg, rep, fakeSelector(p), &stdout, &stderr)
-	require.Equal(t, 0, exitCode)
-
-	assert.NotContains(t, rep.lastResult.Output, token,
-		"the token must not reach the pull request comment")
-	for _, l := range rep.logLines {
-		assert.NotContains(t, l.line, token,
-			"nor a live viewer, which reads the same lines by another route")
-	}
-
-	// The local mirror deliberately keeps it: kubectl logs is the one
-	// place the real value is still worth having.
-	assert.Contains(t, stdout.String(), token)
 }
 
 // The transcript records argv and is given no access to the environment.

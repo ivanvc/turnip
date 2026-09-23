@@ -175,8 +175,9 @@ discovered during deployment.*
 - **Fetching the GitHub token over this channel.** Slice 24 consumes what
   this slice builds; it does not belong here.
 - **Encrypting the channel.** Split into its own slice
-  (`runner-server-tls`) after an earlier draft of this document made it
-  Requirement 4 here. The two are genuinely separate axes: authentication
+  (`runner-server-tls`) after an earlier draft of this document made it a
+  requirement of this slice — numbered 4, before the renumbering that
+  followed its removal. The two are genuinely separate axes: authentication
   establishes *who* is calling, and every acceptance criterion above holds
   over a plaintext transport — the interceptor's own test suite runs
   unencrypted. What encryption adds is protection from an attacker with
@@ -198,7 +199,7 @@ discovered during deployment.*
   resolves it properly at the cost of a large infrastructure dependency
   turnip does not otherwise require.
 - **Validating the token locally against the API server's JWKS.** It would
-  avoid the cluster-scoped grant of Requirement 7 at the cost of
+  avoid the cluster-scoped grant of Requirement 6 at the cost of
   implementing signature validation, which has more ways to be subtly
   wrong. Worth weighing in the design; not decided here.
 - **Authorising *what* an authenticated Runner may do.** This slice

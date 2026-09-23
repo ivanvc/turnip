@@ -24,7 +24,7 @@ type submoduleURL struct {
 // An empty mode means top-level: a Job built by an older Server carries no
 // mode at all, and defaulting it off would silently reintroduce the empty
 // submodule directory this slice exists to remove.
-func initSubmodules(ctx context.Context, run gitRunner, dir, repoURL, token, mode string) error {
+func initSubmodules(ctx context.Context, run gitRunner, dir, repoURL string, gitConfig []gitConfigEntry, mode string) error {
 	if mode == config.SubmodulesNone {
 		return nil
 	}
@@ -72,16 +72,11 @@ func initSubmodules(ctx context.Context, run gitRunner, dir, repoURL, token, mod
 	// and a shallow submodule fetch can fail to reach the exact commit the
 	// parent pins (Requirement 3.3).
 
-	authedURL, err := embedToken(repoURL, token)
-	if err != nil {
-		return fmt.Errorf("runner: clone: submodules: build authenticated remote URL: %w", err)
-	}
-
-	if out, err := run(ctx, "", "git", args, submoduleConfigEnv(urls, parentHost, token)); err != nil {
+	env := gitConfigEnv(append(gitConfig, submoduleConfigEntries(urls, parentHost)...))
+	if out, err := run(ctx, "", "git", args, env); err != nil {
 		return fmt.Errorf(
 			"runner: clone: git %s: %w: %s%s",
-			strings.Join(redactArgs(args, authedURL, token), " "), err,
-			redact(string(out), authedURL, token), accessHint(string(out)),
+			strings.Join(args, " "), err, string(out), accessHint(string(out)),
 		)
 	}
 	return nil
@@ -95,7 +90,7 @@ func initSubmodules(ctx context.Context, run gitRunner, dir, repoURL, token, mod
 // exist. Read literally, the message sends the reader off to check a
 // spelling that is usually correct.
 //
-// By this point turnip has already rewritten the URL to carry the
+// By this point turnip's credential helper has already supplied the
 // installation token, so the fetch was authenticated. The remaining
 // explanation is almost always that the GitHub App is not installed on the
 // submodule's repository: an installation token reaches only the
@@ -158,47 +153,43 @@ func readSubmoduleURLs(ctx context.Context, run gitRunner, dir string) ([]submod
 // The fixed prefixes are still emitted, but only for *nested* submodules:
 // under recursive their own .gitmodules does not exist until their parent
 // is fetched, so their URLs cannot have been read here.
-func submoduleConfigEnv(urls []submoduleURL, parentHost, token string) []string {
-	if token == "" || parentHost == "" {
+func submoduleConfigEntries(urls []submoduleURL, parentHost string) []gitConfigEntry {
+	if parentHost == "" {
 		return nil
 	}
 
-	type entry struct{ key, value string }
-	var entries []entry
-
+	var entries []gitConfigEntry
 	for _, s := range urls {
-		if equivalent := authenticatedHTTPS(s.url, token); equivalent != "" {
-			entries = append(entries, entry{"url." + equivalent + ".insteadOf", s.url})
+		// An identity rewrite is skipped: before this slice every entry
+		// changed the URL by adding a credential to it, so even an https
+		// source needed one. Now the rewrite's only job is the scheme,
+		// and an https URL already has the right one.
+		if equivalent := httpsEquivalent(s.url); equivalent != "" && equivalent != s.url {
+			entries = append(entries, gitConfigEntry{"url." + equivalent + ".insteadOf", s.url})
 		}
 	}
 
-	base := "https://x-access-token:" + token + "@" + parentHost + "/"
+	base := "https://" + parentHost + "/"
 	for _, prefix := range []string{
-		"https://" + parentHost + "/",
 		"http://" + parentHost + "/",
 		"git://" + parentHost + "/",
 		"git@" + parentHost + ":",
 		"ssh://git@" + parentHost + "/",
 	} {
-		entries = append(entries, entry{"url." + base + ".insteadOf", prefix})
+		entries = append(entries, gitConfigEntry{"url." + base + ".insteadOf", prefix})
 	}
 
-	env := []string{fmt.Sprintf("GIT_CONFIG_COUNT=%d", len(entries))}
-	for i, e := range entries {
-		env = append(env,
-			fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, e.key),
-			fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, e.value),
-		)
-	}
-	return env
+	return entries
 }
 
-// authenticatedHTTPS rewrites raw as an HTTPS URL carrying the token.
-// turnip holds no SSH key and never will, so HTTPS is the only scheme that
-// can work (Requirement 3.4). An empty result means raw names no host —
-// a relative or local path, which git resolves against the parent's
-// already-authenticated remote.
-func authenticatedHTTPS(raw, token string) string {
+// httpsEquivalent rewrites raw as a plain HTTPS URL.
+//
+// turnip holds no SSH key and never will, so HTTPS is the only scheme
+// that can work. It carries no credential: git asks turnip's credential
+// helper for one when it reaches the host. An empty result means raw
+// names no host — a relative or local path, which git resolves against
+// the parent's own remote.
+func httpsEquivalent(raw string) string {
 	host := gitURLHost(raw)
 	if host == "" {
 		return ""
@@ -219,11 +210,7 @@ func authenticatedHTTPS(raw, token string) string {
 		path = raw[i+1:]
 	}
 
-	authenticated, err := embedToken("https://"+host+"/"+path, token)
-	if err != nil {
-		return ""
-	}
-	return authenticated
+	return "https://" + host + "/" + path
 }
 
 // gitURLHost extracts the host from any URL form git accepts, returning ""

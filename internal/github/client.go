@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	gh "github.com/google/go-github/v90/github"
@@ -13,7 +14,7 @@ import (
 // provides. Slice 6 depends on this interface, not the concrete Client, so
 // it can substitute a fake in its own tests.
 type GitHubClient interface {
-	GenerateInstallationToken(ctx context.Context) (string, error)
+	GenerateInstallationToken(ctx context.Context, scope TokenScope) (InstallationToken, error)
 	GetFile(ctx context.Context, owner, repo, path, ref string) ([]byte, error)
 	GetModifiedFiles(ctx context.Context, owner, repo string, prNumber int) ([]string, error)
 	GetPullRequest(ctx context.Context, owner, repo string, prNumber int) (*PullRequest, error)
@@ -31,6 +32,9 @@ type GitHubClient interface {
 type Client struct {
 	gh  *gh.Client
 	itr *ghinstallation.Transport
+	// apps mints tokens on a throwaway transport, leaving itr — which
+	// backs gh — unscoped. See InstallationClient.
+	apps *ghinstallation.AppsTransport
 
 	// graphQLURL overrides graphQLEndpoint when set; used by tests only.
 	graphQLURL string
@@ -38,12 +42,72 @@ type Client struct {
 
 var _ GitHubClient = (*Client)(nil)
 
-func (c *Client) GenerateInstallationToken(ctx context.Context) (string, error) {
-	token, err := c.itr.Token(ctx)
+// InstallationToken is a minted credential and the moment it stops
+// working. The expiry is carried because the Runner fetches this at the
+// point of use: a credential that expired in transit should fail saying
+// so, not as an unexplained 401 from GitHub.
+type InstallationToken struct {
+	Token     string
+	ExpiresAt time.Time
+}
+
+// TokenScope narrows what a minted installation token can reach.
+//
+// Permissions are not a field: the only consumer is the Runner's clone,
+// which needs `contents: read` and nothing else, and a caller able to ask
+// for more is a caller that eventually will.
+type TokenScope struct {
+	// Repositories are names within the installation's account. Empty
+	// means every repository the installation covers — deliberately
+	// reachable, because a recursive submodule clone cannot enumerate
+	// what it will fetch before it fetches it (Slice 24, Requirement
+	// 1.4). Permissions are narrowed either way.
+	Repositories []string
+}
+
+// GenerateInstallationToken mints an installation token limited to scope.
+//
+// It mints on a transport of its own rather than on c.itr. c.itr backs
+// c.gh, so setting InstallationTokenOptions there would narrow every
+// subsequent API call this Client makes — posting a comment needs
+// issues:write and a check run needs checks:write, neither of which
+// survives a `contents: read` scoping. The bug that would produce is a
+// Server that dispatches fine and then cannot report, which is
+// indistinguishable from the network failing.
+func (c *Client) GenerateInstallationToken(ctx context.Context, scope TokenScope) (InstallationToken, error) {
+	// The Apps endpoint is called directly rather than through
+	// ghinstallation's own scoping field, because ghinstallation/v2 is
+	// built against go-github v88 while turnip is on v90 — its
+	// InstallationTokenOptions is a different type from the one the rest
+	// of this package speaks. Calling the API turnip already has a client
+	// for keeps one version of go-github in play.
+	//
+	// c.apps signs as the App (a JWT), which is what this endpoint wants;
+	// an installation token cannot mint another.
+	// c.itr.BaseURL is where this installation already mints, so the
+	// app-authenticated client follows it. Without this a GitHub
+	// Enterprise install — or a test's stub server — would be bypassed by
+	// a second client defaulting to github.com.
+	base := c.itr.BaseURL
+	appClient, err := gh.NewClient(gh.WithTransport(c.apps), gh.WithURLs(&base, nil))
 	if err != nil {
-		return "", fmt.Errorf("github: generating installation token: %w", err)
+		return InstallationToken{}, fmt.Errorf("github: constructing app client: %w", err)
 	}
-	return token, nil
+
+	token, _, err := appClient.Apps.CreateInstallationToken(ctx, c.itr.InstallationID(), &gh.InstallationTokenOptions{
+		Repositories: scope.Repositories,
+		Permissions:  &gh.InstallationPermissions{Contents: gh.Ptr("read")},
+	})
+	if err != nil {
+		// No fallback to an unscoped token: a silent widening would make
+		// the narrowing invisible on the day it stops working
+		// (Requirement 1.3).
+		return InstallationToken{}, fmt.Errorf("github: generating installation token scoped to %v: %w", scope.Repositories, err)
+	}
+	return InstallationToken{
+		Token:     token.GetToken(),
+		ExpiresAt: token.GetExpiresAt().Time,
+	}, nil
 }
 
 func (c *Client) GetFile(ctx context.Context, owner, repo, path, ref string) ([]byte, error) {

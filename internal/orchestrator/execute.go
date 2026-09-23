@@ -224,10 +224,15 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		HeadSHA:        pr.HeadSHA,
 		Operation:      t.Operation,
 		ExtraArgs:      execArgs,
-		TriggeredBy:    t.TriggeredBy,
-		CheckRunID:     checkRunID,
-		StartDeadline:  time.Now().Add(o.startTimeout).Unix(),
-		CreatedAt:      time.Now(),
+		// Resolved here, where the Project, the commit and the submodule
+		// mode are all in hand, and consumed when the Runner fetches. The
+		// credential itself is minted then, not now, so it is not live
+		// through queueing, scheduling and image pulls (Requirement 2.4).
+		TokenRepositories: o.tokenScopeFor(ctx, client, repo, pr.HeadSHA, submodules).Repositories,
+		TriggeredBy:       t.TriggeredBy,
+		CheckRunID:        checkRunID,
+		StartDeadline:     time.Now().Add(o.startTimeout).Unix(),
+		CreatedAt:         time.Now(),
 	}
 	if err := o.records.Create(ctx, rec); err != nil {
 		return rejectedResult(t, fmt.Sprintf("creating operation record: %v", err))
@@ -250,19 +255,12 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		close(done)
 	}()
 
-	token, err := client.GenerateInstallationToken(ctx)
-	if err != nil {
-		o.deleteRecord(ctx, operationID)
-		return rejectedResult(t, fmt.Sprintf("generating installation token: %v", err))
-	}
-
 	job, err := jobs.BuildJob(t.Project, jobs.OperationParams{
 		OperationID:    operationID,
 		Operation:      t.Operation,
 		RepoURL:        repo.URL,
 		CommitSHA:      pr.HeadSHA,
 		BaseRef:        pr.BaseRef,
-		GitHubToken:    token,
 		ServerAddr:     o.runnerServerAddr,
 		ExtraArgs:      execArgs,
 		PlanData:       planData,

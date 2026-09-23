@@ -34,5 +34,10 @@ func (a *AppAuth) InstallationClient(installationID int64) *Client {
 	// non-nil here, so this can never fail.
 	ghClient, _ := gh.NewClient(gh.WithTransport(itr))
 
-	return &Client{gh: ghClient, itr: itr}
+	// apps is carried so GenerateInstallationToken can mint on a
+	// transport of its own. It must not reuse itr: that transport backs
+	// ghClient, so scoping it would also scope every comment and
+	// check-run call this Client makes — to `contents: read` on one
+	// repository, which is not enough to post a result.
+	return &Client{gh: ghClient, itr: itr, apps: a.appsTransport}
 }

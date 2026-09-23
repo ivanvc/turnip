@@ -92,7 +92,6 @@ type OperationParams struct {
 	RepoURL     string
 	CommitSHA   string
 	BaseRef     string
-	GitHubToken string
 	ServerAddr  string
 	ExtraArgs   []string
 	PlanData    []byte
@@ -195,9 +194,10 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 	// that runs the tool needs nothing but the tool, and can be a vendor
 	// image turnip does not control.
 	//
-	// The token is set here and nowhere else. The tool's process has no
-	// use for a GitHub installation token, and under runInImage that
-	// process runs in a vendor image executing arbitrary tool plugins.
+	// No GitHub credential is set on any container. The clone asks the
+	// Server for one when git needs it, over the channel Slice 25
+	// authenticates — so reading this Pod, or the etcd behind it, yields
+	// nothing worth having (Slice 24, Requirement 2.1).
 	cloneContainer := corev1.Container{
 		Name:  "clone",
 		Image: op.RunnerImage,
@@ -206,7 +206,6 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		// only the clone reads it, so the container that runs the tool has
 		// no business carrying it.
 		Env: append(slices.Clone(baseEnv),
-			corev1.EnvVar{Name: "TURNIP_GITHUB_TOKEN", Value: op.GitHubToken},
 			corev1.EnvVar{Name: "TURNIP_CLONE_SUBMODULES", Value: op.Submodules},
 		),
 		VolumeMounts: []corev1.VolumeMount{workspaceMount, tokenMount},
