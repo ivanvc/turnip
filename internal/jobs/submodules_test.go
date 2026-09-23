@@ -33,7 +33,7 @@ func TestBuildJob_SubmoduleModeReachesOnlyTheCloneContainer(t *testing.T) {
 }
 
 // An empty value is meaningful rather than absent: the Runner reads it as
-// top-level, so a Job whose Server never set one still initialises
+// top-level, so a Job whose Server never set one still initializes
 // submodules instead of silently leaving an empty directory.
 func TestBuildJob_EmptySubmoduleModeIsStillPresentOnTheCloneContainer(t *testing.T) {
 	job, err := BuildJob(testProject("helmfile"), testParams())

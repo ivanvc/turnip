@@ -78,7 +78,7 @@ The normative table. Every row is a test case.
 | `/turnip plan web *` | mixed with `*` | refused, whole command (Req 2.3) |
 
 Two rows deserve emphasis. `/turnip apply *` deliberately keeps the noisy
-behaviour — asking for everything explicitly is a request to be told about
+behavior — asking for everything explicitly is a request to be told about
 everything, including the Projects holding no plan. And `/turnip plan web`
 is untouched: naming a Project reaches it whether or not the pull request
 modified it, because a developer naming a Project has said something the
@@ -181,7 +181,7 @@ method and no schema change.
 
 The cost is one round trip per configured Project. At the pilot's scale
 that is a handful of Redis GETs on a human-triggered action, and it is not
-worth pre-optimising: the roadmap already tracks turnip's `1+N` lock
+worth pre-optimizing: the roadmap already tracks turnip's `1+N` lock
 round-trip patterns as deferred until more than one Project exists.
 
 When that day comes the fix is shared, not local. Slice 28 needs to
@@ -259,7 +259,7 @@ select.
 A related gap this deliberately does not close: a name containing
 whitespace is equally unaddressable, since trigger lines are split on
 spaces. Requirement 3 names two specific reservations with concrete
-mechanics behind them; widening it to "names turnip can tokenise" invites
+mechanics behind them; widening it to "names turnip can tokenize" invites
 a general naming policy that this slice has no basis to set.
 
 ## Decision 7: a Selector containing `*` is a name pattern — but bare `*` is not
@@ -374,7 +374,7 @@ coherent rather than two half-fixes.
   (`// Feature: project-selection, Property: bare plan equals autoplan
   selection`). A parallel implementation cannot pass it, which is a
   stronger guarantee than reviewing that the same function was called.
-- **Memoisation**, via a counting fake client: a comment with three bare
+- **Memoization**, via a counting fake client: a comment with three bare
   plans performs exactly one `GetModifiedFiles`, and a comment naming
   Projects performs none.
 - **Single reply on empty selection**: a bare apply against several

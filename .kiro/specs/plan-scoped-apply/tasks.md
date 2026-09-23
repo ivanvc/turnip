@@ -23,7 +23,7 @@ one without the other changes nothing observable: storing without
 retrieving still refuses every apply, and retrieving without storing still
 finds nothing. They are one bug with two locations.
 
-Tests land after the behaviour, not alongside it, for the reason Slice 19
+Tests land after the behavior, not alongside it, for the reason Slice 19
 gave: several of them assert *which path ran*, which has no meaning until
 both paths exist. The exception is task 1, whose existing tests must be
 updated in the same task or the checkpoint cannot pass.
@@ -47,12 +47,12 @@ updated in the same task or the checkpoint cannot pass.
     - No orchestrator change is needed for the refusal: `target.go`'s
       `operationRecognized` already rejects an unknown operation with a
       comment and creates no Lock, check run or Job, which is exactly the
-      behaviour Requirement 4.2 asks for
+      behavior Requirement 4.2 asks for
     - _Requirements: 4.1, 4.2, 4.3, 4.4_
 
 - [x] 2. Checkpoint - destroy is gone, nothing else moved
   - `go build ./...` and `go test -race ./...` pass. A failure here is an
-    assertion that still expects four operations, not a behavioural
+    assertion that still expects four operations, not a behavioral
     problem.
 
 - [x] 3. Reshape the Lock around a plan record
@@ -78,7 +78,7 @@ updated in the same task or the checkpoint cannot pass.
     - _Requirements: 1.1, 1.3, 2.6_
 
 - [x] 4. Checkpoint - the interface changed and every caller compiles
-  - `go build ./...` and `go test -race ./...` pass. Behaviour is
+  - `go build ./...` and `go test -race ./...` pass. Behavior is
     unchanged so far: nothing stores a record yet, so nothing retrieves
     one.
 
@@ -117,7 +117,7 @@ updated in the same task or the checkpoint cannot pass.
     - The refusal names the arguments it refused and says the plan's own
       scope is what will be used. Refusing rather than ignoring is the
       point: a silently dropped argument is indistinguishable from an
-      honoured one until the infrastructure changes
+      honored one until the infrastructure changes
     - _Requirements: 2.2, 2.3, 2.4_
   - [x] 6.2 Fetch and replay the plan for every mutating Operation
     - The `if isApply` guard around the plan fetch broadens to every
@@ -132,7 +132,7 @@ updated in the same task or the checkpoint cannot pass.
     - _Requirements: 2.1, 2.6_
 
 - [x] 7. Checkpoint - the loop closes
-  - `go build ./...` and `go test -race ./...` pass. The behavioural
+  - `go build ./...` and `go test -race ./...` pass. The behavioral
     milestone: a Helmfile `diff` followed by an `apply` completes instead
     of being refused. If this checkpoint does not demonstrate that, the
     slice has not done its job.
@@ -167,7 +167,7 @@ updated in the same task or the checkpoint cannot pass.
     - **A Helmfile plan records a plan** — a result with `PlanData: nil`
       still calls `StorePlan` with `HasPlan` true. Fails before task 5.1
     - **An apply after a Helmfile plan is not refused** — asserted as
-      behaviour, not as a mock expectation, because mock expectations are
+      behavior, not as a mock expectation, because mock expectations are
       what hid this bug. `TestExecuteOne_ApplyWithoutPlanDataIsRejected`
       is re-read in this light and kept: the refusal is still correct when
       no plan ran
@@ -213,7 +213,7 @@ updated in the same task or the checkpoint cannot pass.
     - `server-orchestration` — task **27**: `executeOne` gains the
       argument refusal and the replay substitution; `HandleResult` loses
       its byte test and its apply-specific release
-    - _Requirements: (spec maintenance, no behavioural change beyond the tasks above)_
+    - _Requirements: (spec maintenance, no behavioral change beyond the tasks above)_
   - [x] 11.2 Amend the global spec
     - **Requirements 13.7 and 13.9** are overturned by task 1 and need
       amendment markers. 13.2, which lists only `diff`, `apply` and

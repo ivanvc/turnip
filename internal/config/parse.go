@@ -24,7 +24,7 @@ var unknownFieldRe = regexp.MustCompile(`^line (\d+): field (\S+) not found in t
 // returns *Config only when parsing AND validation both succeed; otherwise
 // it returns a nil *Config and a non-nil error.
 //
-// Decoding happens twice, which is what lets an unrecognised key be
+// Decoding happens twice, which is what lets an unrecognized key be
 // reported as a *validation* problem while malformed YAML stays a
 // *ParseError. Both arrive from yaml.v3 as the same *yaml.TypeError, and
 // telling them apart by matching the decoder's wording would tie turnip's
@@ -60,7 +60,7 @@ func Parse(data []byte) (*Config, error) {
 }
 
 // rejectUnknownFields re-decodes with strict field checking, reporting
-// every unrecognised key rather than stopping at the first.
+// every unrecognized key rather than stopping at the first.
 //
 // YAML merge keys need no special handling here: yaml.v3 expands "<<"
 // before matching fields, so an anchored document decodes normally under

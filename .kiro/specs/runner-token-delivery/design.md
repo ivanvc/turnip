@@ -202,7 +202,7 @@ than widen, on the grounds that an unscoped token is what this slice
 exists to remove.
 
 **Rejected because** Requirement 1.4 decides it, and the reasoning behind
-1.4 is that narrowing is a defence rather than a feature: a repository
+1.4 is that narrowing is a defense rather than a feature: a repository
 that used `recursive` and worked yesterday would stop working, and the
 operator would be told that a security improvement broke their clone.
 Recorded in the documentation (Requirement 5.2) instead, so the width is

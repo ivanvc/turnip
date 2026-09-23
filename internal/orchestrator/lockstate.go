@@ -31,7 +31,7 @@ func (o *Orchestrator) lockEventFor(rec *OperationRecord, success bool, changes 
 	if changes.Add != 0 || changes.Change != 0 || changes.Destroy != 0 || p.ActsWithoutChanges() {
 		// The arguments stored are the Operation's own, taken from the
 		// record the Job was built from rather than re-derived from the
-		// trigger line, so whatever turnip normalised is what a later
+		// trigger line, so whatever turnip normalized is what a later
 		// mutating Operation replays.
 		return lock.EventPlanApplicable, &lock.PlanRecord{
 			Data:    planData,

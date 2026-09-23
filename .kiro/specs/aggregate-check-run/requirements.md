@@ -47,7 +47,7 @@ one that gives that operator a better thing to require.
 
 This slice implements the global spec's Requirement 9 (GitHub Status
 Checks). It keeps 9.5 — separate check runs per Project — and adds a check
-that summarises them.
+that summarizes them.
 
 ## Glossary
 
@@ -299,7 +299,7 @@ Requiring `turnip` on such a repository is a documentation matter
    check is missing and why
 
 *Rationale for 8.1: a Project_Check survives its creating instance because
-the sweep finalises it from the Operation Record. An Aggregate_Check held
+the sweep finalizes it from the Operation Record. An Aggregate_Check held
 only by the goroutine waiting in `executeTargets` would stay in progress
 forever if that instance stopped — on a required check, blocking the merge
 with no remedy but a new push.*

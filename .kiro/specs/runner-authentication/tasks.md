@@ -9,7 +9,7 @@ The Server and the Runner must agree, and the moment the Server starts
 enforcing, a Runner that does not present a credential fails. So the
 credential is put in place and presented first, while nothing reads it;
 enforcement lands last, by which point everything it needs is already
-flowing. Tasks 1 and 2 are each expected to change no behaviour at all,
+flowing. Tasks 1 and 2 are each expected to change no behavior at all,
 and their checkpoints say so — a test failing there means something was
 read that should not have been.
 
@@ -39,7 +39,7 @@ every other test in this plan.
 
 - [x] 2. Checkpoint - the token is mounted and unused
   - `go build ./...`, `go test -race ./...` and golangci-lint pass.
-  - Behaviour is deliberately unchanged: nothing reads the projected
+  - Behavior is deliberately unchanged: nothing reads the projected
     token, and the Server has no interceptor. A failure here means the
     projection disturbed the Pod spec in some other way.
 
@@ -57,7 +57,7 @@ every other test in this plan.
 
 - [x] 4. Checkpoint - presented, still unenforced
   - `go build ./...`, `go test -race ./...` and golangci-lint pass.
-  - Behaviour unchanged again. Two consecutive `openStream` calls read the
+  - Behavior unchanged again. Two consecutive `openStream` calls read the
     token file twice — asserted on reads, not on timing — so a token
     replaced between them is presented as replaced.
   - _Requirements: 3.1_

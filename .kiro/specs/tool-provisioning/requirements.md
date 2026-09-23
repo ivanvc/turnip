@@ -23,7 +23,7 @@ in `/usr/local/bin` and four plugins installed into a helm data directory.
 Copying more paths would work for a while. It would also make turnip's
 provisioning table a mirror of someone else's Dockerfile, re-creating in a
 new form the very bottleneck the vendor-image design exists to avoid: a
-vendor reorganising their image would break turnip, and adopting a tool
+vendor reorganizing their image would break turnip, and adopting a tool
 release would again wait on a turnip change.
 
 Meanwhile the original strategy remains exactly right for tools that *are*
@@ -55,7 +55,7 @@ obtain its tool.
   Plugin runs one runs the other, and a tool nothing can execute yet has
   nowhere useful to live until then. Adding it here would be scope that
   delays the helmfile MVP.
-- **Running Terraform at all.** It is recognised by the config parser but
+- **Running Terraform at all.** It is recognized by the config parser but
   has no Plugin; that is Slice 7's work, and this slice does not change it.
 
 ## Glossary
@@ -142,7 +142,7 @@ so that a Runner Pod's shape is not a surprise.
 1. `docs/configuration.md` SHALL state, per tool, how it is provisioned
 2. `docs/troubleshooting.md` SHALL cover a missing helper binary or plugin,
    since that is the failure this slice exists to eliminate and the next
-   adopter will hit its neighbours
+   adopter will hit its neighbors
 3. THE documentation SHALL state that a run-in-image tool's plugins and
    helpers come from the vendor image, so that adding one means choosing an
    image that has it rather than configuring turnip

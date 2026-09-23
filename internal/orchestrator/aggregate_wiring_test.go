@@ -14,7 +14,7 @@ import (
 )
 
 // These tests cover where Outcomes enter the record: the sites that
-// already finalise or refuse an Operation, and the automatic plan.
+// already finalize or refuse an Operation, and the automatic plan.
 
 func readTestRecord(t *testing.T, o *Orchestrator, ref prRef) prStatus {
 	t.Helper()
@@ -136,7 +136,7 @@ func TestHandleIssueComment_UnrecognizedOperationWritesNothing(t *testing.T) {
 	assert.Empty(t, readTestRecord(t, o, commentRef).Projects)
 }
 
-// fakeAutoClient is fakePRClient with GitHub's check runs modelled, for the
+// fakeAutoClient is fakePRClient with GitHub's check runs modeled, for the
 // automatic path's publishes.
 type fakeAutoClient struct {
 	*fakePRClient

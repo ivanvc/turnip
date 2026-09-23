@@ -267,7 +267,7 @@ projects:
 	assert.True(t, found, "no whenModified ValidationError found in %v", verrs)
 }
 
-// Unrecognised keys turnip *does* define the shape of are errors, and
+// Unrecognized keys turnip *does* define the shape of are errors, and
 // several are reported together rather than one per attempt.
 func TestParse_UnknownKeysRejectedTogether(t *testing.T) {
 	data := []byte(`

@@ -125,7 +125,7 @@ func appendAggregateNote(result github.ProjectResult, err error) github.ProjectR
 }
 
 // recordFinishedOutcome records the Outcome of an Operation that has just
-// been finalised — by its Runner's result or by the sweep's timeout — and
+// been finalized — by its Runner's result or by the sweep's timeout — and
 // returns pr with a note when the verdict could not be updated.
 //
 // Keyed by the commit the Operation ran against, not the pull request's

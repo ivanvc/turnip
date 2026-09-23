@@ -2,11 +2,11 @@
 
 ## Overview
 
-The behavioural change is one line. Almost all of the plan is about being
+The behavioral change is one line. Almost all of the plan is about being
 able to *prove* it, because `cmd/server` has no test files today and
 Requirement 2 is entirely a claim about routing.
 
-So the order is: build the seam first with no behaviour change, then write
+So the order is: build the seam first with no behavior change, then write
 the test while it still fails, then make it pass. The middle checkpoint is
 the unusual one — it exists to confirm the test fails, and fails on the
 rows that should fail. That is the same discipline Slice 21 reached by
@@ -32,7 +32,7 @@ settled once the route is real.
       in `cmd/server/main.go`, per Decision 4. `run` calls it and keeps
       using the returned mux for `httpServer.Handler`
     - Copy all four route registrations **verbatim**, catch-all included.
-      This task must not change behaviour; the next one exists to say so
+      This task must not change behavior; the next one exists to say so
     - Parameters stay narrow deliberately: `health.Healthz()`,
       `metrics.Handler()` and `health.Readyz(ready)` are constructed
       inside, so `newMux` needs no Config, Orchestrator or clients — which

@@ -61,7 +61,7 @@ func (f *fakeCommentEventClient) postedComments() []string {
 }
 
 // GetModifiedFiles counts its calls: a bare plan's file listing is
-// memoised per event, and the count is how that is asserted rather than
+// memoized per event, and the count is how that is asserted rather than
 // inferred.
 func (f *fakeCommentEventClient) GetModifiedFiles(ctx context.Context, owner, repo string, prNumber int) ([]string, error) {
 	f.mu.Lock()
@@ -363,7 +363,7 @@ projects:
       - "c/**"
 `
 
-// The memoised seam, end to end: three bare plans in one comment ask the
+// The memoized seam, end to end: three bare plans in one comment ask the
 // same unchanging question, and must cost one file listing rather than
 // three.
 func TestHandleIssueComment_BarePlansFetchModifiedFilesOnce(t *testing.T) {

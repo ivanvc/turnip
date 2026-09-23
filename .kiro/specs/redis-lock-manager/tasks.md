@@ -221,7 +221,7 @@ all three, then the package doc update, then tests (unit against
     goes through `AcquireForPlan` or `Apply` rather than through
     `AcquireLock`/`StorePlan`/`ReleaseLock`, which Slice 18 removed along
     with the `acquire` and `compare-and-mutate` scripts they used.
-  - What changed behaviourally, from this slice's point of view: a plan
+  - What changed behaviorally, from this slice's point of view: a plan
     that fails with nothing recorded releases its Lock; a plan that finds
     nothing to apply releases it when the tool is inert without changes;
     dispatching a plan invalidates a stored one; and a mutating Operation

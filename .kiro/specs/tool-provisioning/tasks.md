@@ -16,7 +16,7 @@ the two.
 
 - [x] 1. Clone as a mode of the runner binary
   - [x] 1.1 Select the mode in `cmd/runner/main.go`
-    - An argument chooses clone mode; absent it, today's behaviour is
+    - An argument chooses clone mode; absent it, today's behavior is
       unchanged. `ConfigFromEnv` is reused as-is, since the Job sets the
       same variables on both containers
     - _Requirements: 3.1, 3.2_
@@ -104,7 +104,7 @@ the two.
       choosing an image that has it, not configuring turnip
     - Cover a missing helper binary or plugin in troubleshooting: it is the
       failure this slice exists to eliminate, and the next adopter will
-      meet its neighbours
+      meet its neighbors
     - _Requirements: 4.1, 4.2, 4.3_
 
 - [x] 7. Final checkpoint - full verification

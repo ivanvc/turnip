@@ -7,12 +7,12 @@ switch. The ordering exists for one reason — the field has to be carried
 before anything can act on it, and carrying it is invisible, so it lands
 first and proves it changed nothing.
 
-After that the whole behaviour is a single task. Splitting the guard from
+After that the whole behavior is a single task. Splitting the guard from
 the `ready_for_review` action would be artificial: they are the same
 `case` arm, and the guard is what makes the new action work rather than
 something the action must then work around.
 
-Tests come after the behaviour rather than alongside it, because what
+Tests come after the behavior rather than alongside it, because what
 they assert is *which path ran* — a question with no meaning until there
 are two paths.
 
@@ -34,7 +34,7 @@ are two paths.
 - [x] 2. Checkpoint - the flag is carried and changes nothing
   - `go build ./...` and `go test -race ./...` pass. The field exists and
     is unread, so a failure here is a compilation mistake rather than a
-    behavioural one.
+    behavioral one.
 
 - [x] 3. Skip the automatic plan for a draft
   - [x] 3.1 Handle `ready_for_review` on the plan-trigger arm

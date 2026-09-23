@@ -11,7 +11,7 @@ const (
 	// AuthorizationKey carries the Runner's projected ServiceAccount
 	// token, prefixed with BearerPrefix. The conventional HTTP name is
 	// used rather than a turnip-specific one so that anything inspecting
-	// the stream — a proxy's log, a header-redaction rule — recognises it
+	// the stream — a proxy's log, a header-redaction rule — recognizes it
 	// as a credential without being taught to.
 	AuthorizationKey = "authorization"
 	BearerPrefix     = "Bearer "

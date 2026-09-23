@@ -10,7 +10,7 @@ A Project is reshaped around the three questions its settings answer:
 | `with` | how to call it | `config` (minus the two keys turnip read) |
 | `runner` | where it runs | `config.serviceAccount` + Project-level `env` |
 
-Three changes ride along: unrecognised keys become errors, the override
+Three changes ride along: unrecognized keys become errors, the override
 boolean becomes a list, and the file moves to `.turnip/config.yaml` with
 root `turnip.yaml` as fallback.
 
@@ -32,8 +32,8 @@ type Project struct {
 	Runner       RunnerSpec        `yaml:"runner,omitempty"`
 	WhenModified []string          `yaml:"whenModified"`
 
-	// Derived from Uses by applyDefaults; never unmarshalled or
-	// marshalled. Everything downstream reads these, not Uses.
+	// Derived from Uses by applyDefaults; never unmarshaled or
+	// marshaled. Everything downstream reads these, not Uses.
 	Tool        string `yaml:"-"`
 	ToolVersion string `yaml:"-"`
 }
@@ -53,12 +53,12 @@ change at all**, `TURNIP_TOOL` stays a scalar on the wire, and the Runner
 never learns the schema moved. The blast radius is the parser, `BuildJob`'s
 two reads, and `serviceaccount.go`.
 
-The round-trip property still holds: marshalling emits `uses`, parsing
+The round-trip property still holds: marshaling emits `uses`, parsing
 re-derives `Tool`/`ToolVersion`, and the structs compare equal.
 
 **Alternative considered**: nested `tool: {kind, version, config}`.
 *Rejected because* it changes `project.Tool` to `project.Tool.Name` at ~23
-call sites for no behavioural gain, while `uses: <tool>@<version>` maps
+call sites for no behavioral gain, while `uses: <tool>@<version>` maps
 directly onto the vendor image tag turnip already forms
 (`ghcr.io/helmfile/helmfile:v1.7.4`).
 
@@ -90,7 +90,7 @@ flowchart TD
 
 Pass 1 succeeding is what makes pass 2's errors unambiguous: anything the
 strict decoder objects to that the lenient one accepted is, by
-construction, an unrecognised key.
+construction, an unrecognized key.
 
 Reporting `schemaVersion` *before* the strict pass is what stops a
 `v1alpha1` file producing a cascade. Verified: a file containing
@@ -104,7 +104,7 @@ rewritten into a `ValidationError` with the key and its line.
 |---|---|
 | Malformed YAML, type mismatch | `*ParseError` with line |
 | `schemaVersion` absent or unsupported | `ValidationErrors`, that error alone |
-| Unrecognised key(s) | `ValidationErrors`, one per key, with line |
+| Unrecognized key(s) | `ValidationErrors`, one per key, with line |
 | Bad `uses`, reserved `env` name, bad glob | `ValidationErrors`, accumulated together |
 
 **Alternative considered**: one strict decode, partitioning
@@ -155,7 +155,7 @@ crosses a slice boundary for cosmetic consistency. "Config" is also the
 right word on that side of the seam — it is the tool's configuration, which
 is precisely what `with` now exclusively contains.
 
-The one behavioural change is that `TURNIP_TOOL_CONFIG` stops carrying
+The one behavioral change is that `TURNIP_TOOL_CONFIG` stops carrying
 `version` and `serviceAccount`, because they are no longer in the map. The
 Runner needs no change to benefit; the payload simply gets smaller and
 honest.
@@ -182,7 +182,7 @@ meant reinterpreting the word "override" until it fit. Atlantis reaches the
 same conclusion by leaving `terraform_version` out of `allowed_overrides`
 entirely.
 
-`ServiceAccountNotPermittedError` generalises to name the path and the
+`ServiceAccountNotPermittedError` generalizes to name the path and the
 variable that would permit it, replacing its reference to the boolean.
 
 ## Decision 7: one source for the accepted locations
@@ -203,7 +203,7 @@ synchronize in every installed repository (Requirement 8.6).
 
 ## Edge cases
 
-| Case | Behaviour |
+| Case | Behavior |
 |---|---|
 | `uses` absent | ValidationError on the Project |
 | `uses: helmfile@` (empty version) | ValidationError — not treated as "no version" |

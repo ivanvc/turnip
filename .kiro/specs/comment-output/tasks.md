@@ -6,13 +6,13 @@ Ordered so the risky part is finished and tested before anything is wired
 to it.
 
 `BuildConsolidatedComment` is a pure function over `[]ProjectResult`, and
-every judgement in this slice — the verdict line's arithmetic, what a
+every judgment in this slice — the verdict line's arithmetic, what a
 collapsed summary says, how clamping picks what to drop — lives inside it.
 So the renderer is built and tested **first**, in full, while the Server
 still populates none of the new fields. A failure at that stage is
 unambiguously about rendering.
 
-The fields themselves land before the renderer, as data with no behaviour,
+The fields themselves land before the renderer, as data with no behavior,
 so the renderer has something to read. The orchestrator fills them last:
 by then the only question left is whether the right value reaches the
 right field, which is the easiest kind of failure to diagnose.
@@ -39,7 +39,7 @@ wrong".
 - [x] 2. Checkpoint - nothing behaves differently yet
   - `go build ./...` and `go test -race ./...` pass. The fields exist and
     are unread, so any failure here is a compilation mistake, not a
-    behavioural one.
+    behavioral one.
 
 - [x] 3. The verdict line
   - [x] 3.1 Classify each result

@@ -80,7 +80,7 @@ type ChangeSummary struct {
 
 ### Reconciling `GetOperations()` with global Requirement 13
 
-**This section originally reconciled an inconsistency in favour of
+**This section originally reconciled an inconsistency in favor of
 including `destroy`. Slice 20 reversed that, and the reasoning is kept
 here because the reversal answers a different question than the original
 did.**
@@ -108,7 +108,7 @@ describes. A destroy gated by a diff would inherit a plan describing a
 different operation.
 
 The authority the original leaned on has also been corrected: Property 22
-asserted destroy behaviour while its own scope line validated Requirements
+asserted destroy behavior while its own scope line validated Requirements
 13.2–13.5, none of which mention destroy — that clause is now dropped, and
 global 13.7/13.9 are amended. Requirement 3.2 here now excludes `destroy`,
 and 3.8 states the refusal. Removal is reviewed instead by marking a

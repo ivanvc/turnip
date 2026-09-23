@@ -217,7 +217,7 @@ func httpsEquivalent(raw string) string {
 // for one that names no host.
 //
 // net/url.Parse alone is not enough: the scp-like form carries no scheme.
-// git's own rule is that scp-like is recognised only when no slash precedes
+// git's own rule is that scp-like is recognized only when no slash precedes
 // the first colon, which is what separates host:org/repo from the local
 // path ./foo:bar — applied here so turnip agrees with git about which is
 // which.

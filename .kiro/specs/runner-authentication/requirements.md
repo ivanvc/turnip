@@ -65,7 +65,7 @@ happened cannot be written by anything else.
 
 *Rationale for 1.3: the id remains the Operation's reference — it is how
 the Server knows which record to write. What changes is that naming it no
-longer authorises writing to it.*
+longer authorizes writing to it.*
 
 ### Requirement 2: The identity checked is the Pod, not the ServiceAccount
 
@@ -145,7 +145,7 @@ version where the binding is available by default, so it is the stated
 minimum rather than v1.29.*
 
 *Rationale for 6.2: a fallback that silently reverts to the current
-behaviour would leave an operator believing in a control that is not
+behavior would leave an operator believing in a control that is not
 there. Refusing is visible; degrading quietly is not.*
 
 *Note on what Kubernetes verifies: the API server checks that the bound
@@ -202,7 +202,7 @@ discovered during deployment.*
   avoid the cluster-scoped grant of Requirement 6 at the cost of
   implementing signature validation, which has more ways to be subtly
   wrong. Worth weighing in the design; not decided here.
-- **Authorising *what* an authenticated Runner may do.** This slice
+- **Authorizing *what* an authenticated Runner may do.** This slice
   establishes that the caller is the Operation's Pod. That Pod may write
   that Operation's results, which is the whole of its business.
 - **Removing `TURNIP_OPERATION_ID` from the Pod spec.** It stays as the

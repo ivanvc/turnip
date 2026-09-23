@@ -113,7 +113,7 @@ func cloneWith(ctx context.Context, run gitRunner, dir, repoURL, commitSHA, base
 		}
 	}
 
-	// Submodules are initialised after the merge, never after the
+	// Submodules are initialized after the merge, never after the
 	// checkout: it is the merged tree's gitlinks that record which
 	// submodule commits belong to it (Decision 2).
 	if baseRef != "" {

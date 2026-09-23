@@ -310,13 +310,13 @@ package doc update, then tests (unit, then property).
 - [x] 24. Fence a successful result's output as a diff (2026-09 amendment)
   - Reported from the pilot after its first end-to-end plan: the output
     arrived in a language-less fence, so GitHub rendered a diff with no
-    colour at all. Requirement 10.5 already asked for syntax highlighting,
+    color at all. Requirement 10.5 already asked for syntax highlighting,
     and this slice's own Out of Scope section had deferred the language
     hint to Slice 6 — which never picked it up. `comment.go` is where the
     fence is written, so it lands here
   - `fenceFor(success bool)` in `comment.go`: a diff-tagged fence on
     success, a plain one on failure. An error message is not a diff, and
-    diff highlighting would colour every line beginning with `-` red for
+    diff highlighting would color every line beginning with `-` red for
     no reason. Atlantis avoids this by rendering errors from separate
     templates, which turnip has no equivalent of — one renderer serves
     both, so the branch lives in the fence helper
@@ -335,7 +335,7 @@ package doc update, then tests (unit, then property).
   - **Minimal by design, and only sufficient for helmfile.** helm-diff
     emits `+`/`-` at column 0, so no output rewriting is needed today.
     Terraform indents its markers and will need them hoisted — and `~`
-    rewritten to `!` — before any diff renderer colours them. Deferred to
+    rewritten to `!` — before any diff renderer colors them. Deferred to
     Slice 7 and recorded in this slice's Out of Scope, so whoever
     implements Terraform meets it rather than rediscovering it
   - _Requirements: 7.3 (global Requirement 10.5)_
@@ -351,7 +351,7 @@ package doc update, then tests (unit, then property).
     which is why the implementation is a single scan rather than three
     branches: the explicit `--` is found by the same scan because it also
     begins with `-`, and the scan stopping at the first match is what keeps
-    a later `--` an ordinary argument — unchanged behaviour
+    a later `--` an ordinary argument — unchanged behavior
   - Motivated by `/turnip diff web -l name=x` previously failing with an
     unmatched-Project error, which reads as turnip not knowing the Project
     rather than as a syntax problem. A message cannot fix that; the

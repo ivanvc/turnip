@@ -97,7 +97,7 @@ func ParseTriggers(body string) ([]*TriggerCommand, error) {
 //
 // The scan stops at the first match and nothing after it is re-examined,
 // so a second "--" further along is an ordinary argument — unchanged from
-// the behaviour this rule replaces.
+// the behavior this rule replaces.
 func indexOfArgStart(tokens []string) int {
 	for i, t := range tokens {
 		if strings.HasPrefix(t, "-") {

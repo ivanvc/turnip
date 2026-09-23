@@ -300,20 +300,20 @@ changing its `config` map.
 
 **Goal**: Reshape a Project around the three questions its settings
 actually answer — what to run, how to call it, where it runs — and make an
-unrecognised key an error rather than silence.
+unrecognized key an error rather than silence.
 
 **Delivers**:
 - `uses: <tool>[@<version>]`, replacing the `tool` field and
   `config.version`, with a leading `v` accepted and normalized
 - `with:`, replacing `config` as a map the Plugin alone reads. Today's
-  `config` holds three recognised keys of which only `environment` reaches
+  `config` holds three recognized keys of which only `environment` reaches
   a Plugin; `version` and `serviceAccount` are read by turnip itself
 - `runner:`, grouping `serviceAccount` and `env` — the settings that shape
   the Pod rather than the tool
 - `TURNIP_ALLOWED_OVERRIDES`, a list of dotted paths a repository may set,
   replacing the single `TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG`
-  boolean, which does not generalise as sensitive settings accumulate
-- Unrecognised keys rejected through the existing accumulating validation
+  boolean, which does not generalize as sensitive settings accumulate
+- Unrecognized keys rejected through the existing accumulating validation
   path — the gap that let a misplaced top-level `serviceAccount` be read
   and silently discarded during the pilot, costing a deploy cycle to
   diagnose from an unrelated-looking credentials error
@@ -356,7 +356,7 @@ than assuming every tool is a single static binary.
 - Terraform unchanged on copy-out, which remains correct for a tool that
   genuinely is one static binary
 
-**Why not just copy more files**: it works until the vendor reorganises
+**Why not just copy more files**: it works until the vendor reorganizes
 their image. turnip's provisioning table would become a mirror of someone
 else's Dockerfile, re-creating in a new form the bottleneck the
 vendor-image design exists to avoid — adopting a tool release would again
@@ -408,7 +408,7 @@ untrusted code. The trigger is authorized; the code is not.
 
 **Why it was not scheduled earlier**: the only deployment was a single
 private test repository with no forks in play, so this is a real gap
-without being a present risk. Prioritising it over the Helmfile MVP would
+without being a present risk. Prioritizing it over the Helmfile MVP would
 be fixing the wrong thing first.
 
 **Resolved on delivery**: the refusal is **silent** on the pull request —
@@ -478,7 +478,7 @@ path was present but empty, and nothing reported it.
 parsed it as `<repo>/<chart>` and reported a missing repository named
 `..`. The actual cause appears nowhere in that message.
 
-**Delivers**: submodule initialisation after the merge; a three-state mode
+**Delivers**: submodule initialization after the merge; a three-state mode
 (`none`/`top-level`/`recursive`) defaulting to `top-level` — not
 `shallow`, which in git means a depth-limited fetch and would promise the
 opposite of what happens, since submodules are fetched at full depth; a
@@ -548,7 +548,7 @@ already settled as minimize-then-repost.
 Requirement 7.2 (the contention message names the blocking PR but omits
 the link `LockStatus.PullRequestURL` already carries); implements and
 **amends** Requirement 17.3; **amends** Requirement 10.2. Both amendments
-drop a mandated *summary table* in favour of stating the intent — each
+drop a mandated *summary table* in favor of stating the intent — each
 Project's name, status and change counts legible without expanding
 anything. The table was the cheapest shape to generate when those
 criteria were first written, not a decision anyone made.
@@ -636,10 +636,10 @@ state and is treated as not `PlanReady`, so it asks for a re-plan rather
 than being promoted to appliable.
 
 **Carries a documentation fix**: `result.go` and `HandleResult` cite
-"Requirement 6.6-6.8" for Lock behaviour, and `sweep.go` cites "6.8/8.5".
+"Requirement 6.6-6.8" for Lock behavior, and `sweep.go` cites "6.8/8.5".
 Requirement 6 is *Plan with Destroy Flag* and has five criteria, none
 about Lock lifecycle; the governing requirement is 7. The wrong citation
-is what made this behaviour look deliberate when nothing specified it.
+is what made this behavior look deliberate when nothing specified it.
 
 **Global requirements covered**: the halves stand differently. *Releasing
 after a failed plan fills a gap* — failure appears nowhere in Requirement
@@ -706,7 +706,7 @@ released.
 
 **Prior art, diverged from deliberately**: Atlantis gates this behind
 `--allow-draft-prs`, defaulting to `false`, and treats `ready_for_review`
-as a freshly opened pull request. Both behaviours are adopted. **The flag
+as a freshly opened pull request. Both behaviors are adopted. **The flag
 is not**: planning work its author declared unfinished has no
 constituency, and anyone who wants it can comment. A setting nobody
 should switch on is a setting not worth having.
@@ -782,7 +782,7 @@ scope.
 
 **The decision worth reading** is refusing rather than ignoring an
 argument on apply. A silently discarded argument is indistinguishable
-from an honoured one until the infrastructure changes, and the author's
+from an honored one until the infrastructure changes, and the author's
 belief about what they applied would be wrong with nothing on the page to
 correct it.
 
@@ -927,7 +927,7 @@ parses **after** the operation name, which is where the attacker-controlled
 tail lands. `plugin-helmfile/tasks.md` records the opposite assumption —
 "global flag, must precede the subcommand" — and that assumption is what
 left this open. The second entry reaches the same outcome without
-depending on persistent-flag behaviour at all, so the fix cannot rest on
+depending on persistent-flag behavior at all, so the fix cannot rest on
 disproving the first.
 
 These names are from helmfile's public CLI reference at the pinned
@@ -1019,7 +1019,7 @@ wrong — there are real reasons to point helmfile at a helm build other
 than the one the tool image ships, a merged-but-unreleased fix being the
 obvious one. So it belongs in `TURNIP_ALLOWED_OVERRIDES` beside
 `runner.serviceAccount`: refused by default, available to an operator who
-has decided their repositories may do it. That is the same judgement
+has decided their repositories may do it. That is the same judgment
 `runner.serviceAccount` already encodes — the setting grants capability,
 so a gate sits on it, but the capability is legitimate.
 
@@ -1064,7 +1064,7 @@ response body**, which cannot be observed on a 404.
 **The premise is written down, and it is wrong.**
 `github-integration/design.md` justifies the single cached call with the
 claim that "GitHub's API returns 404 for a non-collaborator on that
-endpoint". That 204/404 behaviour belongs to the *other* endpoint,
+endpoint". That 204/404 behavior belongs to the *other* endpoint,
 `/collaborators/{username}` — which this codebase already implements
 correctly as `Client.IsCollaborator` and never calls from the Authorizer.
 The tests encode the same assumption, which is why they pass: the
@@ -1097,7 +1097,7 @@ the attacker. The fix is the endpoint, not the threshold.
 **Correction made** (2026-09-21): `github-integration/design.md`'s
 "Single cached call, not two" paragraph is corrected in place, with the
 original claim quoted rather than deleted — a wrong premise left in place
-is what produced the defect, and the next person to economise on an API
+is what produced the defect, and the next person to economize on an API
 call would read the same sentence. Recorded there and here, per the
 convention the global spec uses.
 
@@ -1615,7 +1615,7 @@ flag.** `TURNIP_REDIS_ADDR` gains the ability to be a URL:
 a bare `host:port` behaves exactly as it does today. go-redis v9.22.0
 already implements precisely this — `ParseURL` accepts both schemes
 (`options.go:674`) and installs a `tls.Config` when the scheme is `rediss`
-(`options.go:706`) — so this is a library feature to adopt, not behaviour
+(`options.go:706`) — so this is a library feature to adopt, not behavior
 to hand-roll.
 
 The bare form must keep working, and not only for compatibility's sake:
@@ -1666,7 +1666,7 @@ mounted Secret file is not readable by anything holding pod-read, which is
 the exposure Slice 24 exists to close.
 
 **Decision 4 — `?skip_verify=true` must be refused explicitly.** This is
-the decision that would otherwise be made by accident. `ParseURL` honours
+the decision that would otherwise be made by accident. `ParseURL` honors
 a `skip_verify` query parameter and writes it straight into
 `TLSConfig.InsecureSkipVerify` (`options.go:882`). Adopting `ParseURL`
 wholesale therefore ships a certificate-verification escape hatch that
@@ -1898,14 +1898,14 @@ are safe to run together.
 
 What fans out is *cost*. A repository with a dozen environments turns one
 comment into a dozen simultaneous Kubernetes Jobs, each pulling providers
-and talking to an API with its own rate limits. The reason to serialise is
+and talking to an API with its own rate limits. The reason to serialize is
 cluster capacity and provider throttling, not correctness — which also
 means the control belongs where capacity is known.
 
 **Strand 1 — a concurrency cap, not a boolean.** Atlantis spells this
 `parallel_plan` / `parallel_apply`. A maximum-concurrent-Operations
 integer is strictly more expressive and subsumes both, since 1 is
-serialisation. Where it is configured is a real decision: cluster capacity
+serialization. Where it is configured is a real decision: cluster capacity
 is the operator's knowledge (a Server-side setting), while which Projects
 may safely overlap is the repository's (turnip.yaml). Most likely both,
 with the operator's value acting as a ceiling the repository cannot raise.
@@ -1950,7 +1950,7 @@ two strands are one slice rather than two.
 **Strand 2 — execution order groups.** Lower-numbered groups run to
 completion before higher ones; Projects within a group still run together.
 
-The evidence for prioritising the integer form: a survey of a real
+The evidence for prioritizing the integer form: a survey of a real
 multi-repository Atlantis deployment found ordering declared on **353 of
 387 projects** — near-universal, in every case to make one foundational
 project finish before its dependants start. That same deployment used
@@ -1959,13 +1959,13 @@ deliberately omits) for nothing at all. Ordering is the larger gap, and
 the integer form is both simpler to schedule and evidently sufficient.
 
 This was deliberately kept out of `project-schema-v1alpha2`: the schema
-half is trivial and the behaviour is not, and adding the key first would
+half is trivial and the behavior is not, and adding the key first would
 ship a field that parses and does nothing — the failure this platform has
 already been bitten by twice.
 
 **Strand 3 — the hard part, which is neither of the above.** Both strands
 lengthen the life of the detached goroutine `HandleIssueComment` spawns.
-Eight Projects run in parallel take as long as the slowest; serialised
+Eight Projects run in parallel take as long as the slowest; serialized
 they take the sum. The Server is stateless by construction, so a replica
 that restarts mid-run already loses the run and lets the sweep time its
 Operations out — ordering introduces no new *class* of failure, but it
@@ -2132,7 +2132,7 @@ deciding explicitly rather than inheriting Slice 15's answer.
 
 **`reopened` is in scope, after all.** It is handled nowhere
 (`default: return nil`), so reopening a pull request triggers no plan
-until someone pushes. Initially deferred as "a behaviour addition inside a
+until someone pushes. Initially deferred as "a behavior addition inside a
 bug fix", then pulled in: the slice's subject is a pull request's *state*,
 and refusing a closed one while ignoring a reopened one covers half of it.
 A reopened pull request plans the Projects its changes match, exactly as
@@ -2228,7 +2228,7 @@ plan"). All are **opt-in**; none is default. A repository's own
 in `allowed_overrides`.
 
 **Delivers**: `TURNIP_APPLY_REQUIREMENTS`, comma-separated, defaulting to
-empty — which is today's behaviour and Atlantis's default. `approved` and
+empty — which is today's behavior and Atlantis's default. `approved` and
 `mergeable` are in scope; `undiverged` is not, because it needs a base
 commit the Lock does not record.
 
@@ -2240,7 +2240,7 @@ in kind: its whole purpose is to constrain the pull request, and the pull
 request supplies `turnip.yaml`. Offering it as a gateable path is a trap —
 an operator who adds it to the list has silently disabled the control for
 anyone who can edit that file, and nothing in the mechanism hints that
-this key is unlike its neighbours. `knownOverridePaths` stays at two.
+this key is unlike its neighbors. `knownOverridePaths` stays at two.
 
 **Avoids Atlantis's deadlock by construction.** Do not use GitHub's
 `mergeable_state` (`clean`/`blocked`/`behind`/`unstable`): it folds in
@@ -2744,7 +2744,7 @@ source of eviction has its own control — there is no single setting:
 | Spot interruption, node failure | none in the Pod spec | out of scope — Slice 31's node selector places Runners on on-demand capacity |
 
 **1 — Priority, named by the operator.** Preemption is the one
-disruption the scheduler itself performs, and it honours
+disruption the scheduler itself performs, and it honors
 PodDisruptionBudgets only on a best-effort basis. A Runner at the default
 priority of 0 is a candidate whenever something higher cannot be placed.
 The Server sets `priorityClassName` from `TURNIP_RUNNER_PRIORITY_CLASS`;
@@ -2767,7 +2767,7 @@ before it considers a node at all, which is cheaper than planning a
 scale-down and having the PDB refuse it.
 
 **3 — One static PodDisruptionBudget, not one per Runner.** Drains and
-managed node upgrades go through the Eviction API, which honours only
+managed node upgrades go through the Eviction API, which honors only
 PDBs. There is no `minAvailable` on a Pod or a Job — only a PDB carries
 one — but it need not be created per Operation. `deploy/base` ships one
 PDB selecting `app.kubernetes.io/name: turnip-runner`:
@@ -3017,7 +3017,7 @@ dangerous.
 The point of writing it down is not ceremony. A feature that grants code
 execution *by design* attracts vulnerability reports unless the project
 has already said, in public and in advance, that this is the intended
-behaviour and where the line sits. That requires somewhere to say it —
+behavior and where the line sits. That requires somewhere to say it —
 which turnip does not have yet. See the Backlog entry below on a stated
 security model; it should land **before** this feature, not with it.
 
@@ -3191,7 +3191,7 @@ it trades one invisible failure for another.
 *What is genuinely cheap, and available now, is generating the
 configuration.* A repository whose Projects are derived by walking its own
 tree — emitting each Project's patterns from the links actually present —
-makes the third edit a build artefact rather than a thing to remember.
+makes the third edit a build artifact rather than a thing to remember.
 That is the established answer in this ecosystem (the Terragrunt and
 Atlantis world generates its configuration for the same reason), it needs
 nothing from turnip, and it should be the recommendation until resolution
@@ -3412,16 +3412,16 @@ Slice 33's Decision 8 says a failure renders in the same `diff` fence as
 a success. The code never did: `fencesFor` (`comment.go`) still chooses
 `diff` only on success, and
 `TestBuildConsolidatedComment_FailureKeepsAPlainFence` pins the plain
-fence, so the spec and the code disagree about a behaviour both claim.
+fence, so the spec and the code disagree about a behavior both claim.
 
 It matters more since the Slice 33 amendment. The transcript's
 `@@ turnip: … @@` lines are highlighted as hunk headers *only inside a
-`diff` fence*, so a failed run — the one a reader scrutinises hardest,
+`diff` fence*, so a failed run — the one a reader scrutinizes hardest,
 and the one whose trailer carries the non-zero exit — is the one where
 turnip's lines blend into the tool's.
 
 The plain fence has a real reason, recorded in that test: a failure's
-body is often an error message, and diff highlighting colours any
+body is often an error message, and diff highlighting colors any
 column-0 `-` red. Decision 8's answer was that the same YAML can appear
 on success, where the red is already accepted. Neither side has been
 weighed against the other since the transcript changed what the fence
@@ -3431,7 +3431,7 @@ Options, none chosen:
 
 - **One `diff` fence for both**, as Decision 8 states. Consistent, and
   the transcript is always highlighted; an error line that starts with
-  `-` is coloured as a removal.
+  `-` is colored as a removal.
 - **Keep the plain fence** and amend Decision 8 to say so, accepting
   that a failure's transcript is not highlighted.
 - **Fence per stream** is not an option while the output is one

@@ -184,7 +184,7 @@ func (s *selection) resolve(ctx context.Context, cmd *github.TriggerCommand) (ta
 //
 // The split is per-candidate rather than per-command because operation
 // names are tool-native — "diff" is Helmfile's plan and means nothing to
-// Pulumi. A candidate whose Plugin does not recognise the operation is
+// Pulumi. A candidate whose Plugin does not recognize the operation is
 // kept rather than filtered out, so resolve still rejects it by name
 // instead of it vanishing with nothing said.
 func (s *selection) bareDefaults(ctx context.Context, cmd *github.TriggerCommand, candidates []config.Project) ([]config.Project, []string, error) {

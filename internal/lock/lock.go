@@ -57,9 +57,9 @@ type LockData struct {
 }
 
 // DecodedState reports the Lock's state, tolerating a value this build
-// does not recognise — including one written before the field existed.
+// does not recognize — including one written before the field existed.
 //
-// Unrecognised decodes to StatePlanStale rather than StatePlanning, which
+// Unrecognized decodes to StatePlanStale rather than StatePlanning, which
 // is the conservative answer on both axes that matter. It is not
 // StatePlanReady, so nothing unreviewed is applied on the strength of a
 // plan whose validity this build cannot vouch for. And it is not
@@ -113,7 +113,7 @@ type LockStatus struct {
 	PlanSummary    plugin.ChangeSummary
 
 	// State is the Lock's lifecycle position, already interpreted through
-	// DecodedState, so a caller never has to handle an unrecognised value.
+	// DecodedState, so a caller never has to handle an unrecognized value.
 	State LockState
 }
 

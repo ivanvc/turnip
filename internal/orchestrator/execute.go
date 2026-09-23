@@ -128,7 +128,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	// check run and no Job behind.
 	//
 	// Refused rather than ignored: a silently discarded argument is
-	// indistinguishable from an honoured one until the infrastructure
+	// indistinguishable from an honored one until the infrastructure
 	// changes, by which point the author's belief about what they applied
 	// is wrong with nothing on the page to correct it.
 	if !isPlan && len(t.ExtraArgs) > 0 {

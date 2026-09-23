@@ -2,7 +2,7 @@
 
 ## Introduction
 
-The whole behavioural change is one line of routing. What makes this a
+The whole behavioral change is one line of routing. What makes this a
 slice rather than a commit is that the routing change is *published* — it
 lives in a GitHub App's settings, not only in this repository — and that
 the property Requirement 2 asks for has never been testable, because
@@ -42,7 +42,7 @@ deliveries.
 
 ## Decision 1: the 404 comes from deleting a route, not adding one
 
-Requirement 2 reads like new behaviour. It is not: Go's `ServeMux` already
+Requirement 2 reads like new behavior. It is not: Go's `ServeMux` already
 responds 404 when no pattern matches. The catch-all is the only reason it
 does not do so today, so removing `mux.Handle("/", …)` satisfies
 Requirements 2.1, 2.2 and 2.3 at once — including 2.3's "must not invoke
@@ -98,11 +98,11 @@ literals that must match are exactly what a constant is for.
 
 Today `run()` constructs the mux inline (`cmd/server/main.go:81-85`) and
 `cmd/server` has **no test files**. Requirement 2 is entirely about
-routing behaviour, so it cannot be verified without a seam.
+routing behavior, so it cannot be verified without a seam.
 
 ```go
 // newMux builds the Server's HTTP routes. Separated from run so that
-// routing is testable without starting a server or dialling Redis,
+// routing is testable without starting a server or dialing Redis,
 // Kubernetes or GitHub.
 func newMux(webhook http.Handler, ready func(context.Context) error) *http.ServeMux
 ```

@@ -90,7 +90,7 @@ rather than failing quietly. Expected at task 4, not before.
     the whole evidence that this slice fixed something.
   - **The write gate is a bystander that must not move**: the existing
     `HasWritePermission` tests stay green untouched, and `none`, an
-    unrecognised string and `read` all remain insufficient.
+    unrecognized string and `read` all remain insufficient.
   - _Requirements: 3.1, 3.2_
 
 - [x] 6. The answers turnip cannot interpret
@@ -102,7 +102,7 @@ rather than failing quietly. Expected at task 4, not before.
     - GitHub requires write, maintain or admin to read collaborator
       information, so this is the failure mode most likely to be met
     - _Requirements: 2.1, 2.3_
-  - [x] 6.2 An unrecognised permission is insufficient — **already pinned**
+  - [x] 6.2 An unrecognized permission is insufficient — **already pinned**
     - `permissionRank` returns 0 for an unknown string, so a role GitHub
       adds later is already treated as insufficient. Pinned by a test so a
       later "unknown means read" convenience reads as the weakening it is

@@ -9,7 +9,7 @@ change what later tasks may assume. Reserving unaddressable names touches
 only `internal/config`; it goes first so that every later task can take
 "a token containing `*` is a pattern, never a name" as given rather than
 hedging. Turning selection into a value is a pure refactor with no
-behavioural change at all, and doing it before any behaviour lands means
+behavioral change at all, and doing it before any behavior lands means
 its checkpoint proves exactly one thing — that nothing moved — which is
 the only time that proof is cheap.
 
@@ -17,7 +17,7 @@ The spine is selection itself: selectors have to resolve before a bare
 command can default to anything, and both defaults have to exist before
 the reply that reports an empty one is worth writing.
 
-Tests land after the behaviour, for the reason Slice 19 gave and Slice 20
+Tests land after the behavior, for the reason Slice 19 gave and Slice 20
 repeated: several of them assert *which* set was selected, which has no
 meaning until both selection paths exist. The exceptions are tasks 1 and
 3, whose existing tests must move in the same task or their checkpoints
@@ -54,7 +54,7 @@ table.
 
 - [x] 2. Checkpoint - configuration rejects what it must, nothing else changed
   - `go build ./...` and `go test -race ./...` pass. A failure here is a
-    fixture using a now-illegal name, not a behavioural problem — fix the
+    fixture using a now-illegal name, not a behavioral problem — fix the
     fixture.
 
 - [x] 3. Selection becomes a value
@@ -66,7 +66,7 @@ table.
     - `resolveUnlockCandidates` keeps sharing `toolCandidates` and
       `narrowByName`; it needs none of the new fields and should not grow
       them
-    - Behaviour must not change in this task. `prNumber` and `locks` are
+    - Behavior must not change in this task. `prNumber` and `locks` are
       populated here and read by tasks 7 and 8
     - `modifiedSet` is **not** added here, despite being part of the same
       design decision. A field nothing assigns and nothing reads is
@@ -80,7 +80,7 @@ table.
 - [x] 4. Checkpoint - the shape changed and nothing else did
   - `go build ./...` and `go test -race ./...` pass with no test
     *assertions* edited — only construction. If an assertion had to
-    change, the refactor took behaviour with it; find out what before
+    change, the refactor took behavior with it; find out what before
     continuing.
 
 - [x] 5. Selectors: `*`, patterns, and refusing the mix
@@ -124,7 +124,7 @@ table.
     changes in the next two tasks.
 
 - [x] 7. A bare plan targets the Modified_Set
-  - [x] 7.1 Add the memoised modified-files seam
+  - [x] 7.1 Add the memoized modified-files seam
     - `selection.modifiedSet` fetches via the existing
       `client.GetModifiedFiles` on first use and caches the result,
       including the error, so one event never pays twice or retries three

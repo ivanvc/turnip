@@ -116,7 +116,7 @@ or nothing happens for several minutes before a timeout is reported.
   App's repository access.
 - **A tool complaining about a path or repository you know exists** (e.g.
   `Error: repo .. not found` from `helm pull ../charts/...`, or a file a
-  tool insists is missing): most often an **uninitialised submodule**. The
+  tool insists is missing): most often an **uninitialized submodule**. The
   directory is present but empty, so the tool reaches through the gap and
   reports whatever its own parser made of the path — a message that names
   neither the submodule nor the repository it came from. Check whether the

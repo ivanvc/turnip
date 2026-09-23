@@ -49,8 +49,8 @@ func New(clientset kubernetes.Interface, namespace string) *Authenticator {
 // operationID's Job, and otherwise an error wrapping one of
 // rpc.ErrInvalidCredential or rpc.ErrNotBound.
 //
-// The two are distinct on purpose. Not recognising a caller is ordinary —
-// an expired token, a Job whose Pod is gone. Recognising a caller and
+// The two are distinct on purpose. Not recognizing a caller is ordinary —
+// an expired token, a Job whose Pod is gone. Recognizing a caller and
 // finding it belongs to a different Operation is the forgery, and the
 // only case where turnip knows something is wrong rather than merely
 // unresolvable.

@@ -46,7 +46,7 @@ be its own spec if this slice is judged too wide.)
 **This supersedes a criterion in a completed slice.** `config-parsing`'s
 Requirement 2 states "THE Config Parser SHALL parse a top-level `version`
 field" — parse, with no validation and no stated meaning, which is the
-behaviour Requirement 4 replaces. That slice's own documents are left
+behavior Requirement 4 replaces. That slice's own documents are left
 untouched: amending a completed spec in place is the habit this slice
 exists to stop. The supersession is recorded here instead, and
 `config-parsing`'s requirements should be read with this note beside
@@ -115,7 +115,7 @@ happened to put the clone.
    constant
 5. WHERE that environment variable is absent, THE Runner SHALL create a
    temporary directory and use it as the Workspace — preserving today's
-   behaviour for unit tests and local runs, which cannot create
+   behavior for unit tests and local runs, which cannot create
    directories at the filesystem root
 6. THE Runner SHALL remove a Workspace it created itself, and SHALL NOT
    attempt to remove one it was given: the latter is a volume mount point,
@@ -166,7 +166,7 @@ repository already carries.
    provisioned tool binary with one of its own choosing
 5. THE parser SHALL report every rejected name in one pass rather than
    stopping at the first, matching `internal/config`'s existing
-   accumulate-all-violations behaviour
+   accumulate-all-violations behavior
 6. THE IaC_Tool subprocess SHALL receive each value byte-for-byte as
    written in turnip.yaml, with no expansion or substitution — Requirement
    1's fixed layout means a value needing the Workspace path can simply
@@ -198,7 +198,7 @@ reading Go source.
 3. Documentation SHALL NOT describe a cloud-specific recipe as though it
    were a turnip feature. A worked example may appear in this slice's
    `design.md` to show the mechanism is sufficient, clearly marked as an
-   example rather than as behaviour turnip implements
+   example rather than as behavior turnip implements
 
 ### Requirement 4: An Enforced, Unambiguous Schema Version
 
@@ -251,7 +251,7 @@ deciphering a parse error about a field I never wrote.
 7. THE parser SHALL NOT carry compatibility machinery for the previous
    schema. A file still carrying `version: 1` fails because
    `schemaVersion` is absent (4.6), which is a clear and actionable
-   error; the old key is ignored like any other unrecognised field.
+   error; the old key is ignored like any other unrecognized field.
    Detecting it by name would buy a marginally better message at the cost
    of parser code that exists solely to describe a schema turnip no
    longer accepts — and `alpha` exists precisely so that pre-1.0 breaking

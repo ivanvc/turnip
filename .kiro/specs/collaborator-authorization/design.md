@@ -2,7 +2,7 @@
 
 ## Overview
 
-One method changes behaviour. `Authorizer.IsCollaborator` stops inferring
+One method changes behavior. `Authorizer.IsCollaborator` stops inferring
 collaborator status from the success of a permission lookup and asks the
 endpoint that answers the question.
 
@@ -107,7 +107,7 @@ which is the habit this slice exists to break.
 
 `Client.IsCollaborator` returns `(false, err)` for anything that is not a
 clean 204 or 404. The Authorizer propagates the error and the caller
-refuses — today's behaviour, preserved deliberately.
+refuses — today's behavior, preserved deliberately.
 
 This is the failure mode most likely to be met in practice. GitHub's
 documentation notes that reading collaborator information requires write,
@@ -121,13 +121,13 @@ operator needs to see an error, not a permission decision.
 `github-integration/design.md:387` claims *"GitHub's API returns 404 for a
 non-collaborator on that endpoint"*, and uses it to justify one cached
 call serving both questions. The sentence is corrected in place, with a
-note recording that the 404 behaviour belongs to
+note recording that the 404 behavior belongs to
 `/collaborators/{username}` and that reading it otherwise produced a gate
 which admitted every account GitHub would answer about.
 
 **Alternative considered**: delete the sentence and move on.
 
-**Rejected because** the next person to optimise an API call reads the
+**Rejected because** the next person to optimize an API call reads the
 same paragraph. What has to survive is not the correction but the fact
 that turnip once believed it — the roadmap entry carries the same note for
 the same reason.

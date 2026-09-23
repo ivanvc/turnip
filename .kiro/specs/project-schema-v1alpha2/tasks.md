@@ -4,7 +4,7 @@
 
 Ordered so the data model lands first, then the parse pipeline that fills
 it, then the consumers — because every fixture in the repository breaks the
-moment `Project` changes, and doing that alongside a behavioural change
+moment `Project` changes, and doing that alongside a behavioral change
 would make a failing test ambiguous between the two causes.
 
 Discovery (Requirement 8) is deliberately last among the code changes: it
@@ -51,7 +51,7 @@ it, so it can land or be reverted independently.
 
 - [x] 5. Consumers
   - [x] 5.1 `internal/jobs/build.go`
-    - `project.Config["version"]` → `project.ToolVersion`; the marshalled
+    - `project.Config["version"]` → `project.ToolVersion`; the marshaled
       tool config → `project.With`; `project.Env` → `project.Runner.Env`
     - `TURNIP_TOOL_CONFIG` stops carrying `version`/`serviceAccount`
     - _Requirements: 2.5_
@@ -112,7 +112,7 @@ it, so it can land or be reverted independently.
 
 - [x] 10. Documentation
   - [x] 10.1 `docs/configuration.md` and `docs/troubleshooting.md`
-    - `uses`/`with`/`runner`, the recognised-keys list, unknown keys as
+    - `uses`/`with`/`runner`, the recognized-keys list, unknown keys as
       errors, `TURNIP_ALLOWED_OVERRIDES` and its default, and both accepted
       file locations
     - _Requirements: 7.1-7.5_
@@ -147,7 +147,7 @@ it, so it can land or be reverted independently.
 
 - **No new dependencies.** Strict decoding is `yaml.Decoder.KnownFields`,
   already present.
-- **Two behaviours were verified experimentally before design, not
+- **Two behaviors were verified experimentally before design, not
   assumed**: YAML merge keys survive `KnownFields(true)`, and the proposed
   struct shape round-trips with `omitempty` on a nested struct and
   `yaml:"-"` on derived fields. Task 9.1 pins both so they stay true.

@@ -26,7 +26,7 @@ is the only ordering constraint inside the Runner half.
 ## Tasks
 
 - [x] 1. Harden the fence, for content that already exists
-  - [x] 1.1 Neutralise fence terminators in rendered content
+  - [x] 1.1 Neutralize fence terminators in rendered content
     - Applied in the renderer to whatever goes inside a fence, not at the
       seam — the seam does not know it is writing markdown
     - Covers the tool's own `Output`, which is interpolated with no
@@ -35,7 +35,7 @@ is the only ordering constraint inside the Runner half.
   - [x] 1.2 One fence for both outcomes — **reversed, deviation recorded**
     - **Not done, deliberately.** `fenceFor`'s existing doc gave a reason
       the design under-weighted: a failure's body is an error message, not
-      a diff, so `diff` highlighting would colour any line starting with
+      a diff, so `diff` highlighting would color any line starting with
       `-` as a deletion and redden an unrelated message.
     - The design argued the same hazard exists on success, where YAML can
       carry a column-0 `-`. True, but not symmetric: on success the
@@ -184,7 +184,7 @@ is the only ordering constraint inside the Runner half.
 - [x] 13. Checkpoint - the slice is done
   - `go build ./...`, `go test -race ./...` and golangci-lint all pass.
   - Mutation checks: removing the transcript write, the redaction pass, or
-    the fence neutralisation must each fail a specific test. Absence
+    the fence neutralization must each fail a specific test. Absence
     assertions come from fakes that record calls, never from output that
     happens to look unchanged.
   - The marker is per Project: a trigger with arguments and no names,

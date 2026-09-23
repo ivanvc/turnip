@@ -53,7 +53,7 @@ func (o Outcome) mutating() bool {
 // already gone or could not be updated.
 //
 // The applicable/nothing-to-apply split is lockEventFor's, which is where
-// a Plugin's ActsWithoutChanges is honoured — so whether a no-change plan
+// a Plugin's ActsWithoutChanges is honored — so whether a no-change plan
 // still needs an apply is decided per tool, in one place.
 func outcomeForEvent(ev lock.Event) (Outcome, bool) {
 	switch ev {

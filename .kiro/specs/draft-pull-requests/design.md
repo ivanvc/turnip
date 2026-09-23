@@ -72,7 +72,7 @@ That is the whole of Requirement 2. No remembered state, no catch-up
 logic, no separate path — the plan it produces is an ordinary plan at the
 pull request's current head, because that is what the event carries.
 
-Atlantis reaches the same behaviour by mapping `ready_for_review` onto its
+Atlantis reaches the same behavior by mapping `ready_for_review` onto its
 `OpenedPullEvent`, treating it as a freshly opened pull request. turnip
 needs even less machinery because its guard is a field test rather than an
 event-type translation.
@@ -86,7 +86,7 @@ request.
 
 A skipped draft produces nothing — no comment, no check run, no Lock, no
 Job (Requirement 1.3). A comment saying "skipped because draft" on every
-push to every draft would be worse than the behaviour it explains, and
+push to every draft would be worse than the behavior it explains, and
 the pull request's own draft badge already says why.
 
 **Requirement 4.4 needs no enforcement**, which is worth recording
@@ -99,7 +99,7 @@ remember to obey.
 
 ## Edge cases
 
-| Case | Behaviour |
+| Case | Behavior |
 |---|---|
 | Draft opened, then pushed to repeatedly | nothing, each time, at the cost of one webhook |
 | Draft marked ready | planned as though newly opened, at the current head |

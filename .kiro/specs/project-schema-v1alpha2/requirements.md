@@ -6,7 +6,7 @@ A Project in `turnip.yaml` currently spreads settings across levels in a
 way that doesn't match what reads them. `tool` sits at the top of a
 Project while the tool's version sits inside `config`, and `config` — a
 map documented as "free-form, tool-specific, a plugin only reads the keys
-it understands" — holds three recognised keys of which only one reaches a
+it understands" — holds three recognized keys of which only one reaches a
 Plugin:
 
 | Key | Read by |
@@ -16,7 +16,7 @@ Plugin:
 | `config.serviceAccount` | `internal/orchestrator`, to set the Pod's identity |
 
 So the map's documentation describes the minority case. The whole map is
-also marshalled into `TURNIP_TOOL_CONFIG` and handed to the Plugin, which
+also marshaled into `TURNIP_TOOL_CONFIG` and handed to the Plugin, which
 means two settings the Plugin has no use for are shipped to it every run.
 
 This is not merely untidy. It produced a real incident during the pilot:
@@ -30,8 +30,8 @@ unknown, so the schema's silence was the bug.
 
 This slice replaces the Project shape with three fields that answer three
 distinct questions — **what to run** (`uses`), **how to call it**
-(`with`), and **where it runs** (`runner`) — makes an unrecognised key an
-error rather than silence, and generalises the single override boolean
+(`with`), and **where it runs** (`runner`) — makes an unrecognized key an
+error rather than silence, and generalizes the single override boolean
 into an operator-controlled list. All of it rides one `schemaVersion`
 bump to `v1alpha2`.
 
@@ -76,7 +76,7 @@ describes today, matching Slice 12's precedent of shipping `env` with
   obvious home; this slice adds neither.
 - **A workflow or step-sequence concept.** Surveyed rather than assumed:
   across a real multi-repository Atlantis deployment of ~390 projects and
-  ~144 custom workflows, 143 of 144 carried no behaviour at all — they
+  ~144 custom workflows, 143 of 144 carried no behavior at all — they
   existed to pass arguments, and 142 of those to pass a single
   directory-derived backend key. The one exception printed a version
   string. Named `with:` keys cover that need. Should step sequences ever
@@ -169,7 +169,7 @@ among the tool's settings.
    Requirement 4
 3. THE `runner` field SHALL support `env`, a map of string to string set
    on the IaC_Tool's process, carrying forward Slice 12's Requirement 2
-   unchanged in behaviour
+   unchanged in behavior
 4. THE parser SHALL reject an `env` name beginning with `TURNIP_`, and the
    name `PATH`, reporting every offending name rather than the first
 5. THE `runner` field SHALL be optional, as SHALL each of its keys
@@ -210,7 +210,7 @@ rather than a silently ignored line.
 
 #### Acceptance Criteria
 
-1. THE parser SHALL reject any key it does not recognise, both at the
+1. THE parser SHALL reject any key it does not recognize, both at the
    file's top level and within a Project, naming the offending key
 2. THE rejection SHALL be reported through the same accumulating
    `ValidationErrors` path as every other schema problem, so that several
@@ -220,9 +220,9 @@ rather than a silently ignored line.
    the previous schema would otherwise produce a cascade of unknown-key
    errors whose real cause is the version
 4. THE parser SHALL apply this check in place of Slice 12's Decision 4,
-   under which an unrecognised key was ignored like any other
+   under which an unrecognized key was ignored like any other
 5. THE parser SHALL continue to resolve YAML merge keys (`<<`) rather
-   than reporting `<<` as an unrecognised key. Real configurations use
+   than reporting `<<` as an unrecognized key. Real configurations use
    anchors and merge keys precisely to avoid the repetition a per-project
    schema otherwise forces, so rejecting them would break the files that
    most need them
@@ -241,7 +241,7 @@ fields I didn't write.
 3. THE Server SHALL carry no compatibility machinery for `v1alpha1`: no
    translation, no defaulting of removed fields, no deprecation window
 4. THE schema SHALL NOT retain `tool`, `config`, or a Project-level `env`
-   in any form; each is an unrecognised key under Requirement 5
+   in any form; each is an unrecognized key under Requirement 5
 5. THE migration SHALL be documented as requiring the consuming
    repository's file and the Server to move together: unlike the
    `v1alpha1` migration, no single file value is accepted by both the
@@ -257,8 +257,8 @@ correct file without reading the parser.
 
 1. `docs/configuration.md` SHALL document `uses`, `with` and `runner`,
    including the `<tool>@<version>` form and the optional leading `v`
-2. `docs/configuration.md` SHALL document that an unrecognised key is an
-   error, and SHALL state which keys are recognised
+2. `docs/configuration.md` SHALL document that an unrecognized key is an
+   error, and SHALL state which keys are recognized
 3. `docs/configuration.md` SHALL document `TURNIP_ALLOWED_OVERRIDES`,
    including its default, replacing the boolean it supersedes
 4. THE three unrelated meanings of "version" SHALL remain distinguished:

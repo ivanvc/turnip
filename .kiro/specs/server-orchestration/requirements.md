@@ -468,7 +468,7 @@ the Job — so that horizontal scaling doesn't break correctness.
     SHALL NOT create a Runner Job for it. Amended by
     `project-schema-v1alpha2`, which replaced the single
     `TURNIP_RUNNER_SERVICE_ACCOUNT_ALLOW_FROM_CONFIG` boolean with a list
-    of permitted paths, since a boolean per setting does not generalise as
+    of permitted paths, since a boolean per setting does not generalize as
     settings accumulate
 
 ### Requirement 8: Runner Job Start Timeout and Diagnosis

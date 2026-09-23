@@ -48,7 +48,7 @@ every path a tool needs — helm, sops, kubectl, the plugin directory, plus
 the `HELM_*` variables that make helm find plugins. *Rejected because* it
 makes turnip's provisioning table a mirror of a vendor's Dockerfile.
 The helmfile image ships seven binaries and four plugins today; when the
-vendor reorganises, turnip breaks, and adopting a tool release waits on a
+vendor reorganizes, turnip breaks, and adopting a tool release waits on a
 turnip change — exactly the bottleneck the vendor-image design exists to
 avoid, re-created one layer up.
 
@@ -87,7 +87,7 @@ the actual cause — an image-pull failure is reported as one, not as a bare
 timeout. The sidecar would buy latency on that path (seconds rather than
 the five-minute start deadline) in exchange for an extra container in every
 Runner Pod, a second gRPC path, and either RBAC or a shared-volume
-signalling protocol. If that latency ever matters, the cheaper fix is
+signaling protocol. If that latency ever matters, the cheaper fix is
 server-side — shorten the deadline, or watch Job status where turnip
 already holds `pods get/list` — rather than adding a container to every
 Pod.
@@ -159,7 +159,7 @@ for the init container — narrowing that further is a separate concern.
 
 ## Edge cases
 
-| Case | Behaviour |
+| Case | Behavior |
 |---|---|
 | Clone fails (auth, missing ref, network) | reported immediately with git's redacted message; Job fails without starting the tool |
 | Merge conflict | reported as today, distinguished from other clone failures |

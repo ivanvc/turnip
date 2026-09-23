@@ -16,7 +16,7 @@ codebase safer than it found it.
 `Clone` takes the mode as an ordinary parameter, so the whole feature is
 exercisable against real local git fixtures while the Server still has no
 idea the setting exists. A failure at that point is unambiguously about
-git behaviour rather than about threading a value through six files.
+git behavior rather than about threading a value through six files.
 
 **The plumbing lands last**, in dependency order from the leaf package
 outward: schema, then the override gate, then the `Target` threading of
@@ -49,12 +49,12 @@ the stage before it compiles.
     signature outside `clone.go` has changed yet, so a failure here is
     about redaction alone.
 
-- [x] 3. Submodule initialisation in `clone.go`
+- [x] 3. Submodule initialization in `clone.go`
   - [x] 3.1 Widen the `gitRunner` seam to carry environment
     - `execGit` leaves `cmd.Env` nil today, inheriting the parent's
       environment. The seam gains an environment argument so exactly one
       call can set `GIT_CONFIG_*`; every existing call passes nothing and
-      keeps inheriting, so no current behaviour changes
+      keeps inheriting, so no current behavior changes
     - `cloneWith` and `runMerge` both take the seam and are updated
     - _Requirements: 3.1, 3.2_
   - [x] 3.2 Read and classify submodule URLs before anything is fetched
@@ -64,7 +64,7 @@ the stage before it compiles.
       the command exits non-zero when the file is absent, which is not an
       error condition here
     - Host extraction cannot be `net/url.Parse` alone: the scp-like form
-      has no scheme and is recognised only when no slash precedes the
+      has no scheme and is recognized only when no slash precedes the
       first colon, which is what separates `host:org/repo` from the local
       path `./foo:bar`
     - A submodule on a host other than the repository's own is reported
@@ -80,7 +80,7 @@ the stage before it compiles.
       `GIT_CONFIG_VALUE_n` pairs on the subprocess only — never in `argv`,
       never on disk, never in the Job spec
     - _Requirements: 3.1, 3.4, 3.5_
-  - [x] 3.4 Run the initialisation, after the merge
+  - [x] 3.4 Run the initialization, after the merge
     - `Clone` and `cloneWith` gain the mode; the step runs after
       `runMerge` returns, so the gitlinks resolved are the merged tree's
     - `none` skips entirely; `top-level` is `--init`; `recursive` is
@@ -88,7 +88,7 @@ the stage before it compiles.
       full depth so the pinned commit is certainly present
     - A submodule that cannot be fetched fails the clone, naming it. It
       must not leave an empty directory and continue: that is the exact
-      behaviour that produced `Error: repo .. not found`
+      behavior that produced `Error: repo .. not found`
     - _Requirements: 1.1, 1.2, 1.4, 3.3, 4.1, 4.2_
   - [x] 3.5 Update the existing `Clone` call sites
     - Ten of them: eight in `clone_test.go`, two in `property_test.go`.
@@ -114,7 +114,7 @@ the stage before it compiles.
       every file valid today stays valid
     - _Requirements: 2.3, 2.6, 2.7_
   - [x] 5.2 Validate the value
-    - An unrecognised mode appends to the accumulated errors rather than
+    - An unrecognized mode appends to the accumulated errors rather than
       returning early, with the file-level ref (`clone:` belongs to no
       project) and the field path `clone.submodules`
     - An empty value is valid and means "unset" — the Server's default
@@ -182,7 +182,7 @@ the stage before it compiles.
       and the required-variable check runs before the mode branch — the
       exact mistake that made every Runner refuse to start during Slice 14
     - An absent value means `top-level`, so a Job built by an older Server
-      still initialises submodules
+      still initializes submodules
     - _Requirements: 2.1_
   - [x] 9.3 Widen the clone entrypoint's seam
     - The `cloner` function type and the call through it gain the mode.
@@ -202,7 +202,7 @@ the stage before it compiles.
       for submodules as CVE-2022-39253 hardening, and it blocks
       `submodule update --init`, not only `submodule add`. This is
       test-only and must never appear in `clone.go`
-    - Cases: initialisation happens after the merge; `none` leaves the
+    - Cases: initialization happens after the merge; `none` leaves the
       directory empty and does **not** fail, distinguishing "configured
       off" from "failed to fetch"; a fetch failure fails the clone and
       names the submodule
@@ -221,15 +221,15 @@ the stage before it compiles.
     - A foreign host is reported before any fetch is attempted
     - _Requirements: 3.4, 3.5, 4.3, 4.4_
   - [x] 11.3 `internal/config`: the schema
-    - A valid `clone.submodules` round-trips; an unrecognised value is a
+    - A valid `clone.submodules` round-trips; an unrecognized value is a
       validation error naming `clone.submodules`; an absent `clone:` block
       leaves the zero value; an unknown key *inside* `clone:` is rejected
       by the existing strict decode
     - _Requirements: 2.2, 2.3, 2.6, 2.7_
   - [x] 11.4 `internal/orchestrator`: the gate
-    - An unrecognised `TURNIP_CLONE_SUBMODULES` is a startup error; the
+    - An unrecognized `TURNIP_CLONE_SUBMODULES` is a startup error; the
       override is refused when the path is absent from the allowed set and
-      honoured when present; the default applies when the repository says
+      honored when present; the default applies when the repository says
       nothing
     - _Requirements: 2.1, 2.2, 2.4_
   - [x] 11.5 `internal/jobs`: the Job shape
@@ -247,7 +247,7 @@ the stage before it compiles.
     - _Requirements: 5.1, 5.3_
   - [x] 12.2 `docs/troubleshooting.md`
     - The symptom this slice was found through — a tool reporting a
-      missing path or repository that is really an uninitialised submodule
+      missing path or repository that is really an uninitialized submodule
       — under the Runner-execution section, since that is what the next
       person will search for
     - _Requirements: 5.2_

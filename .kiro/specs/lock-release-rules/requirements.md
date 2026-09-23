@@ -220,7 +220,7 @@ reported.*
 
 *Rationale for 5.4: a plan dispatched while a Mutating_Operation is in
 flight moves the Lock to PlanStale beneath it. The result must still be
-honoured — a successful apply releases, a failed one invalidates — rather
+honored — a successful apply releases, a failed one invalidates — rather
 than being dropped because the state moved. This is a rare race, and
 leaving it undefined is how it becomes a bug nobody can reproduce.*
 
@@ -311,10 +311,10 @@ successfully" keeps its Lock.*
 
 1. THE citation "Requirement 6.6-6.8" at `result.go:45` SHALL be corrected
 2. THE citation "Requirement 6.8/8.5" at `sweep.go:89` SHALL be corrected
-3. No behaviour SHALL change from this correction
+3. No behavior SHALL change from this correction
 
 *Rationale: Requirement 6 is Plan with Destroy Flag and has five criteria,
-none about Lock lifecycle. The wrong citation is what made this behaviour
+none about Lock lifecycle. The wrong citation is what made this behavior
 look specified when nothing specified it — which is how it survived
 unexamined.*
 

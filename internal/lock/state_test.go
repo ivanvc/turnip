@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// DecodedState is the only place an unrecognised state is interpreted, so
+// DecodedState is the only place an unrecognized state is interpreted, so
 // it is the only place the fail-safe direction can be got wrong.
-func TestDecodedState_TolerantOfUnrecognisedValues(t *testing.T) {
+func TestDecodedState_TolerantOfUnrecognizedValues(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		field LockState

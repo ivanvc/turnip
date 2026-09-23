@@ -63,7 +63,7 @@ type outcome struct {
 // released is the outcome shared by every edge that ends a Lock's life.
 var released = outcome{released: true}
 
-// table is the whole of this slice's behaviour.
+// table is the whole of this slice's behavior.
 //
 // Four cells are deliberately absent: a plan *result* arriving in
 // StatePlanReady. Every result is preceded by EventPlanDispatched, which

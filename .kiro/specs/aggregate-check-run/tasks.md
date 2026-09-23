@@ -4,7 +4,7 @@
 
 Four parts, built bottom-up so each is tested before anything calls it:
 the rename, the record, the verdict and publisher, then the wiring into
-the sites that already finalise Operations.
+the sites that already finalize Operations.
 
 **Two GitHub facts are confirmed first**, because the design leans on
 them and neither was checked when it was written: that an app can set
@@ -17,7 +17,7 @@ test assertions, it is independently useful, and landing it separately
 keeps the later diffs about the record rather than about names.
 
 **The checkpoint that matters is task 9**: two Operations of one pull
-request, finalised on two Orchestrators sharing one Redis, end with one
+request, finalized on two Orchestrators sharing one Redis, end with one
 `turnip` check carrying the verdict of both. Every unit test up to then can
 pass with a publisher that only works on a single instance.
 
@@ -26,7 +26,7 @@ slice deploys simply re-plans.
 
 ## Tasks
 
-- [x] 1. Confirm the GitHub behaviour the design assumes
+- [x] 1. Confirm the GitHub behavior the design assumes
   - [x] 1.1 `conclusion: skipped` is settable by an app
     - Check the Checks API reference for create and update. If it is not
       settable, the fallback is `success` titled "no projects affected";
@@ -42,7 +42,7 @@ slice deploys simply re-plans.
     - **Found**: `skipped` is settable (only `stale` is reserved); the most
       recently *updated* run of a name is the one evaluated (secondary
       source — GitHub's reference does not say). Recorded under "Confirmed
-      GitHub behaviour". Not found: any documented way to move a completed
+      GitHub behavior". Not found: any documented way to move a completed
       run back to in progress, which reshaped task 6.1
     - _Requirements: 6.1_
 
@@ -57,7 +57,7 @@ slice deploys simply re-plans.
 
 - [x] 3. Checkpoint — the rename changes nothing else
   - `go build ./...`, `go test -race ./...` and golangci-lint (v2) pass
-  - The only behavioural difference is the name on each Project_Check
+  - The only behavioral difference is the name on each Project_Check
 
 - [x] 4. The Pull_Request_Record
   - [x] 4.1 A store for the record, beside `recordStore`
@@ -136,7 +136,7 @@ slice deploys simply re-plans.
     - Property 3 (no Outcome but `applied`/`nothing` reaches `success`)
       as a second `rapid` property over the verdict alone
 
-- [x] 7. Record Outcomes where Operations are finalised
+- [x] 7. Record Outcomes where Operations are finalized
   - [x] 7.1 `HandleResult` (`result.go`)
     - Write the Outcome from the `lock.Event` it already computes — before
       or regardless of `locks.Apply`'s result — then publish

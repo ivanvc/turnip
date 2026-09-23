@@ -44,7 +44,7 @@ plan.
 
 - [x] 2. Checkpoint - the field exists and nothing consults it
   - `go build ./...`, `go test -race ./...` and golangci-lint pass.
-  - Behaviour is deliberately unchanged: `State` has no reader. What this
+  - Behavior is deliberately unchanged: `State` has no reader. What this
     proves is that the new field round-trips, and that Locks already in
     Redis still decode, *before* anything depends on either.
 
@@ -98,7 +98,7 @@ plan.
     - _Requirements: 3.6_
   - [x] 6.3 Atomicity against a real Redis
     - The dispatch edge is a claim about what two Servers can observe.
-      miniredis serialises every command and cannot fail the way a real
+      miniredis serializes every command and cannot fail the way a real
       instance would, so this belongs with the `TURNIP_TEST_REDIS_ADDR`
       tests, which skip when no instance is available
     - _Requirements: 2.3_
@@ -106,12 +106,12 @@ plan.
 - [x] 7. Checkpoint - the manager is correct, the orchestrator untouched
   - `go build ./...`, `go test -race ./...` and golangci-lint pass.
   - The orchestrator still calls `AcquireLock`/`StorePlan`/`ReleaseLock`,
-    so behaviour is unchanged. Everything that follows is wiring.
+    so behavior is unchanged. Everything that follows is wiring.
 
 - [x] 8. Every writer moves onto the entry points
   - [x] 8.1 Dispatch
     - `executeOne`'s plan path calls `AcquireForPlan`
-    - First behaviour change in the slice: a re-plan invalidates the
+    - First behavior change in the slice: a re-plan invalidates the
       stored plan at dispatch
     - _Requirements: 2.1, 2.2_
   - [x] 8.2 Results
@@ -134,7 +134,7 @@ plan.
     - Their existing separate comments are unchanged; this is about the
       table being complete, not about what the reader sees
     - _Requirements: 1.6_
-  - [x] 8.5 A mutating result is honoured whatever state it arrives in
+  - [x] 8.5 A mutating result is honored whatever state it arrives in
     - A plan dispatched while an apply is in flight moves the Lock to
       `PlanStale` beneath it; the apply's result must still release or
       invalidate rather than being dropped because the state moved
@@ -223,7 +223,7 @@ plan.
     - `result.go:45` cites "Requirement 6.6-6.8"; `sweep.go:89` cites
       "6.8/8.5". Requirement 6 is *Plan with Destroy Flag* and has five
       criteria, none about Lock lifecycle
-    - No behaviour changes
+    - No behavior changes
     - _Requirements: 9.1, 9.2, 9.3_
   - [x] 13.3 Amendment task in `redis-lock-manager`
     - Its documented lifecycle is now a state machine with more release

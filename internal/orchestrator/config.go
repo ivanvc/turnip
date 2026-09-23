@@ -35,7 +35,7 @@ type Config struct {
 	// AllowedOverrides is the set of Project fields a repository's
 	// turnip.yaml may set for itself, from TURNIP_ALLOWED_OVERRIDES. See
 	// overrides.go for the known paths and the default, which preserves
-	// the behaviour that shipped before this setting existed.
+	// the behavior that shipped before this setting existed.
 	AllowedOverrides map[string]bool
 	// CloneSubmodules is the Submodule_Mode every clone uses unless a
 	// repository overrides it in its own configuration file (and that

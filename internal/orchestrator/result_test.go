@@ -194,7 +194,7 @@ func TestHandleResult_SuccessfulSyncReleasesTheLock(t *testing.T) {
 
 // Requirement 1.2: the arguments recorded are the ones the Operation ran
 // with, read from the record the Job was built from rather than
-// re-derived from the trigger line — so whatever turnip normalised is
+// re-derived from the trigger line — so whatever turnip normalized is
 // what a later mutating Operation replays.
 func TestHandleResult_RecordsTheOperationsOwnArguments(t *testing.T) {
 	var stored *lock.PlanRecord

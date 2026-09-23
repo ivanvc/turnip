@@ -21,7 +21,7 @@ plan, not a record.
   - [x] 1.1 Update `internal/config/config.go`
     - Replace `Version int` (yaml:"version") with `SchemaVersion string` (yaml:"schemaVersion")
     - Add an exported constant for the single accepted value, `v1alpha1`
-    - Do **not** retain a field bound to `yaml:"version"`: the old key is ignored like any other unrecognised field (Decision 4)
+    - Do **not** retain a field bound to `yaml:"version"`: the old key is ignored like any other unrecognized field (Decision 4)
     - Verify compilation with `go build ./internal/config/...`
     - _Requirements: 4.1, 4.2, 4.3, 4.7_
   - [x] 1.2 Validate it in `internal/config/validate.go`
@@ -77,7 +77,7 @@ plan, not a record.
     - A given directory is used as-is and **not** removed — it is a volume mount point
     - An empty value creates a temporary directory, removed when the Operation finishes
     - `stripSandboxPath` keeps working unchanged — it takes the directory as a parameter, so a fixed path behaves exactly as a temporary one did
-    - Rename it to `stripWorkspacePath` (and `sandboxpath.go`/`sandboxpath_test.go` to `workspacepath.go`/`workspacepath_test.go`, plus the test names): every document now says *Workspace*, and "sandbox" described a randomly-named directory that no longer exists. Behaviour is identical; this is vocabulary only
+    - Rename it to `stripWorkspacePath` (and `sandboxpath.go`/`sandboxpath_test.go` to `workspacepath.go`/`workspacepath_test.go`, plus the test names): every document now says *Workspace*, and "sandbox" described a randomly-named directory that no longer exists. Behavior is identical; this is vocabulary only
     - _Requirements: 1.5, 1.6, 1.7_
 
 - [x] 9. Checkpoint - Layout change is complete end to end
@@ -85,7 +85,7 @@ plan, not a record.
 
 - [x] 10. Tests
   - [x] 10.1 `internal/config`: schema version
-    - Accepted value parses; an unsupported value is rejected naming both values; an absent value is rejected; a file carrying only the old `version: 1` fails on the *absent* `schemaVersion`, confirming Decision 4's behaviour is what ships
+    - Accepted value parses; an unsupported value is rejected naming both values; an absent value is rejected; a file carrying only the old `version: 1` fails on the *absent* `schemaVersion`, confirming Decision 4's behavior is what ships
     - _Requirements: 4.3, 4.4, 4.6, 4.7_
   - [x] 10.2 `internal/config`: project environment
     - `env` survives a parse round-trip; `TURNIP_`-prefixed names and `PATH` are rejected; several offending names in one file are reported together
@@ -119,7 +119,7 @@ plan, not a record.
   for the graduation path, and Decision 4 for why no compatibility shim is
   written. Rolling it out has an order, though it is a deployment concern
   rather than work in this repository: a migrated `turnip.yaml` is accepted
-  by both the currently-deployed Server (which ignores unrecognised keys
+  by both the currently-deployed Server (which ignores unrecognized keys
   and never validated `version`) and the new one, so the files move first
   and the Server second.
 - **A Project's environment is carried by the Job spec**, not applied by

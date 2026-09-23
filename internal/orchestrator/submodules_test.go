@@ -28,7 +28,7 @@ func TestParseSubmodules_AcceptsEveryKnownMode(t *testing.T) {
 	}
 }
 
-// Requirement 2.2: an unrecognised value is a startup error rather than a
+// Requirement 2.2: an unrecognized value is a startup error rather than a
 // silently ignored setting. "shallow" specifically, because it is the name
 // the requirements originally used and the one an operator is most likely
 // to reach for out of habit.
@@ -64,7 +64,7 @@ func TestResolveSubmodules_OverrideIsRefusedWhenNotPermitted(t *testing.T) {
 		"the refusal tells the operator how to permit it")
 }
 
-func TestResolveSubmodules_OverrideIsHonouredWhenPermitted(t *testing.T) {
+func TestResolveSubmodules_OverrideIsHonoredWhenPermitted(t *testing.T) {
 	allowed, err := parseAllowedOverrides(overrideCloneSubmodules)
 	require.NoError(t, err)
 
@@ -96,7 +96,7 @@ func TestParseAllowedOverrides_AcceptsTheNewPathAndStillRejectsUnknownOnes(t *te
 }
 
 // Requirement 2.2, through the real startup path rather than the parser
-// alone: an unrecognised value must stop the Server rather than be
+// alone: an unrecognized value must stop the Server rather than be
 // silently ignored.
 func TestConfigFromEnv_UnknownCloneSubmodulesIsAStartupError(t *testing.T) {
 	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_CLONE_SUBMODULES": "shallow"}))

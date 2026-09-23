@@ -50,7 +50,7 @@ type Config struct {
 	// one of config.Submodules{None,TopLevel,Recursive}. It is set on the
 	// clone initContainer and deliberately absent from the container that
 	// runs the tool, so it is optional here and read only in clone mode. An empty value means top-level rather than
-	// "off", so a Job built by an older Server still initialises
+	// "off", so a Job built by an older Server still initializes
 	// submodules instead of silently producing an empty directory.
 	CloneSubmodules string
 }

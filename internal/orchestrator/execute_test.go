@@ -46,7 +46,7 @@ func (f *fakeLockManager) AcquireForPlan(ctx context.Context, projectKey string,
 	if f.acquireForPlanFunc != nil {
 		return f.acquireForPlanFunc(ctx, projectKey, prNumber, url, lockedBy)
 	}
-	// Honour a test that only scripted the older acquire, so existing
+	// Honor a test that only scripted the older acquire, so existing
 	// contention tests keep meaning what they meant.
 	if f.acquireLockFunc != nil {
 		ok, err := f.acquireLockFunc(ctx, projectKey, prNumber, url, lockedBy)
@@ -114,7 +114,7 @@ func (f *fakeLockManager) Apply(ctx context.Context, projectKey string, prNumber
 	return tr, nil
 }
 
-// state reports the modelled state and whether the key was known. Callers
+// state reports the modeled state and whether the key was known. Callers
 // hold f.mu.
 func (f *fakeLockManager) state(projectKey string) (lock.LockState, bool) {
 	s, ok := f.states[projectKey]
@@ -171,7 +171,7 @@ func (f *fakeLockManager) GetLockStatus(ctx context.Context, projectKey string) 
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	// A key this fake has modelled reports the state it modelled. One it
+	// A key this fake has modeled reports the state it modeled. One it
 	// has not reports StatePlanReady, which is what a Lock carrying a
 	// usable plan looks like — the situation every test that reaches a
 	// mutating Operation without first running a plan is describing.
@@ -382,7 +382,7 @@ func jobEnvValue(t *testing.T, job *batchv1.Job, name string) string {
 
 // The case that was impossible before this slice. A Helmfile plan records
 // no artifact, so the apply that follows must still run. Asserted as
-// behaviour rather than as a mock expectation, because mock expectations
+// behavior rather than as a mock expectation, because mock expectations
 // handing back bytes the real plugin never produces are exactly what hid
 // this bug for the life of the project.
 func TestExecuteOne_ApplyAfterAPlanWithNoArtifactRuns(t *testing.T) {

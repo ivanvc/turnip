@@ -170,7 +170,7 @@ func TestApply_OtherPRsLockIsAnError(t *testing.T) {
 }
 
 // realAddr skips rather than fails, so a plain `go test ./...` needs no
-// infrastructure. miniredis serialises every command, so it cannot fail
+// infrastructure. miniredis serializes every command, so it cannot fail
 // the way a real instance would — which is the whole point of this file's
 // last two tests.
 func realAddr(t *testing.T) string {

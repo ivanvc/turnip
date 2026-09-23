@@ -57,7 +57,7 @@ type Project struct {
 	// With is configuration for this Project's Plugin and for nothing
 	// else. Unlike the map it replaces, it carries no setting turnip
 	// itself reads — a key here is a Plugin's to interpret, which is why
-	// unrecognised keys inside it are accepted.
+	// unrecognized keys inside it are accepted.
 	With map[string]string `yaml:"with,omitempty"`
 
 	// Runner carries settings that shape the Runner Pod rather than the
@@ -90,7 +90,7 @@ type RunnerSpec struct {
 	Env map[string]string `yaml:"env,omitempty"`
 }
 
-// Submodule modes decide whether a clone initialises the repository's
+// Submodule modes decide whether a clone initializes the repository's
 // submodules and how deeply. Deliberately not named "shallow": in git that
 // word means a depth-limited fetch, and submodules are fetched at full
 // depth so the commit the parent pins is certainly present.

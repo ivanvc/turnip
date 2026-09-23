@@ -48,7 +48,7 @@ amended for the same reason.
   pull request's own head commit.
 - **Refusing fork pull requests** (Slice 15), which is a different
   question about a different kind of untrusted input.
-- **Draft-aware behaviour for anything but the automatic plan.** Comment
+- **Draft-aware behavior for anything but the automatic plan.** Comment
   triggers, apply, unlock and close all behave identically on a draft.
 
 ## Glossary
@@ -133,7 +133,7 @@ checking my work.
    pull request — being a draft changes *when turnip acts on its own*,
    never what it is capable of
 4. THE Server SHALL NOT read a pull request's draft state on any path
-   other than the automatic plan, so no other behaviour can come to
+   other than the automatic plan, so no other behavior can come to
    depend on it
 
 ### Requirement 5: Documentation

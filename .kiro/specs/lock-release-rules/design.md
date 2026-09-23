@@ -231,7 +231,7 @@ nowhere else.
 
 `Locked` and `LockNote` are set from the returned `Transition`, after the
 call returns without error. A failed release leaves the Lock reported as
-held, no note, and a logged error — preserving today's behaviour at
+held, no note, and a logged error — preserving today's behavior at
 `result.go:157-162`.
 
 The tempting shape is to decide the edge, compose its message, then
@@ -374,7 +374,7 @@ Requirement 2.2 regressing from dispatch-time to result-time — a change
 that breaks nothing else and reopens the window silently.
 
 **Atomicity needs a real Redis.** The dispatch edge is a claim about what
-two Servers can observe, and miniredis serialises every command, so it
+two Servers can observe, and miniredis serializes every command, so it
 cannot fail the way a real instance would. This belongs with the existing
 `TURNIP_TEST_REDIS_ADDR` tests in `ha_test.go`, which skip when no real
 instance is available.

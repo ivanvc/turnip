@@ -123,7 +123,7 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 	// The governing requirement is 7 (Redis/Valkey-Based Locking). An
 	// earlier comment here cited "Requirement 6.6-6.8", which describes no
 	// Lock lifecycle at all: Requirement 6 is Plan with Destroy Flag and
-	// has five criteria. The wrong citation is what made this behaviour
+	// has five criteria. The wrong citation is what made this behavior
 	// look specified when nothing specified it.
 	// The scope this Operation ran with, for the summary line. Taken from
 	// the record the Job was built from, which is what actually reached

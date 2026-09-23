@@ -105,7 +105,7 @@ review did.
    its Trailing_Arguments in the Lock alongside the plan data
 2. THE stored arguments SHALL be the ones the Operation actually ran
    with, not the ones its trigger line requested, so that any
-   normalisation turnip performs is what gets replayed
+   normalization turnip performs is what gets replayed
 3. WHERE a plan ran with no arguments, THE Lock SHALL record that
    absence, which is distinct from having recorded nothing
 
@@ -125,7 +125,7 @@ reason about whether my two commands agreed.
 3. IF a Mutating_Operation's trigger carries Trailing_Arguments, THEN THE
    Server SHALL refuse the Operation and say why, rather than ignoring
    them — a silently discarded argument is indistinguishable from an
-   honoured one until the infrastructure changes
+   honored one until the infrastructure changes
 4. THE refusal SHALL name the arguments it refused and state that the
    plan's own scope is what will be used
 5. WHEN a Mutating_Operation completes successfully, THE Server SHALL

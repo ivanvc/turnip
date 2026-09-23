@@ -415,7 +415,7 @@ wiring, then tests (unit, then property).
     - _Requirements: (coverage for 24)_
 
 - [x] 25. Rename the Job label prefix to a domain turnip owns (2026-09 amendment)
-  - `BuildJob` labelled every Runner Job with `turnip.io/operation-id` and
+  - `BuildJob` labeled every Runner Job with `turnip.io/operation-id` and
     `turnip.io/project`. Kubernetes doesn't verify prefix ownership, so this
     worked, but the convention is to name a domain you control and
     `turnip.io` is not one. Recorded in `roadmap.md`'s Backlog until now,

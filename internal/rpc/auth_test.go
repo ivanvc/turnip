@@ -145,7 +145,7 @@ func TestInterceptor_MapsFailureKindsToDistinctCodes(t *testing.T) {
 		err  error
 		want codes.Code
 	}{
-		"unrecognised caller": {fmt.Errorf("%w: expired", ErrInvalidCredential), codes.Unauthenticated},
+		"unrecognized caller": {fmt.Errorf("%w: expired", ErrInvalidCredential), codes.Unauthenticated},
 		"someone else's operation": {
 			fmt.Errorf("%w: pod mismatch", ErrNotBound), codes.PermissionDenied,
 		},

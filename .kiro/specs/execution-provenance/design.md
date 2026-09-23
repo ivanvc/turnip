@@ -221,14 +221,14 @@ markdown inside a comment authored by turnip — which readers trust
 differently from one authored by a contributor.
 
 The transcript adds a line built from trigger-supplied tokens, which
-widens an exposure that already exists, so the neutralisation covers both.
+widens an exposure that already exists, so the neutralization covers both.
 It belongs in the renderer, applied to whatever goes inside a fence, not
 at the seam: the seam does not know it is writing markdown.
 
 **Failure renders in the same fence as success.** `fenceFor`
 (`comment.go:508`) uses `diff` only on success, so today a failed
 Operation's annotation would lose its styling in exactly the case a reader
-scrutinises hardest. Its stated reason — a column-0 `-` in a failure
+scrutinizes hardest. Its stated reason — a column-0 `-` in a failure
 renders red — applies equally to success, where the same YAML can appear;
 the consistent answer is one fence for both.
 
@@ -313,7 +313,7 @@ on; a wrong change count is a wrong number in a check run.
 
 *Alternative considered*: run the tool under a pseudo-terminal. *Rejected
 because* it merges the streams the same way, and it changes what tools
-print (colour, progress bars, interactive prompts) — the record would be
+print (color, progress bars, interactive prompts) — the record would be
 of a different run than an unattended one.
 
 **The change count reads stdout only.** `parseChangedReleases` receives
@@ -378,7 +378,7 @@ part of the name.
 | `internal/runner/config.go` | read it |
 | `internal/runner/run.go` | redact as well as strip when composing `Output` |
 | `internal/github/types.go` | `ScopeArgs` on `ProjectResult` |
-| `internal/github/comment.go` | scope marker on the summary line; scope-aware footer; fence neutralisation; one fence for both outcomes |
+| `internal/github/comment.go` | scope marker on the summary line; scope-aware footer; fence neutralization; one fence for both outcomes |
 | `internal/orchestrator/result.go` | set `ScopeArgs` from the record |
 | `docs/usage.md` | what the annotation lines mean; that arguments are recorded and replayed |
 
@@ -412,7 +412,7 @@ start would usually still look right, and would race.
 in argv — that is the gap Decision 4 closes, and a test that only checks
 argv would pass while the real hazard remains.
 
-**Fence neutralisation is tested from both sources**: a tool whose output
+**Fence neutralization is tested from both sources**: a tool whose output
 contains a fence terminator, and a trigger argument that does. Both must
 render inside the block.
 
@@ -425,7 +425,7 @@ arguments must ever produce a copy-pasteable apply carrying them, because
 `execute.go:99` would refuse it.
 
 **Mutation checks** on each new edge: removing the transcript write, the
-redaction pass, or the fence neutralisation must each fail a specific
+redaction pass, or the fence neutralization must each fail a specific
 test, and absence assertions come from recording fakes rather than from
 output that happens to look unchanged.
 

@@ -395,7 +395,7 @@ one asking for a mutating Operation costs two.
 > called only the permission endpoint, with `IsCollaborator` returning
 > true for *any non-404 result*.
 >
-> The 204/404 behaviour belongs to the **other** endpoint,
+> The 204/404 behavior belongs to the **other** endpoint,
 > `/collaborators/{username}` — the one `Client.IsCollaborator` already
 > implemented and which nothing called. The permission endpoint reports an
 > access level in a 200 body, so a successful call means GitHub knows the
@@ -410,7 +410,7 @@ one asking for a mutating Operation costs two.
 > fix is the endpoint rather than a threshold on the string.
 >
 > Recorded rather than quietly edited because a wrong premise left in
-> place is what produced the defect, and the next person to economise on
+> place is what produced the defect, and the next person to economize on
 > an API call would read the same sentence and reach the same conclusion.
 
 Permission ranking: `none < read < triage < write < maintain < admin`,
@@ -471,10 +471,10 @@ into the first body until adding the next piece would exceed
 
 **A successful result's output is fenced `diff`; a failure's is not.**
 IaC tools emit something close to a unified diff, so tagging the block
-makes GitHub colour added and removed lines — global Requirement 10.5's
+makes GitHub color added and removed lines — global Requirement 10.5's
 "syntax highlighting", and most of what makes a plan readable at a
 glance. A failure's body is an error message rather than a diff, and diff
-highlighting would colour every line beginning with `-` red for no
+highlighting would color every line beginning with `-` red for no
 reason, so it keeps a plain fence. Only the *opening* fence carries a
 language — closing fences never do — which is why `truncateBody`'s marker
 needs no matching change, and why `splitDetailSection` absorbs the longer
@@ -488,7 +488,7 @@ error body; turnip has a single renderer, so the branch lives here.
 helm-diff already emits its `+`/`-` markers at column 0, which is where
 diff highlighting fires. Terraform does not: it indents them
 (`  ~ resource ...`), and an indented marker is not highlighted at all.
-Colouring Terraform output correctly means *rewriting the tool's text* —
+Coloring Terraform output correctly means *rewriting the tool's text* —
 Atlantis hoists the marker ahead of its indentation and rewrites `~` to
 `!`, since `~` is not diff syntax. That is a per-tool transformation this
 slice deliberately does not attempt; Slice 7 (Terraform & Pulumi Plugins)

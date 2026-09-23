@@ -76,7 +76,7 @@ func newSubmoduleFixture(t *testing.T) (parentDir, headSHA string) {
 // Requirement 1.1: the submodule's content is actually present afterwards —
 // the whole point of the slice, and the failure that reached the pilot as a
 // tool reading through an empty directory.
-func TestClone_InitialisesSubmodules(t *testing.T) {
+func TestClone_InitializesSubmodules(t *testing.T) {
 	parentDir, headSHA := newSubmoduleFixture(t)
 
 	dest := filepath.Join(t.TempDir(), "checkout")
@@ -114,7 +114,7 @@ func TestClone_EmptyModeDefaultsToTopLevel(t *testing.T) {
 
 // Requirement 1.3: a repository with no .gitmodules is a no-op, not a
 // failure. The existing fixtures have no submodules, so this pins the
-// behaviour explicitly rather than relying on them incidentally.
+// behavior explicitly rather than relying on them incidentally.
 func TestClone_NoSubmodulesIsANoOp(t *testing.T) {
 	repoDir, firstSHA, _ := newGitFixture(t)
 
@@ -334,11 +334,11 @@ func newSubmoduleMergeFixture(t *testing.T) (parentDir, headSHA, baseRef string)
 	return parentDir, headSHA, "main"
 }
 
-// Requirement 1.2 / Decision 2: initialisation runs after the base-branch
+// Requirement 1.2 / Decision 2: initialization runs after the base-branch
 // merge, because it is the merged tree's gitlinks that record which
 // submodule commits belong to it. Every other submodule test here skips the
 // merge entirely, so without this the ordering claim is untested.
-func TestClone_InitialisesSubmodulesAfterTheMerge(t *testing.T) {
+func TestClone_InitializesSubmodulesAfterTheMerge(t *testing.T) {
 	parentDir, headSHA, baseRef := newSubmoduleMergeFixture(t)
 
 	dest := filepath.Join(t.TempDir(), "checkout")

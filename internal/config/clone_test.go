@@ -26,7 +26,7 @@ func TestParse_CloneSubmodulesAcceptsEveryMode(t *testing.T) {
 	}
 }
 
-// Requirement 2.2: an unrecognised value is reported rather than silently
+// Requirement 2.2: an unrecognized value is reported rather than silently
 // ignored, against the file rather than a project, since `clone:` belongs
 // to no project.
 func TestParse_CloneSubmodulesRejectsAnUnknownMode(t *testing.T) {

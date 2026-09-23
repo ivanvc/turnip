@@ -2,7 +2,7 @@
 
 ## Introduction
 
-turnip's clone does not initialise submodules. `internal/runner/clone.go`
+turnip's clone does not initialize submodules. `internal/runner/clone.go`
 runs `init`, `remote add`, a bounded-depth `fetch`, `checkout` and a merge —
 and stops. A repository with a submodule is checked out with that path
 present but empty.
@@ -49,7 +49,7 @@ without submodules pay nothing whichever way the setting goes.
   operator-side configuration is where Atlantis puts this kind of setting.
 
 **Global requirements**: none directly. Extends Requirement 5's clone
-behaviour (grpc-runner's slice) without changing its merge semantics.
+behavior (grpc-runner's slice) without changing its merge semantics.
 
 **Explicitly out of scope**, each deferred to named future work:
 
@@ -77,25 +77,25 @@ behaviour (grpc-runner's slice) without changing its merge semantics.
 Terms additional to the global spec's glossary:
 
 - **Submodule_Mode**: one of `none`, `top-level` or `recursive`, deciding
-  whether a clone initialises submodules and how deeply. Not `shallow`:
+  whether a clone initializes submodules and how deeply. Not `shallow`:
   in git that word means a depth-limited fetch, and submodules are
   deliberately fetched at full depth here (Requirement 3.3), so the name
   would promise the opposite of what happens.
 
 ## Requirements
 
-### Requirement 1: Submodules are initialised by default
+### Requirement 1: Submodules are initialized by default
 
 **User Story:** As a developer whose repository uses a submodule, I want
 turnip to check it out, so that my tool finds the files it references.
 
 #### Acceptance Criteria
 
-1. WHEN cloning, THE Server SHALL initialise the repository's submodules
+1. WHEN cloning, THE Server SHALL initialize the repository's submodules
    unless configured otherwise
-2. THE initialisation SHALL happen after the base-branch merge, so that
+2. THE initialization SHALL happen after the base-branch merge, so that
    the submodule commits resolved are the ones the merged tree records
-3. WHERE a repository has no `.gitmodules`, initialisation SHALL be a
+3. WHERE a repository has no `.gitmodules`, initialization SHALL be a
    no-op and SHALL NOT fail
 4. THE default SHALL be a single level of submodules, not recursive:
    nesting is rarer than the flat case and costs more to fetch
@@ -111,7 +111,7 @@ expensive submodule is not forced to fetch it.
 1. THE Server SHALL read a Submodule_Mode from its own configuration,
    applying it to every repository it clones
 2. THE accepted values SHALL be `none`, `top-level` and `recursive`; an
-   unrecognised value SHALL be a startup error rather than a silently
+   unrecognized value SHALL be a startup error rather than a silently
    ignored setting
 3. A repository's configuration file SHALL be able to override the
    Server's mode, since whether a repository has submodules — and whether
@@ -169,7 +169,7 @@ has no idea what went wrong.
 1. IF a submodule cannot be fetched, THEN THE clone SHALL fail, reporting
    which submodule failed and why
 2. THE clone SHALL NOT leave an empty submodule directory and continue —
-   that is the behaviour that produced `repo .. not found`
+   that is the behavior that produced `repo .. not found`
 3. THE installation token SHALL NOT appear in any reported message.
    Today's redaction replaces only arguments *exactly equal* to the
    authenticated URL, so a token carried inside a larger argument would
@@ -191,7 +191,7 @@ has no idea what went wrong.
    three modes
 2. `docs/troubleshooting.md` SHALL carry the symptom this slice was found
    through — a tool reporting a missing path or repository that is
-   actually an uninitialised submodule — since that is what the next
+   actually an uninitialized submodule — since that is what the next
    person will search for
 3. THE documentation SHALL state that submodule fetches use the same
    installation token, and therefore reach only repositories the App is

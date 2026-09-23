@@ -285,7 +285,7 @@ func TestHA_ConcurrentLockAcquisitionAcrossInstancesExactlyOneWinner(t *testing.
 
 // haOperation puts an Operation Record for project into the shared Redis,
 // as the instance that dispatched it would have, so a different instance
-// can finalise it.
+// can finalize it.
 func haOperation(t *testing.T, o *Orchestrator, owner, project, operation string) string {
 	t.Helper()
 	id := uuid.NewString()
@@ -306,7 +306,7 @@ func haOperation(t *testing.T, o *Orchestrator, owner, project, operation string
 
 // TestHA_AggregateCheckAcrossInstancesCarriesEveryResult validates
 // aggregate-check-run's checkpoint: two Projects of one pull request, each
-// finalised on a different instance at the same moment, end with one
+// finalized on a different instance at the same moment, end with one
 // `turnip` verdict covering both. Neither instance has any in-process
 // knowledge of the other's result — only the shared record.
 func TestHA_AggregateCheckAcrossInstancesCarriesEveryResult(t *testing.T) {

@@ -403,7 +403,7 @@ worked in parallel.
     refusals and for the same reason: an Operation that was never going to
     run should leave no Lock, check run or Job behind. Refused rather than
     ignored, since a silently dropped argument is indistinguishable from an
-    honoured one until the infrastructure changes
+    honored one until the infrastructure changes
   - The plan fetch broadens from `if isApply` to every non-plan Operation,
     and the recorded `PlanArgs` are substituted into both the
     `OperationRecord` and `jobs.OperationParams` via one `execArgs` value.
@@ -412,7 +412,7 @@ worked in parallel.
     "Requirement 6.8", which does not exist — Requirement 6 is *Plan with
     Destroy Flag* and has five criteria, none about Lock lifecycle. The
     governing requirement is 7. The wrong citation is what made this
-    behaviour look specified when nothing specified it
+    behavior look specified when nothing specified it
   - **Also drops two now-dead `OperationRecord` fields.** Making release
     the fall-through, and broadening the plan fetch to every mutating
     Operation, left `IsApply` written and never read; `PlanData` was
@@ -422,8 +422,8 @@ worked in parallel.
     `OperationRecord` sketch is amended to match — it describes
     `record.go` rather than recording history, so leaving it stale would
     misdescribe the current shape
-  - _Requirements: (dead-code removal, no behavioural change)_
-  - _Requirements: no new behaviour beyond `plan-scoped-apply`'s own_
+  - _Requirements: (dead-code removal, no behavioral change)_
+  - _Requirements: no new behavior beyond `plan-scoped-apply`'s own_
 
 ## Notes
 

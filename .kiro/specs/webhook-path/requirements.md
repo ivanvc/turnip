@@ -19,7 +19,7 @@ into an ordinary Ingress rule.
 
 **This slice amends no global requirement.** The global `requirements.md`
 pins the *configuration file* location (Requirement 1.1) and the
-webhook's failure behaviour (Requirement 15.5), but names no HTTP path;
+webhook's failure behavior (Requirement 15.5), but names no HTTP path;
 the global `design.md` mentions none at all. So this fills a gap rather
 than overturning a decision — unlike Slice 21, which had to amend
 Requirement 5.3.

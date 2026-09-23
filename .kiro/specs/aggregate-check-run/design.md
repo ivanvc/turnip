@@ -1,6 +1,6 @@
 # Design: One Check Branch Protection Can Require (Slice 37)
 
-## Confirmed GitHub behaviour
+## Confirmed GitHub behavior
 
 Checked 2026-09-23 (task 1), since the design leans on all three:
 
@@ -236,7 +236,7 @@ a failed apply goes from `failure` back to in progress. So when
 `m:check_done` says the current run is completed and the new verdict is
 not, the publisher creates a new run instead of updating. GitHub evaluates
 a required check by the most recently updated run of its name (see
-"Confirmed GitHub behaviour"), which is the new one. `m:check_done` is only
+"Confirmed GitHub behavior"), which is the new one. `m:check_done` is only
 a hint: if it is stale and an update is refused, the publisher creates a
 new run then.
 
@@ -263,7 +263,7 @@ history, and a pull request applying five Projects would show a stack of
 superseded `turnip` runs. New runs are created only when unavoidable —
 the first publish, and leaving a completed state.
 
-### Decision 4: Re-read the version rather than serialise publishers
+### Decision 4: Re-read the version rather than serialize publishers
 
 *Alternative considered*: a short per-pull-request Redis lock around
 publishing.
@@ -326,7 +326,7 @@ the failure is logged; the next push or trigger publishes again.
   verdict of the final record. Deterministic tests cover the specific
   cases: a write landing mid-publish, leaving a completed state, and a
   stale completed hint.
-- **Across real Redis**: `ha_test.go` finalises two Projects' applies on
+- **Across real Redis**: `ha_test.go` finalizes two Projects' applies on
   two instances at once, repeatedly, and asserts one verdict covering both.
 - **Rename**: the four existing check-run sites assert the new name.
 

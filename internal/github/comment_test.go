@@ -347,9 +347,9 @@ func TestBuildVerdictLine(t *testing.T) {
 }
 
 // Requirement 10.5: output is fenced for syntax highlighting. A success is
-// fenced `diff` so GitHub colours added and removed lines, which is most of
+// fenced `diff` so GitHub colors added and removed lines, which is most of
 // what makes a plan readable. A failure is not: its body is an error
-// message, and diff highlighting would colour every line beginning with
+// message, and diff highlighting would color every line beginning with
 // "-" red for no reason.
 func TestBuildConsolidatedComment_DiffFenceOnSuccessPlainOnFailure(t *testing.T) {
 	success := BuildConsolidatedComment([]ProjectResult{
@@ -453,7 +453,7 @@ func TestBuildConsolidatedComment_FailureKeepsAPlainFence(t *testing.T) {
 	}})
 	require.Len(t, parts, 1)
 	assert.NotContains(t, parts[0], "```diff",
-		"an error message is not a diff, and colouring it as one is wrong in general")
+		"an error message is not a diff, and coloring it as one is wrong in general")
 }
 
 // The marker is what a reader sees without expanding anything, so it has

@@ -33,7 +33,7 @@ come to rest on them.
 **The premise is written down, and it is wrong.**
 `github-integration/design.md:387` justifies the single cached call with
 "GitHub's API returns 404 for a non-collaborator on that endpoint". That
-204/404 behaviour belongs to the *other* endpoint,
+204/404 behavior belongs to the *other* endpoint,
 `/collaborators/{username}` — which this codebase already implements
 correctly as `Client.IsCollaborator` and never calls from the Authorizer.
 The tests pass because they encode the same assumption: the
@@ -126,12 +126,12 @@ question the endpoint answers, not on what values it returns.*
 
 1. WHERE the authorization lookup fails, THE Server SHALL refuse the
    Trigger Command
-2. WHERE GitHub returns a Permission_Level turnip does not recognise, THE
+2. WHERE GitHub returns a Permission_Level turnip does not recognize, THE
    write-permission check SHALL treat it as insufficient
 3. No authorization decision SHALL be reached by a path that treats an
    absent or unreadable answer as permission granted
 
-*Rationale for 2.1: this is already today's behaviour and is stated so the
+*Rationale for 2.1: this is already today's behavior and is stated so the
 fix cannot regress it. It is also the failure mode that matters most in
 practice: GitHub's documentation notes the caller needs write, maintain or
 admin privileges to read collaborator information, so an installation
@@ -140,7 +140,7 @@ refusal is the only safe direction.*
 
 *Rationale for 2.2: `permissionRank` returns 0 for an unknown string, so a
 new role GitHub introduces is already treated as insufficient. Stated so
-that a later "unknown means read" convenience is recognised as a weakening
+that a later "unknown means read" convenience is recognized as a weakening
 rather than a tidy-up.*
 
 ### Requirement 3: The write-permission gate keeps its meaning
@@ -184,7 +184,7 @@ the design's to settle; this requirement fixes only that it stays bounded.*
 
 *Rationale: a wrong premise left in place is what produced this defect,
 and it is the part most likely to produce the next one — the next person
-to optimise an API call will read the same sentence and reach the same
+to optimize an API call will read the same sentence and reach the same
 conclusion. Quietly editing it would lose the fact that turnip once
 believed it.*
 
@@ -241,7 +241,7 @@ requirement because the finding and the fix live in different documents.*
 
   **Considered and declined** (2026-09-21): making the levels
   configurable, so an operator could require write for a plan. Declined in
-  favour of documenting the rule. A configurable *apply* threshold has no
+  favor of documenting the rule. A configurable *apply* threshold has no
   safe value below write, so the setting would only ever be a way to get
   it wrong; and a configurable *plan* threshold would take from a
   read-level reviewer the only means they have of asking what a change

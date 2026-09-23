@@ -96,11 +96,11 @@ projects:
     uses: helmfile@1.1.7
 ```
 
-**`submodules`** decides how far submodule initialisation goes:
+**`submodules`** decides how far submodule initialization goes:
 
-| Value | Behaviour |
+| Value | Behavior |
 |---|---|
-| `none` | submodules are not initialised; the directory stays empty |
+| `none` | submodules are not initialized; the directory stays empty |
 | `top-level` | one level of submodules — the default |
 | `recursive` | submodules of submodules too |
 
@@ -399,7 +399,7 @@ than one restart-and-discover-the-next-one at a time.
 | `TURNIP_RUNNER_IMAGE` | yes | the Runner container image a deployed Server creates Jobs with |
 | `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` | no (default `false`) | collapse an older plan comment on the same PR once a newer one supersedes it |
 | `TURNIP_RUNNER_SERVICE_ACCOUNT` | no (default unset) | ServiceAccount every Runner Pod runs as — how a Runner gets cloud credentials (EKS Pod Identity/IRSA) and in-cluster API permissions. Unset leaves Pods on the namespace's `default` ServiceAccount, which normally has neither |
-| `TURNIP_CLONE_SUBMODULES` | no (default `top-level`) | how far the clone initialises submodules: `none`, `top-level`, or `recursive`. Applies to every repository this Server clones, unless one overrides it with `clone.submodules` *and* that path is permitted below. Defaults on, unlike `actions/checkout` — turnip clones specifically to run IaC that may reference submodule paths, so defaulting off would make every repository with a submodule fail confusingly before anything worked. An unrecognized value is a startup error |
+| `TURNIP_CLONE_SUBMODULES` | no (default `top-level`) | how far the clone initializes submodules: `none`, `top-level`, or `recursive`. Applies to every repository this Server clones, unless one overrides it with `clone.submodules` *and* that path is permitted below. Defaults on, unlike `actions/checkout` — turnip clones specifically to run IaC that may reference submodule paths, so defaulting off would make every repository with a submodule fail confusingly before anything worked. An unrecognized value is a startup error |
 | `TURNIP_ALLOWED_OVERRIDES` | no (default: permits nothing) | comma-separated list of the fields a repository's own config file may set. The paths accepted today are `runner.serviceAccount` and `clone.submodules`. The default matches what turnip has always done: a repository cannot choose the identity its Runner assumes, since this file is read from the PR's own head commit. An unrecognized path is a startup error rather than a silently ineffective setting. Note that `uses` is *not* an override — turnip has no Server-side tool to fall back to, so what a project runs is always the repository's to say |
 
 In `deploy/base`, the two credential-shaped values

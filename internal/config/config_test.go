@@ -44,7 +44,7 @@ projects:
 	assert.Nil(t, c.Projects[0].With)
 }
 
-// An unrecognised key inside `with` is a Plugin's business, not turnip's:
+// An unrecognized key inside `with` is a Plugin's business, not turnip's:
 // the whole point of the map is to carry keys turnip does not define, so
 // strict decoding must stop at its boundary.
 func TestParse_UnknownKeyInsideWithIsAccepted(t *testing.T) {

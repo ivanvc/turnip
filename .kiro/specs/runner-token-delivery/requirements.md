@@ -136,7 +136,7 @@ the complete set is not knowable before minting. 1.4 states the invariant
 rather than the mechanism: whatever the design chooses — widening the
 repository scope under `recursive` while still narrowing permissions,
 or something better — scoping must never be the reason a clone fails.
-Narrowing is a defence; it is not worth breaking the product for.
+Narrowing is a defense; it is not worth breaking the product for.
 
 Submodules on a host other than the Operation's already fail with their
 own error (`submodules.go`: "is hosted on %s, which this installation
@@ -179,7 +179,7 @@ what makes this requirement implementable, and this slice must not be
 started before it.*
 
 *Rationale for 2.3 — this is the requirement most likely to be
-implemented wrong.* A fetch RPC that takes an operation id and honours it
+implemented wrong.* A fetch RPC that takes an operation id and honors it
 reintroduces exactly what Slice 25 closed: a Runner authenticated for one
 Operation could request another's token, and under Requirement 1 that
 token may belong to a different repository. The result is cross-repository
@@ -249,7 +249,7 @@ would make it true, but it has to be true rather than hoped for.*
 1. THE `OperationStart` message SHALL NOT carry the Installation_Token
 2. THE vacated field number SHALL be reserved, so it cannot be reused and
    silently decoded by an older peer
-3. No Server behaviour SHALL change, because the Server never read it
+3. No Server behavior SHALL change, because the Server never read it
 
 *Rationale: the Runner returns to the Server a credential the Server
 minted, over a channel that authenticates nothing today. It is removed

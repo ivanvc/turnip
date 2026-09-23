@@ -2,7 +2,7 @@
 
 ## Overview
 
-Submodule initialisation is added to the clone, after the merge, behind a
+Submodule initialization is added to the clone, after the merge, behind a
 three-state mode with a Server default and a repository override.
 
 The work divides into eight decisions across five concerns: how submodules
@@ -48,7 +48,7 @@ Decision 4 gets most of that more cheaply.
 
 ## Decision 2: it runs after the merge, in clone mode
 
-Submodules are initialised after the base-branch merge, not after the
+Submodules are initialized after the base-branch merge, not after the
 checkout. The merged tree is what the tool will read, and it is the merged
 tree's gitlinks that record which submodule commits belong to it — merging
 can change them, and resolving the pre-merge commits would leave the
@@ -156,7 +156,7 @@ git config -f .gitmodules --get-regexp ^submodule\..*\.url$
 This read serves twice: it decides which submodules are reachable, and it
 supplies Decision 3's exact-URL rewrites. Extracting the host cannot be
 `net/url.Parse` alone, because a scp-like URL has no scheme — git's own
-rule is that the scp-like form is recognised only when there is no slash
+rule is that the scp-like form is recognized only when there is no slash
 before the first colon, which is what distinguishes `github.com:org/repo`
 from the local path `./foo:bar`. turnip applies the same test.
 
@@ -171,7 +171,7 @@ the targeted-error benefit the hand-rolled approach promised, at the cost
 of one git command.
 
 A submodule that cannot be fetched fails the clone. It must not leave an
-empty directory and continue: that is precisely the behaviour that reached
+empty directory and continue: that is precisely the behavior that reached
 the pilot as `Error: repo .. not found`, a message naming neither the
 submodule nor the repository it came from.
 
@@ -185,9 +185,9 @@ fetched at full depth so the pinned commit is certainly present
 (Requirement 3.3). A reader seeing `submodules: shallow` would reasonably
 expect `--depth`. Requirement 2.2 and the glossary carry `top-level`.
 
-| Mode | Behaviour |
+| Mode | Behavior |
 |---|---|
-| `none` | submodules are not initialised |
+| `none` | submodules are not initialized |
 | `top-level` | one level of submodules (the default) |
 | `recursive` | submodules of submodules too |
 
@@ -197,7 +197,7 @@ fetch, and because a repository that needs `recursive` knows it does.
 ## Decision 6: a Server default a repository may override
 
 **The outcome**: the Server carries the default, a repository may override
-it in its own configuration file, and whether that override is honoured is
+it in its own configuration file, and whether that override is honored is
 decided by the existing `TURNIP_ALLOWED_OVERRIDES` list. Three mechanisms,
 one of which already exists, and no new configuration surface.
 
@@ -253,7 +253,7 @@ but nested, not loose. This is Requirements 2.6 and 2.7.
 `projects`, and both are structural. A third loose key would open a
 grab-bag that every future repository-wide setting joins. A `clone:` block
 gives this one a home and names the thing it configures — and it has real
-neighbours coming: `actions/checkout` groups `submodules` with `lfs`,
+neighbors coming: `actions/checkout` groups `submodules` with `lfs`,
 `fetch-depth` and `sparse-checkout`, all clone-time concerns, and turnip
 already has a bounded-depth fetch that could want the same treatment.
 
@@ -334,7 +334,7 @@ comment, so the operator sees one message either way.
 
 ## Edge cases
 
-| Case | Behaviour |
+| Case | Behavior |
 |---|---|
 | No `.gitmodules` | no-op; `git submodule update` succeeds trivially |
 | Mode `none`, repository has submodules | not fetched; the tool fails on its own terms, which is what was asked for |
@@ -346,14 +346,14 @@ comment, so the operator sees one message either way.
 | Submodule on another host entirely | reported before fetching, naming the submodule and its host |
 | Relative submodule URL | handled by git, resolved against the parent's remote |
 | Submodule commit not reachable from any branch | fetch fails, named — unlike a silent empty directory |
-| Nested submodules under `top-level` | not initialised; the tool fails on its own terms |
+| Nested submodules under `top-level` | not initialized; the tool fails on its own terms |
 
 ## Testing approach
 
 `clone.go`'s existing tests use a real local git repository fixture rather
 than a fake, which extends naturally: a fixture repository gains a
 submodule pointing at a second local repository, so the merge-then-
-initialise ordering and the pinned-commit resolution are exercised for
+initialize ordering and the pinned-commit resolution are exercised for
 real without a network.
 
 **Local submodules need `protocol.file.allow`, and only in tests.** git
@@ -370,7 +370,7 @@ meeting a `transport 'file' not allowed` failure should add the flag to
 the *test*, never to `clone.go`.
 
 These cases are worth naming because they pin decisions rather than
-behaviour:
+behavior:
 
 - A token embedded in a rewritten submodule URL does not appear in a
   reported error — the assertion that pins Decision 4, and the one whose

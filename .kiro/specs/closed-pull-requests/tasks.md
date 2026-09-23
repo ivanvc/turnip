@@ -6,7 +6,7 @@
 
 A `PullRequest` built without it is a pull request turnip believes is
 closed. So the moment the guard exists, every path that does not map the
-field refuses — including every test fixture. That is the behaviour we
+field refuses — including every test fixture. That is the behavior we
 want in production and the reason the mapping has to land first, with a
 checkpoint proving it populates *while nothing yet refuses*. Slice 15 ran
 this exact sequence for `HeadRepo` and its task 2 exists for the same
@@ -44,7 +44,7 @@ keeping it separate keeps its three tests honest.
 
 - [x] 2. Checkpoint - the field populates, and nothing refuses yet
   - `go build ./...`, `go test -race ./...` and golangci-lint pass.
-  - Behaviour is deliberately unchanged: `Open` has no reader. What this
+  - Behavior is deliberately unchanged: `Open` has no reader. What this
     proves is that both mappings work *before* anything depends on the
     field failing closed.
   - If any existing test fails here, the mapping changed something it

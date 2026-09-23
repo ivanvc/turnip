@@ -222,7 +222,7 @@ comment nobody can re-render.
 
 ## Edge cases
 
-| Case | Behaviour |
+| Case | Behavior |
 |---|---|
 | One Project | verdict reads as a clause about that Project, not a count of one |
 | Every Project reports no changes | verdict says so; no apply command is offered |

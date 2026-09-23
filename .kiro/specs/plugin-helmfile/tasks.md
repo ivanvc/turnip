@@ -188,7 +188,7 @@ property).
     *how* destroy is invoked — a peer operation rather than a flag on
     `apply` — and never asked whether it could be offered at all, because
     the plan/apply review-loop guarantee did not exist yet. Its stated
-    authority, global design Property 22, asserts destroy behaviour while
+    authority, global design Property 22, asserts destroy behavior while
     its own scope line validates Requirements 13.2–13.5, none of which
     mention destroy
   - Requirements 3.2 and 3.8 are amended; the reconciliation section

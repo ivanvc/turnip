@@ -138,7 +138,7 @@ survives that round trip.
 **Alternative considered**: dropping `omitempty` and relying on `null`
 versus `[]` to carry the distinction. *Rejected* — it makes a
 security-relevant decision depend on a JSON encoder's nil-slice
-behaviour, which is exactly the kind of detail that changes silently and
+behavior, which is exactly the kind of detail that changes silently and
 is untestable by reading the struct.
 
 ## Decision 2: the interface stores a plan record, not a widening parameter list
@@ -207,7 +207,7 @@ Slice 18's question, and the two compose cleanly: Slice 18 changes
 the ones the Operation ran with rather than the ones its trigger line
 requested. `HandleResult` already holds the `OperationRecord` the Job was
 built from, so the value to store is `rec.ExtraArgs` — the same slice that
-was marshalled into `TURNIP_EXTRA_ARGS`. Reading it from the record rather
+was marshaled into `TURNIP_EXTRA_ARGS`. Reading it from the record rather
 than re-deriving it from the trigger is both correct and less work.
 
 ## Decision 4: only the plan operation accepts arguments
@@ -240,7 +240,7 @@ package has no Plugin registry. Which token is the plan is tool-native
 
 **Why refuse rather than ignore**: Requirement 2.3's reasoning, worth
 keeping in the code's comment as well as the spec — a silently discarded
-argument is indistinguishable from an honoured one until the
+argument is indistinguishable from an honored one until the
 infrastructure changes, and by then the author's belief about what they
 applied is wrong with nothing on the page to correct it.
 
@@ -330,7 +330,7 @@ release `installed: false` — helmfile's reference documents the field as
 travels the ordinary `diff` → `apply` loop. `helmfile diff` does surface
 it: since PR #1186 it prints the pending removal as
 `<name> (<chart>) DELETED` beneath an `Affected releases are:` heading and
-exits 2 under `--detailed-exitcode`. That behaviour is live in current
+exits 2 under `--detailed-exitcode`. That behavior is live in current
 source (`pkg/app/app.go`, `pkg/app/run.go`) and covered by
 `pkg/app/diff_test.go`.
 
@@ -414,7 +414,7 @@ overlap.
 
 ## Edge cases
 
-| Case | Behaviour |
+| Case | Behavior |
 |---|---|
 | Helmfile `diff` then `apply` | apply runs — the case that is impossible today |
 | scoped `diff` then bare `apply` | apply replays the stored scope |
@@ -450,7 +450,7 @@ the regression net for the Overview's discoveries:
   `result.go:113`.
 - **An apply after a Helmfile plan is not refused.** The end-to-end
   assertion that both byte gates are gone. Fails today at `redis.go:94`.
-  Stated as a behaviour rather than a mock expectation, because mock
+  Stated as a behavior rather than a mock expectation, because mock
   expectations are what hid the bug —
   `TestExecuteOne_ApplyWithoutPlanDataIsRejected` needs re-reading in this
   light, not deleting: the refusal is still correct when no plan ran.
@@ -507,7 +507,7 @@ this design's first draft:
 - **Requirements 13.7 and 13.9** mandate Helmfile destroy support and are
   overturned by Decision 6. 13.2, which lists only `diff`, `apply` and
   `sync`, becomes correct as written.
-- **Design Property 22** asserts destroy behaviour and must drop that
+- **Design Property 22** asserts destroy behavior and must drop that
   clause; its "Validates: Requirements 13.2–13.5" line then matches what
   it actually claims.
 

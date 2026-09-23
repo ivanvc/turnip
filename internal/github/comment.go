@@ -141,7 +141,7 @@ func splitDetailSection(r ProjectResult, reserve int) []section {
 
 // chunkOmissionMarker opens a section whose output was cut, inside its
 // fence. It carries no "-" or "+" prefix, so a diff-fenced block renders
-// it as ordinary context rather than colouring it.
+// it as ordinary context rather than coloring it.
 const chunkOmissionMarker = "…(earlier output omitted)\n"
 
 // clampBody assembles one comment body and brings it under
@@ -560,12 +560,12 @@ func blockedNote(r ProjectResult) string {
 // it, which is the whole point of quoting it.
 //
 // IaC tools emit something close to a unified diff, so tagging the block
-// `diff` makes GitHub colour added and removed lines — which is most of
+// `diff` makes GitHub color added and removed lines — which is most of
 // the value of reading a plan at all (Requirement 10.5's "syntax
 // highlighting"). Atlantis fences plan output the same way.
 //
 // A *failure* still gets a plain fence. Its body is an error message
-// rather than a diff, and diff highlighting would colour any line starting
+// rather than a diff, and diff highlighting would color any line starting
 // with "-" as a deletion, turning an unrelated message red. Slice 33
 // considered making both fences `diff` so its annotation lines render as
 // muted comments in either case, and reversed that: on success the content

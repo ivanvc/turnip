@@ -58,7 +58,7 @@ existing mapper covers it.
 
 The comparison is on `Owner` and `Name`, not on the `Fork` flag
 (Requirement 1.4), and not on `URL` — a URL can differ in form for the
-same repository, while owner and name are what GitHub canonicalises.
+same repository, while owner and name are what GitHub canonicalizes.
 
 ```go
 // IsForeign reports whether this pull request's code comes from a
@@ -98,14 +98,14 @@ This is the substantive decision of the slice.
 the counter increments at `:91`, and the error branch follows at `:92`.
 So a refusal recorded at its own site would increment the counter twice
 for one delivery — once `rejected`, once `dispatched` — and
-`sum(webhook_events_total)` would stop equalling deliveries received.
+`sum(webhook_events_total)` would stop equaling deliveries received.
 
 The obvious repair is worse. Returning an error from the handler reaches
 `if handleErr != nil { w.WriteHeader(http.StatusInternalServerError) }`
 at `:92-95`, and a 500 makes GitHub **retry** a delivery turnip refused
 on purpose.
 
-So the refusal travels as a sentinel that the webhook layer recognises:
+So the refusal travels as a sentinel that the webhook layer recognizes:
 
 ```go
 // ErrRefused reports that a handler declined to act on a well-formed,

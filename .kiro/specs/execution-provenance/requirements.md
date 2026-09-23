@@ -195,7 +195,7 @@ the tool's, and I want neither to be able to forge the other.
 
 1. THE annotation SHALL NOT begin with `+` or `-`, which belong to the
    payload — an annotation so prefixed would be read as a change
-2. THE comment SHALL neutralise any sequence in rendered content that would
+2. THE comment SHALL neutralize any sequence in rendered content that would
    terminate the enclosing code fence, for the Execution_Transcript and for
    the tool's own Output alike
 3. THE annotation SHALL render consistently whether the Operation succeeded
@@ -211,7 +211,7 @@ widens it, so this slice closes it for both.*
 *Rationale for 6.3: `fenceFor` (`comment.go:508`) uses a `diff` fence only
 on success, so a failed Operation's block has no syntax highlighting at
 all — the annotation would look different in precisely the case a reader
-scrutinises most.*
+scrutinizes most.*
 
 ### Requirement 7: Documentation
 

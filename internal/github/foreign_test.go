@@ -25,7 +25,7 @@ func TestPullRequest_IsForeign(t *testing.T) {
 		{
 			// The URL differs in form for the same repository often
 			// enough that comparing it would produce false refusals;
-			// owner and name are what GitHub canonicalises.
+			// owner and name are what GitHub canonicalizes.
 			name: "same repository, different URL form",
 			head: Repository{Owner: "acme", Name: "infra", URL: "git@github.com:acme/infra.git"},
 			want: false,
@@ -67,7 +67,7 @@ func TestPullRequest_IsForeign(t *testing.T) {
 	}
 }
 
-// A zero base is not a licence to run anything. It should not occur —
+// A zero base is not a license to run anything. It should not occur —
 // every event carries a repository — but if it ever did, failing closed is
 // the only safe direction.
 func TestPullRequest_IsForeign_ZeroBaseStillRefuses(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 // A list rather than a flag per field: the configuration file is read from
 // the pull request's own head commit, so every setting that reaches out of
 // the repository — an identity today, pod labels or resources tomorrow —
-// needs the same gate, and a boolean per setting does not generalise.
+// needs the same gate, and a boolean per setting does not generalize.
 // Atlantis reached the same shape with `allowed_overrides`.
 //
 // Only settings the Server itself also provides belong here, because an

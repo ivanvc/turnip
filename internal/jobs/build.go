@@ -78,7 +78,7 @@ const (
 // token — the one at /var/run/secrets/kubernetes.io/serviceaccount —
 // would be accepted by any component that merely checks "is this a valid
 // token", and the Server could then replay it to the API server *as* the
-// Runner's ServiceAccount. Scoping to an audience nothing else honours
+// Runner's ServiceAccount. Scoping to an audience nothing else honors
 // makes that impossible rather than merely discouraged.
 const TokenAudience = "turnip.ivan.vc"
 
@@ -112,7 +112,7 @@ type OperationParams struct {
 	// Submodules is the Submodule_Mode the clone uses, resolved by the
 	// Server from its own default and the repository's override (and
 	// whether that override is permitted) before calling BuildJob. Empty
-	// means top-level, so a Job carrying no value still initialises
+	// means top-level, so a Job carrying no value still initializes
 	// submodules rather than silently leaving an empty directory.
 	Submodules string
 }
@@ -343,7 +343,7 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 //
 // The projection carries the Pod's identity — name and uid — in the
 // resulting token's claims, which is what lets the Server bind a caller
-// to one Operation rather than merely recognising that it is some Runner.
+// to one Operation rather than merely recognizing that it is some Runner.
 func tokenVolume() corev1.Volume {
 	return corev1.Volume{
 		Name: tokenVolumeName,

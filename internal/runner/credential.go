@@ -91,7 +91,7 @@ func fetchCloneCredential(ctx context.Context, cfg Config) (string, error) {
 
 // parseCredentialRequest reads git's key=value request. Unknown keys are
 // kept rather than rejected: git adds them over time, and a helper that
-// refuses what it does not recognise ages badly.
+// refuses what it does not recognize ages badly.
 func parseCredentialRequest(r io.Reader) map[string]string {
 	out := map[string]string{}
 	scanner := bufio.NewScanner(r)

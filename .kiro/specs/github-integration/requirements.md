@@ -296,7 +296,7 @@ an unbounded comment thread.
   *successful* result's fence `diff`, which is enough for helmfile —
   helm-diff already emits its markers at column 0, where diff
   highlighting fires. It is **not** enough for Terraform, which indents
-  its markers (`  ~ resource ...`); colouring those means hoisting the
+  its markers (`  ~ resource ...`); coloring those means hoisting the
   marker ahead of the indentation and rewriting `~` to `!`, a per-tool
   transformation of the output itself. That stays out of scope here and
   belongs with Slice 7 (Terraform & Pulumi Plugins), which is what will

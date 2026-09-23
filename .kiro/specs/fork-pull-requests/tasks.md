@@ -55,11 +55,11 @@ that would otherwise have done something.
 
 - [x] 2. Checkpoint - the field populates, and nothing refuses yet
   - `go build ./...` and `go test -race ./...` pass.
-  - Behaviour is deliberately unchanged: `IsForeign` has no caller. What
+  - Behavior is deliberately unchanged: `IsForeign` has no caller. What
     this proves is that the mapping works *before* anything depends on it
     failing closed.
   - If any existing test starts failing here, the mapping changed
-    behaviour it should not have touched — stop and find out why rather
+    behavior it should not have touched — stop and find out why rather
     than continuing to the refusal.
 
 - [x] 3. The refusal sentinel and its webhook branch

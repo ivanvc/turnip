@@ -266,7 +266,7 @@ project keeps its lock even when its diff comes back clean.
 
 ## Who can trigger what
 
-turnip recognises three roles, and does not distinguish further:
+turnip recognizes three roles, and does not distinguish further:
 
 | Role | Who |
 |---|---|

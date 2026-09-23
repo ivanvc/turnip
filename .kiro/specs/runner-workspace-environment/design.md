@@ -30,7 +30,7 @@ same way `ToolsDir` is populated from `TURNIP_TOOLS_DIR`. When it is
 empty, the Runner creates a temporary directory as it does today.
 
 Production always sets it, from the Job spec. Everything that doesn't —
-`runWith`'s existing tests, a local `go run` — keeps today's behaviour
+`runWith`'s existing tests, a local `go run` — keeps today's behavior
 with no changes, because `testRunConfig()` simply never sets the field.
 
 *Alternative considered*: a `workspaceProvider func() (dir string, cleanup
@@ -110,8 +110,8 @@ scratch.
 `Parse` uses `yaml.Unmarshal`, which silently ignores unknown keys, so a
 file still carrying `version: 1` simply has that line dropped and then
 fails because `schemaVersion` is absent. That error is clear and
-actionable, and it is the whole behaviour: turnip carries **no** code to
-recognise the old field.
+actionable, and it is the whole behavior: turnip carries **no** code to
+recognize the old field.
 
 A tombstone field bound to `yaml:"version"` would buy a marginally better
 message — naming the rename rather than the missing key. *Rejected
@@ -122,8 +122,8 @@ paid for by consumers updating their files, not by the codebase carrying
 shims.
 
 *Alternative also considered*: `yaml.Decoder` with `KnownFields(true)`,
-rejecting every unrecognised key. *Rejected because* it is a broader
-behavioural change than this slice's scope — it would reject files
+rejecting every unrecognized key. *Rejected because* it is a broader
+behavioral change than this slice's scope — it would reject files
 carrying harmless extra keys — and it would produce a generic
 unknown-field error anyway, so it does not serve this purpose either. It
 deserves its own decision rather than arriving as a side effect of a
@@ -258,9 +258,9 @@ several problems reports them together (Requirement 2.5's convention).
 
 ## Edge Cases
 
-| Case | Behaviour |
+| Case | Behavior |
 |---|---|
-| `schemaVersion` wrong *and* projects invalid | All reported together. A reader may see project errors that are artefacts of reading an unknown shape; accumulating is still preferred over hiding real problems behind one error (Requirement 4.8) |
+| `schemaVersion` wrong *and* projects invalid | All reported together. A reader may see project errors that are artifacts of reading an unknown shape; accumulating is still preferred over hiding real problems behind one error (Requirement 4.8) |
 | `env` empty or absent | No variables applied; identical to today |
 | `env` value is an empty string | Applied as an empty value, not skipped — `FOO=` is meaningful to some tools |
 | `env` value contains `$(` | Escaped to `$$(`, so the tool receives it verbatim and Kubernetes performs no substitution |
@@ -287,7 +287,7 @@ several problems reports them together (Requirement 2.5's convention).
 The schema change is breaking by design, which is what `v1alpha1`
 announces. Every turnip.yaml must gain `schemaVersion: v1alpha1` and drop
 `version: 1`. An unmigrated file fails because `schemaVersion` is absent;
-turnip carries no code to recognise the old field, by choice (Decision 4).
+turnip carries no code to recognize the old field, by choice (Decision 4).
 
 With no releases cut and one repository using turnip, the migration is a
 two-line edit in one file plus the fixtures listed in Requirement 4.10.
