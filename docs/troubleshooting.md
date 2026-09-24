@@ -31,11 +31,13 @@ error with a line number, instead of a plan.
 **Symptom**: a PR comment saying a project is locked by another PR,
 instead of a plan or apply running.
 
-- **Locked by another PR**: the comment names the PR holding the lock.
-  Either wait for that PR to merge/close (which releases the lock
-  automatically) or have someone with write access comment
-  `/turnip unlock <project>` on this PR to force it — only appropriate if
-  you're sure the other PR's plan is stale or abandoned.
+- **Locked by another PR**: the comment names the PR holding the lock,
+  and the project's check is queued with the same PR in its title. Either
+  wait for that PR to merge/close (which releases the lock automatically)
+  or have someone with write access comment `/turnip unlock <project>` on
+  this PR to force it — only appropriate if you're sure the other PR's
+  plan is stale or abandoned. Then re-plan: turnip does not re-plan on its
+  own when the lock is released.
 - **Apply rejected — no plan data / wrong PR holds the lock**: this means
   either no plan has run yet for this PR, or the lock is held by a
   *different* PR. Comment `/turnip plan <project>` (or push a commit that
@@ -89,6 +91,30 @@ which step failed; the full error and output are in the check's details.
   errors".
 - **`failed`** alone: the Runner reported a failure without saying which
   step. The details have its message.
+- **Queued, `locked by PR #5, re-plan once it's released`** (or `locked by
+  another pull request, …` when turnip couldn't tell which): not a failure.
+  Another pull request holds the project's lock, so the plan never ran.
+  Wait until that pull request applies, merges or closes, or until someone
+  unlocks it, then comment `/turnip plan` or push a commit here. turnip
+  does not re-plan by itself when the lock is released, and the queued
+  check stays queued until you do.
+- **`runner.serviceAccount is not permitted`** (or `clone.submodules is
+  not permitted`): this project's `turnip.yaml` sets an override the
+  Server does not allow, so the plan was refused. Either remove the setting
+  from `turnip.yaml`, or ask whoever operates turnip to add it to the
+  Server's `TURNIP_ALLOWED_OVERRIDES`. The details say which.
+- **`lock could not be acquired`**: turnip could not reach Redis (or
+  Redis refused the write) while taking the project's lock; the details
+  carry the error. Nothing is wrong with the change. Re-plan; if it keeps
+  happening, check Redis and the Server's logs.
+- **`operation could not be recorded`**: the lock was taken but saving
+  the Operation Record to Redis failed, so no Runner was started. Re-plan;
+  if it recurs, check Redis and the Server's logs.
+- **`Runner Job could not be built`**: the Server could not assemble the
+  Runner Job's spec, so nothing was sent to Kubernetes. The details carry
+  the error. Re-plan; if it recurs, check the Runner settings in the
+  Server's configuration (image, ServiceAccount, resources) that go into
+  the Job spec.
 
 ## The `turnip` check
 
@@ -99,15 +125,24 @@ something unexpected. What each state means is in `docs/usage.md`
 - **"Expected — Waiting for status to be reported" after a plan**: by
   design. `turnip` appears with the first apply; until then the pull
   request is under review, and the check blocks without being red. Apply
-  (or sync) each project to move it.
+  (or sync) each project to move it. A configuration problem the author
+  has to fix is the exception: it shows at once, red (the two `failure`
+  entries below).
 - **Stuck in progress after everything was applied**: look at the check's
   summary for the project that isn't done. Usually it is one planned by
   name that the change doesn't touch — it counts too — or one whose plan
-  was refused because another pull request holds its lock. Apply it, or
-  push a commit so the next plan starts from a fresh record.
+  was refused because another pull request holds its lock, listed as
+  `not planned, locked by PR #5`. Re-plan that one once the lock is
+  released — turnip won't do it for you. Apply the rest, or push a commit
+  so the next plan starts from a fresh record.
 - **`failure` titled `unsupported tool: …`**: an affected project in
   `turnip.yaml` uses a tool this server has no plugin for. Change the
   project's `uses`, or stop the change touching it.
+- **`failure` titled `not permitted: web sets runner.serviceAccount, and 1
+  more`**: an affected project asks for an override the Server doesn't
+  permit. The summary lists every refused project and its setting. Remove
+  the setting from `turnip.yaml`, or have the operator add it to
+  `TURNIP_ALLOWED_OVERRIDES`, then re-plan.
 - **Blocks every pull request in a repository**: that repository has no
   `turnip.yaml`, so turnip never reports `turnip` there. Don't require it
   on repositories that don't use turnip.

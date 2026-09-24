@@ -66,6 +66,15 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		"project", t.Project.Name,
 		"operation", t.Operation,
 	)
+	// The check run's ID is declared ahead of reject so the closure sees a
+	// Project_Check that already exists: a refusal after it was created
+	// must complete it rather than leave it in progress (check-run-refusals
+	// Requirement 4.4). Zero until then, and zero if creating it failed.
+	var (
+		checkRunID  int64
+		checkRunErr error
+	)
+
 	// The reason is what the pull request comment shows. Logged as well,
 	// because some of these are infrastructure failures (Redis, the
 	// Kubernetes API) that otherwise reach only the comment.
@@ -78,13 +87,20 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	// HandleResult's or the sweep's to record, and a late "not planned"
 	// from here could overwrite it.
 	dispatched := false
-	reject := func(reason string) github.ProjectResult {
-		log.WarnContext(ctx, "operation rejected", "reason", reason)
-		rejected := rejectedResult(t, reason)
-		if p, ok := o.plugins[t.Project.Tool]; ok && !dispatched && t.Operation == p.GetPlanOperation() {
+	reject := func(r refusal) github.ProjectResult {
+		log.WarnContext(ctx, "operation rejected", "reason", r.reason)
+		rejected := rejectedResult(t, r.reason)
+		p, ok := o.plugins[t.Project.Tool]
+		isPlan := ok && t.Operation == p.GetPlanOperation()
+		// A running check that could not be created is already noted by the
+		// deferred appendCheckRunNote; trying again here would only note the
+		// same missing check twice.
+		if !dispatched && checkRunErr == nil {
+			rejected = appendCheckRunNote(rejected, o.refusalCheck(ctx, client, repo, pr, t, isPlan, checkRunID, r))
+		}
+		if isPlan && !dispatched {
 			ref := prRef{Owner: repo.Owner, Repo: repo.Name, PRNumber: pr.Number, HeadSHA: pr.HeadSHA}
-			entry := ProjectEntry{Outcome: OutcomeNotPlanned, Operation: t.Operation, Tool: t.Project.Tool}
-			if err := o.recordOutcome(ctx, client, ref, t.Project.Name, entry); err != nil {
+			if err := o.recordOutcome(ctx, client, ref, t.Project.Name, refusalEntry(t, r)); err != nil {
 				log.ErrorContext(ctx, "recording refused plan for the aggregate check", "error", err)
 				rejected = appendAggregateNote(rejected, err)
 			}
@@ -94,14 +110,14 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 
 	p, ok := o.plugins[t.Project.Tool]
 	if !ok {
-		return reject(fmt.Sprintf("tool %q is not supported", t.Project.Tool))
+		return reject(refusal{reason: fmt.Sprintf("tool %q is not supported", t.Project.Tool)})
 	}
 
 	// Resolved before any Lock is acquired: a refused ServiceAccount must
 	// not leave a Lock held for an Operation that never runs.
 	serviceAccount, err := resolveServiceAccount(t.Project, o.runnerServiceAccount, o.allowedOverrides)
 	if err != nil {
-		return reject(err.Error())
+		return reject(overrideRefusal(err))
 	}
 
 	// Repository-scoped rather than per-Project, but resolved in the same
@@ -109,7 +125,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	// Lock held for an Operation that never runs.
 	submodules, err := resolveSubmodules(t.Clone, o.cloneSubmodules, o.allowedOverrides)
 	if err != nil {
-		return reject(err.Error())
+		return reject(overrideRefusal(err))
 	}
 
 	isPlan := t.Operation == p.GetPlanOperation()
@@ -132,10 +148,10 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	// changes, by which point the author's belief about what they applied
 	// is wrong with nothing on the page to correct it.
 	if !isPlan && len(t.ExtraArgs) > 0 {
-		return reject(fmt.Sprintf(
+		return reject(refusal{reason: fmt.Sprintf(
 			"%q does not accept arguments (got %s); it replays the scope the plan recorded. Pass arguments to %q instead.",
 			t.Operation, strings.Join(t.ExtraArgs, " "), p.GetPlanOperation(),
-		))
+		)})
 	}
 
 	var planData []byte
@@ -164,7 +180,11 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		acquired, _, err := o.locks.AcquireForPlan(ctx, key, pr.Number, pullRequestURL(repo.Owner, repo.Name, pr.Number), t.TriggeredBy)
 		if err != nil {
 			metrics.LockAttempt("rejected")
-			return reject(fmt.Sprintf("acquiring lock: %v", err))
+			return reject(refusal{
+				kind:   refusalInfrastructure,
+				reason: fmt.Sprintf("acquiring lock: %v", err),
+				title:  lockNotAcquiredTitle(),
+			})
 		}
 		if !acquired {
 			metrics.LockAttempt("rejected")
@@ -172,9 +192,13 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 			if err != nil || !status.Locked {
 				// The holder could not be determined, so the message says
 				// the Project is locked without inventing a reference.
-				return reject("locked by another PR")
+				return reject(refusal{kind: refusalLockWait, reason: "locked by another PR"})
 			}
-			rejected := reject(fmt.Sprintf("locked by PR #%d", status.PRNumber))
+			rejected := reject(refusal{
+				kind:      refusalLockWait,
+				reason:    fmt.Sprintf("locked by PR #%d", status.PRNumber),
+				blockedBy: status.PRNumber,
+			})
 			// The URL was already in the status being read; carrying it
 			// lets the comment link to the blocking pull request rather
 			// than merely naming a number (Requirement 7.2).
@@ -188,11 +212,11 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	} else {
 		locked, err := o.locks.IsLockedByPR(ctx, key, pr.Number)
 		if err != nil || !locked {
-			return reject("no lock (or a different PR's lock) is held; a new plan is required")
+			return reject(refusal{reason: "no lock (or a different PR's lock) is held; a new plan is required"})
 		}
 		status, err := o.locks.GetLockStatus(ctx, key)
 		if err != nil {
-			return reject(fmt.Sprintf("reading lock: %v", err))
+			return reject(refusal{reason: fmt.Sprintf("reading lock: %v", err)})
 		}
 		// One condition where there were two, and the refusals are worded
 		// apart on purpose: "nothing was ever recorded" and "what was
@@ -201,9 +225,9 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		switch status.State {
 		case lock.StatePlanReady:
 		case lock.StatePlanStale:
-			return reject("the recorded plan is no longer valid — a new commit, a failed plan, or an operation that did not complete has superseded it. Re-plan before retrying.")
+			return reject(refusal{reason: "the recorded plan is no longer valid — a new commit, a failed plan, or an operation that did not complete has superseded it. Re-plan before retrying."})
 		default:
-			return reject("no plan recorded; a new plan is required")
+			return reject(refusal{reason: "no plan recorded; a new plan is required"})
 		}
 		// Every mutating Operation replays the recorded plan, not just the
 		// apply: a sync that ran unscoped after a scoped diff would change
@@ -216,9 +240,9 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		plan, err := o.locks.GetPlan(ctx, key, pr.Number)
 		if err != nil {
 			if errors.Is(err, lock.ErrNoPlan) {
-				return reject("no plan recorded; a new plan is required")
+				return reject(refusal{reason: "no plan recorded; a new plan is required"})
 			}
-			return reject(fmt.Sprintf("retrieving plan: %v", err))
+			return reject(refusal{reason: fmt.Sprintf("retrieving plan: %v", err)})
 		}
 		planData = plan.Data
 		execArgs = plan.Args
@@ -231,7 +255,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	// this same scope — so closing over err would report whatever the
 	// last operation left behind (nil, on the success path) instead of
 	// this failure.
-	checkRunID, checkRunErr := client.CreateCheckRun(ctx, repo.Owner, repo.Name, github.CheckRunOptions{
+	checkRunID, checkRunErr = client.CreateCheckRun(ctx, repo.Owner, repo.Name, github.CheckRunOptions{
 		Name:    checkRunName(t.Project.Name, t.Operation),
 		HeadSHA: pr.HeadSHA,
 		Status:  "in_progress",
@@ -275,7 +299,11 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		CreatedAt:         time.Now(),
 	}
 	if err := o.records.Create(ctx, rec); err != nil {
-		return reject(fmt.Sprintf("creating operation record: %v", err))
+		return reject(refusal{
+			kind:   refusalInfrastructure,
+			reason: fmt.Sprintf("creating operation record: %v", err),
+			title:  recordNotSavedTitle(),
+		})
 	}
 
 	// Subscribe before creating the Job: publishDone must never be able to
@@ -310,21 +338,21 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	})
 	if err != nil {
 		o.deleteRecord(ctx, operationID)
-		return reject(fmt.Sprintf("building job: %v", err))
+		return reject(refusal{
+			kind:   refusalInfrastructure,
+			reason: fmt.Sprintf("building job: %v", err),
+			title:  jobNotBuiltTitle(),
+		})
 	}
 
 	created, err := o.jobs.Create(ctx, job)
 	if err != nil {
 		o.deleteRecord(ctx, operationID)
-		if checkRunID != 0 {
-			_ = client.UpdateCheckRun(ctx, repo.Owner, repo.Name, checkRunID, github.CheckRunOptions{
-				Name: checkRunName(t.Project.Name, t.Operation), Status: "completed", Conclusion: "failure",
-				Title:   jobNotCreatedTitle(),
-				Summary: "The Runner Job could not be created, so this operation never ran.",
-				Text:    fmt.Sprintf("creating Runner Job: %v", err),
-			})
-		}
-		return reject(fmt.Sprintf("creating job: %v", err))
+		return reject(refusal{
+			kind:   refusalInfrastructure,
+			reason: fmt.Sprintf("creating job: %v", err),
+			title:  jobNotCreatedTitle(),
+		})
 	}
 	dispatched = true
 	log.InfoContext(ctx, "runner job created", "operation_id", operationID, "job", created.Name)
@@ -334,7 +362,13 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 
 	<-done
 	if waitErr != nil {
-		return reject(fmt.Sprintf("waiting for result: %v", waitErr))
+		// Not this refusal's check to complete: the Job exists, and a
+		// Runner that reports a result or never starts is finished by
+		// HandleResult or the sweep, which this must not race. A Runner
+		// that started and then died without a result is finished by
+		// neither, and its check stays in progress — a known gap that
+		// needs a claim of its own, not a guess from here.
+		return reject(refusal{reason: fmt.Sprintf("waiting for result: %v", waitErr)})
 	}
 	outcome := "failure"
 	if waitResult.Success {
@@ -347,6 +381,120 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		"duration", time.Since(start).Round(time.Millisecond).String(),
 	)
 	return waitResult
+}
+
+// refusalKind is what a refusal means for the Project_Check and the
+// Pull_Request_Record. Each call site states it; nothing infers it from the
+// reason's text, which is written for people and reworded freely.
+type refusalKind int
+
+const (
+	refusalOther refusalKind = iota // no check; today's behavior
+	refusalLockWait
+	refusalConfiguration
+	refusalInfrastructure
+)
+
+type refusal struct {
+	kind      refusalKind
+	reason    string // what the comment shows, as today
+	blockedBy int    // Lock_Wait: the holder's PR number, 0 when unknown
+	setting   string // Configuration_Refusal: "runner.serviceAccount", …
+	title     string // Infrastructure_Error: its Title, from titles.go
+}
+
+// overrideRefusal classifies a refused override by its error type. Both
+// resolvers return only their "not permitted" error, so anything else is
+// left as other rather than guessed at. The setting is the same constant
+// TURNIP_ALLOWED_OVERRIDES is parsed against, so the Title and the fix
+// spell it the same way.
+func overrideRefusal(err error) refusal {
+	r := refusal{reason: err.Error()}
+	var serviceAccount *ServiceAccountNotPermittedError
+	var submodules *SubmodulesNotPermittedError
+	switch {
+	case errors.As(err, &serviceAccount):
+		r.kind, r.setting = refusalConfiguration, overrideServiceAccount
+	case errors.As(err, &submodules):
+		r.kind, r.setting = refusalConfiguration, overrideCloneSubmodules
+	}
+	return r
+}
+
+// refusalEntry is what a refused plan leaves in the Pull_Request_Record.
+// Only a Configuration_Refusal is the author's to fix, so only it is
+// recorded as refused; a Lock_Wait or turnip's own failure leaves the
+// Project not planned, which keeps the aggregate check in progress.
+func refusalEntry(t Target, r refusal) ProjectEntry {
+	entry := ProjectEntry{Outcome: OutcomeNotPlanned, Operation: t.Operation, Tool: t.Project.Tool}
+	switch r.kind {
+	case refusalLockWait:
+		entry.BlockedBy = r.blockedBy
+	case refusalConfiguration:
+		entry.Outcome, entry.Setting = OutcomeRefused, r.setting
+	}
+	return entry
+}
+
+// refusalCheck makes the Project_Check say what the refusal was. A plan
+// refused before its check existed gets one created for it, queued for a
+// Lock_Wait and failed otherwise, because nothing else would put the
+// refusal in the checks list. A check that already exists is completed as
+// failed for any Operation and any kind: leaving it in progress would claim
+// a run that is not happening (check-run-refusals Requirement 4.4). The
+// kind only chooses its Title there, so a refusal added later that forgets
+// to pick one still cannot leave the check stuck.
+//
+// The summary carries the full reason, as the comment does: GitHub rejects
+// check-run output without one, and for a refused override it holds the
+// instruction to permit it in TURNIP_ALLOWED_OVERRIDES.
+func (o *Orchestrator) refusalCheck(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, t Target, isPlan bool, checkRunID int64, r refusal) error {
+	opts := github.CheckRunOptions{
+		Name:    checkRunName(t.Project.Name, t.Operation),
+		Summary: r.reason,
+	}
+
+	if checkRunID != 0 {
+		// Never requeued, even for a Lock_Wait: GitHub does not document a
+		// check moving from in progress back to queued (design Decision 1).
+		opts.Status, opts.Conclusion = "completed", "failure"
+		switch {
+		case r.title != "":
+			opts.Title = r.title
+		case r.kind == refusalConfiguration:
+			opts.Title = notPermittedTitle(r.setting)
+		default:
+			opts.Title = notStartedTitle()
+		}
+		if err := client.UpdateCheckRun(ctx, repo.Owner, repo.Name, checkRunID, opts); err != nil {
+			slog.ErrorContext(ctx, "completing check run for refused operation", "owner", repo.Owner, "repo", repo.Name, "pr_number", pr.Number, "project", t.Project.Name, "error", err)
+			return err
+		}
+		return nil
+	}
+
+	switch r.kind {
+	case refusalLockWait:
+		opts.Status, opts.Title = "queued", lockWaitTitle(r.blockedBy)
+	case refusalConfiguration:
+		opts.Status, opts.Conclusion, opts.Title = "completed", "failure", notPermittedTitle(r.setting)
+	case refusalInfrastructure:
+		opts.Status, opts.Conclusion, opts.Title = "completed", "failure", r.title
+	default:
+		return nil
+	}
+
+	// A refused Mutating_Operation ran nothing and changed nothing, so it
+	// gets no check of its own (aggregate-check-run Requirement 4.7).
+	if !isPlan {
+		return nil
+	}
+	opts.HeadSHA = pr.HeadSHA
+	if _, err := client.CreateCheckRun(ctx, repo.Owner, repo.Name, opts); err != nil {
+		slog.ErrorContext(ctx, "creating check run for refused plan", "owner", repo.Owner, "repo", repo.Name, "pr_number", pr.Number, "project", t.Project.Name, "error", err)
+		return err
+	}
+	return nil
 }
 
 // deleteRecord is a best-effort cleanup for an Operation Record whose Job

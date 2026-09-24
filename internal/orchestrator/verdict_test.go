@@ -52,6 +52,11 @@ func TestVerdictFor(t *testing.T) {
 			status: "completed", conclusion: "failure", title: "unsupported tool: infra uses terraform",
 		},
 		{
+			name:   "a refused override fails, naming the Project and setting",
+			st:     prStatus{Projects: map[string]ProjectEntry{"web": {Outcome: OutcomeRefused, Setting: "runner.serviceAccount"}}},
+			status: "completed", conclusion: "failure", title: "not permitted: web sets runner.serviceAccount",
+		},
+		{
 			name:   "nothing affected is skipped",
 			st:     prStatus{Empty: true, Projects: map[string]ProjectEntry{}},
 			status: "completed", conclusion: "skipped", title: "no projects affected",
@@ -89,10 +94,58 @@ func TestVerdictFor_Precedence(t *testing.T) {
 	st.Empty = true
 	assert.Equal(t, "in_progress", verdictFor(st).Status)
 
-	// Unsupported outranks a failed apply, which outranks success.
-	st = statusWith(map[string]Outcome{"web": OutcomeApplyFailed})
+	// Unsupported outranks a refusal, which outranks a failed apply,
+	// which outranks success.
+	st = statusWith(map[string]Outcome{"web": OutcomeApplyFailed, "api": OutcomeApplied})
+	st.Projects["db"] = ProjectEntry{Outcome: OutcomeRefused, Setting: overrideCloneSubmodules}
 	st.Projects["infra"] = ProjectEntry{Outcome: OutcomeUnsupported, Tool: "pulumi"}
 	assert.Equal(t, "unsupported tool: infra uses pulumi", verdictFor(st).Title)
+
+	delete(st.Projects, "infra")
+	v := verdictFor(st)
+	assert.Equal(t, "failure", v.Conclusion)
+	assert.Equal(t, "not permitted: db sets clone.submodules", v.Title)
+
+	delete(st.Projects, "db")
+	v = verdictFor(st)
+	assert.Equal(t, "failure", v.Conclusion)
+	assert.Equal(t, "1/2 projects up to date, 1 failed", v.Title)
+
+	delete(st.Projects, "web")
+	assert.Equal(t, "success", verdictFor(st).Conclusion)
+}
+
+// Like the unsupported Title, the refused one names the first refused
+// Project by name and counts the rest (check-run-refusals Requirement 3.4).
+func TestVerdictFor_RefusedTitleNamesTheFirstAndCountsTheRest(t *testing.T) {
+	st := prStatus{Projects: map[string]ProjectEntry{
+		"web":   {Outcome: OutcomeRefused, Setting: "runner.serviceAccount"},
+		"api":   {Outcome: OutcomeRefused, Setting: overrideCloneSubmodules},
+		"cache": {Outcome: OutcomeRefused, Setting: "runner.serviceAccount"},
+		"db":    {Outcome: OutcomeApplied},
+	}}
+	v := verdictFor(st)
+	assert.Equal(t, "not permitted: api sets clone.submodules, and 2 more", v.Title)
+	assert.Contains(t, v.Summary, "`cache`", "the summary still lists every one")
+	assert.Contains(t, v.Summary, "`web`")
+}
+
+func TestVerdictFor_SummaryNamesTheBlockerAndTheSetting(t *testing.T) {
+	st := prStatus{Projects: map[string]ProjectEntry{
+		"web":   {Outcome: OutcomeNotPlanned, Operation: "diff", BlockedBy: 5},
+		"api":   {Outcome: OutcomeRefused, Operation: "diff", Setting: "runner.serviceAccount"},
+		"infra": {Outcome: OutcomeNotPlanned, Operation: "plan"},
+	}}
+	assert.Equal(t,
+		"- `api`: runner.serviceAccount is not permitted — change turnip.yaml, or permit it in TURNIP_ALLOWED_OVERRIDES (`turnip/diff/api`)\n"+
+			"- `infra`: not planned (`turnip/plan/infra`)\n"+
+			"- `web`: not planned, locked by PR #5 (`turnip/diff/web`)\n",
+		verdictFor(st).Summary)
+}
+
+func TestOutcomeRefused_IsNeitherDoneNorMutating(t *testing.T) {
+	assert.False(t, OutcomeRefused.done())
+	assert.False(t, OutcomeRefused.mutating())
 }
 
 // The title names the first unsupported Project by name — the same order
@@ -143,7 +196,7 @@ func TestShouldPublish(t *testing.T) {
 func TestProperty_OnlyDoneOutcomesSucceed(t *testing.T) {
 	outcomes := []Outcome{
 		OutcomeAwaitingApply, OutcomeNothingToApply, OutcomeNotPlanned,
-		OutcomeApplied, OutcomeApplyFailed, OutcomeUnsupported,
+		OutcomeApplied, OutcomeApplyFailed, OutcomeUnsupported, OutcomeRefused,
 	}
 	rapid.Check(t, func(t *rapid.T) {
 		n := rapid.IntRange(1, 6).Draw(t, "n")

@@ -234,8 +234,99 @@ credentials, no `aws eks update-kubeconfig`. *Which* ServiceAccount comes
 from `TURNIP_RUNNER_SERVICE_ACCOUNT`, or from a Project's
 `runner.serviceAccount` where the operator permits that override.
 
-Targeting any **other** cluster needs a kubeconfig, which turnip does not
-yet produce — see the roadmap's Backlog.
+Targeting any **other** cluster needs a kubeconfig. turnip does not
+generate one, and doesn't need to — see the next section.
+
+#### Targeting an EKS cluster turnip is not running in
+
+> **Not usable in turnip yet.** This needs the AWS CLI in the image the
+> tool runs in. Helmfile runs in the vendor's own image, which does not
+> carry it, and turnip cannot run a custom image yet (see the roadmap's
+> Backlog, "Running a tool build turnip does not ship"). Everything below
+> can be verified today outside turnip; the image is the one missing
+> piece.
+
+No step has to run before the tool. A kubeconfig produced by
+`aws eks update-kubeconfig` does not contain credentials: it tells the
+client to run `aws eks get-token` whenever it needs one. helm, helmfile
+and kubectl all run that command themselves, on demand. So the
+kubeconfig is generated **once**, committed to the repository, and the
+Runner only needs `aws` on its PATH and an AWS identity to sign with.
+
+**The identity.** With EKS Pod Identity, the Runner Pod already *is* the
+IAM role associated with its ServiceAccount — nothing assumes a role. The
+Pod Identity agent injects `AWS_CONTAINER_CREDENTIALS_FULL_URI` and
+`AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, and the AWS CLI's default
+credential chain uses them. The target cluster grants that role access
+through an access entry. Select the ServiceAccount with
+`TURNIP_RUNNER_SERVICE_ACCOUNT`, or with `runner.serviceAccount` where the
+override is permitted.
+
+**Generating the kubeconfig**, once, on your own machine, with any
+credentials allowed to call `eks:DescribeCluster`:
+
+```sh
+aws eks update-kubeconfig --name <cluster> --region <region> \
+  --kubeconfig ./kubeconfig --alias <cluster>
+```
+
+Repeat for each cluster; each run adds a context to the same file.
+
+**Before committing it, check the `users` section.** If a profile was in
+use when you ran the command (`--profile`, or `AWS_PROFILE` set),
+`update-kubeconfig` records it:
+
+```yaml
+users:
+- name: <cluster>
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      command: aws
+      args: [--region, <region>, eks, get-token, --cluster-name, <cluster>, --output, json]
+      env:                      # remove this block
+      - name: AWS_PROFILE
+        value: <your-local-profile>
+```
+
+Remove that `env` block: the Runner Pod has no profiles, and `get-token`
+would fail looking for one. The rest of the file — endpoints, CA
+certificates, the `exec` stanza — contains no secrets.
+
+**Pointing a Project at it**, with `runner.env`, and choosing the context
+in helmfile (`kubeContext`, under `helmDefaults` or per release):
+
+```yaml
+    runner:
+      env:
+        KUBECONFIG: kubeconfig   # relative to the Project's directory
+```
+
+The tool runs in the Project's directory, so a relative path resolves
+there. Confirm it with the first plan: helm, which helmfile runs per
+release, has to resolve it the same way.
+
+**When a role *is* assumed.** Only if a cluster must be reached as a role
+other than the Pod's — typically a cluster in another AWS account whose
+access entries don't accept the Pod's role. Add `--role-arn <arn>` to that
+user's `args`, and allow the Pod's role to assume it.
+
+**The image** needs the AWS CLI next to the tool, and a version recent
+enough to read Pod Identity's token file — older versions behave as if no
+credentials existed. EKS's Pod Identity documentation lists the minimum
+versions.
+
+**Verifying it before turnip can run it**: start a throwaway Pod in the
+cluster turnip runs in, with the Runner's ServiceAccount and any image
+that has the AWS CLI and kubectl, copy the kubeconfig in, and run:
+
+```sh
+aws sts get-caller-identity                       # the Pod Identity role
+KUBECONFIG=./kubeconfig kubectl --context <cluster> get namespaces
+```
+
+If both succeed, the only thing missing is an image with the AWS CLI for
+turnip to run the tool in.
 
 Helm plugins authenticate separately, and to different things.
 `helm-secrets` decrypting through a cloud KMS, or a chart pulled from a

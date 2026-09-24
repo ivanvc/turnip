@@ -224,8 +224,9 @@ Practically:
   superseded/unlocked) fails with a comment asking for a fresh
   `/turnip plan` first.
 - A held lock blocks *other* PRs from planning the same project — you'll
-  see a comment naming which PR holds it, and either wait for that PR to
-  merge/close (auto-releases) or have someone unlock it.
+  see a comment naming which PR holds it, and a queued check saying the
+  same. Either wait for that PR to merge/close (auto-releases) or have
+  someone unlock it, then re-plan: turnip does not re-plan for you.
 
 ### When a stored plan stops being usable
 
@@ -344,6 +345,7 @@ unapplied at merge would stay unapplied.
 | An apply (or `sync`) failed | `failure` | `2/3 projects up to date, 1 failed` |
 | `turnip.yaml` is invalid | `failure` | `invalid turnip.yaml` |
 | An affected project uses a tool this server can't run | `failure` | `unsupported tool: infra uses terraform, and 1 more` |
+| A project's `turnip.yaml` asks for an override the Server doesn't permit | `failure` | `not permitted: web sets runner.serviceAccount, and 1 more` |
 
 "Up to date" means the infrastructure matches this pull request: the
 project was applied, or its plan found nothing to apply.
@@ -352,7 +354,11 @@ Details worth knowing:
 
 - **Red means the author has something to fix.** A project waiting on
   another pull request's lock, or a plan that failed and needs re-running,
-  keeps `turnip` from passing without turning it red.
+  keeps `turnip` from passing without turning it red. For a lock, that
+  means in progress (or "Expected", before anything on the pull request
+  has been applied), with the summary listing the project as `` `web`: not planned, locked by PR #5 ``. A
+  refused override is different: changing `turnip.yaml` fixes it, so it is
+  red here and on the project's own check.
 - **Whether a no-change plan needs an apply depends on the tool.** A plan
   that finds nothing to apply counts as done — except for Helmfile, whose
   `sync` acts even when the diff is empty, so a Helmfile project always
@@ -384,10 +390,29 @@ Details worth knowing:
   | turnip failed around the tool | `clone failed`, `workspace could not be prepared`, `helmfile could not be started` |
   | the Runner Job was refused | `Runner Job could not be created` |
   | timed out | what turnip found, e.g. `Job …: container stuck (ImagePullBackOff)` |
+  | a plan waiting on another pull request's lock | `queued`: `locked by PR #5, re-plan once it's released` |
+  | `turnip.yaml` asks for an override the Server doesn't permit | `runner.serviceAccount is not permitted`, `clone.submodules is not permitted` |
+  | turnip failed before the Runner started | `lock could not be acquired`, `operation could not be recorded`, `Runner Job could not be built` |
 
   A tool's failure is reported only as its exit code: the reason is in its
   output, one click away in the check's details, and turnip does not guess
   at it.
+
+  **A queued check is not a failure.** The plan did not run because
+  another pull request holds the project's lock, which is nothing this pull
+  request's author can fix, so the check waits rather than turning red.
+  When the holder is unknown the title reads `locked by another pull
+  request, re-plan once it's released`. **turnip does not re-plan on its
+  own when the lock is released** — the lock frees when the other pull
+  request applies, merges, closes or is unlocked, and after that someone
+  has to comment `/turnip plan` (or push a commit) here. The re-plan gets a
+  new check under the same name, which replaces the queued one in the
+  checks list.
+
+  The last row is turnip's own trouble — Redis, the Operation Record, the
+  Job spec — with nothing wrong in the change. The run failed, so the
+  check is red, but a re-plan usually succeeds; see
+  `docs/troubleshooting.md`.
 - **The `turnip` check**, one per commit, once there is something to say:
   whether every plan this pull request made has been carried out. See
   "Requiring turnip before merge".

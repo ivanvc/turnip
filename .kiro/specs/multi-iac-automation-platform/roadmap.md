@@ -44,13 +44,14 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 33 | Show What Ran and With What Scope | `execution-provenance` | Complete | Slices 2, 17, 20 |
 | 34 | What a Pull Request Must Satisfy Before an Apply | `apply-requirements` | Not Started | Slices 4, 6, 20 |
 | 35 | What the Checks List Says | `check-run-titles` | Complete | Slices 6, 33, 37 |
-| 36 | A Blocked Operation Blocks the Merge, Visibly | `check-run-refusals` | Not Started | Slices 6, 32, 35, 37 |
+| 36 | A Blocked Operation Blocks the Merge, Visibly | `check-run-refusals` | Complete | Slices 6, 32, 35, 37 |
 | 37 | One Check Branch Protection Can Require | `aggregate-check-run` | Complete | Slices 6, 17 |
 | 38 | Encrypting the Runner-to-Server Channel | `runner-server-tls` | Not Started | Slice 25 |
 | 39 | Runner Pod Resources | `runner-resources` | Not Started | Slices 5, 13 |
 | 40 | Bounding How Long a Runner Runs | `runner-timeouts` | Not Started | Slices 5, 6 |
 | 41 | Runner Pods Run Without Disruption | `runner-disruption` | Not Started | Slices 5, 39, 40 |
 | 42 | The Workspace on a Per-Runner Volume | `runner-workspace-volume` | Not Started | Slices 12, 39 |
+| 43 | Runner Settings Shared Across Projects | `runner-defaults` | Not Started | Slices 13, 16 |
 
 ## Slice Details
 
@@ -2468,14 +2469,29 @@ their own diff when the obstacle is somebody else's pull request.
 
 | Refusal | Means | Reports |
 |---|---|---|
-| locked by another pull request | **not yet** — succeeds once that merges | `queued`, reason and remedy in the title |
-| unsupported tool, refused override | **not without changing this pull request** | `failure` — the configuration really is wrong |
+| locked by another pull request | **not yet** — succeeds once that Lock is released | `queued`, reason and remedy in the title |
+| refused override | **not without changing this pull request** | `failure` — the configuration really is wrong |
+| turnip's own error (Redis, the Operation Record, building the Job) | **the run failed**, not the change | `failure` on the Project_Check, cause named; `turnip` stays in progress |
 | no plan recorded, on a mutating Operation | the author asked for the wrong thing | nothing; an apply is not the gate |
+
+**Reconciled 2026-09-23** against Slices 35 and 37 (spec in
+`check-run-refusals/`). The unsupported-tool row moved to Slice 37, which
+handles it on the automatic path — a Project with no Plugin has no
+Operation, so no Project_Check name exists for it. A refused override also
+fails the `turnip` check, through a new **refused** Outcome, as Slice 37
+treats an unsupported tool. turnip's own errors gained a row, and with it
+a fix: two of them (`execute.go:278`, `:313`) left a Project_Check in
+progress forever. Other GitOps IaC tools report a Lock held elsewhere as
+a failure; this slice keeps `queued`, by Slice 37's rule that red means
+the author has something to fix. A later plan replaces the queued check
+with a new run, rather than turnip tracking and updating it.
 
 A `queued` check sits until something re-triggers the plan. turnip does
 not re-plan when another pull request's Lock frees, so the title has to
-say what the reader must do — "locked by PR #5; re-plan once it merges" —
-rather than leaving them watching a spinner that will never turn.
+say what the reader must do — "locked by PR #5, re-plan once it's
+released" — rather than leaving them watching a spinner that will never
+turn. "Released" rather than "merges": a Lock is also released when its
+holder applies, closes, or is unlocked.
 
 **Never created for a pull request that is not open.** Check runs attach
 to a *commit*, not a pull request, so on a merge-commit strategy the head
@@ -2938,6 +2954,31 @@ not what is in it.
 
 ---
 
+### Slice 43: Runner Settings Shared Across Projects (`runner-defaults`)
+
+**Goal**: A top-level `runner:` block, merged into each Project's, so a
+Project states only what differs.
+
+**Why now** (2026-09-23): the EKS recipe in `docs/configuration.md`
+selects the target cluster with `KUBECONFIG` in `runner.env`. A Project
+that lacks it does not fail — helm falls back to in-cluster configuration
+and deploys to the cluster turnip runs in. YAML anchors can share the
+block today, but a Project writing its own `env:` without `<<: *env`
+drops `KUBECONFIG` silently, so the hazard is one forgotten line away.
+Follows Slice 36, which closes out the check-run slices first.
+
+**Delivers**: `serviceAccount` by precedence (Project, then repository,
+then Server); `env` merged per variable; the same validation at both
+levels; the `runner.serviceAccount` gate applied wherever the value is
+written, with the refusal naming which block set it; and a test that
+fails if a Runner field is added without a stated merge rule, since
+Slices 31 and 39 both add one.
+
+Promoted from the Backlog entry "A top-level `runner:` block, merged into
+each Project's", which carries the original analysis.
+
+---
+
 ## Backlog (not yet sliced)
 
 Recorded so they aren't rediscovered the hard way. None of these has a
@@ -3055,6 +3096,15 @@ security model; it should land **before** this feature, not with it.
 
 Adjacent to this Backlog's floating-tool-version entry, which asks which
 *version* resolves rather than which image supplies it.
+
+**A second motivating case (2026-09-23)**: reaching an EKS cluster turnip
+is not running in needs `aws` on the tool's PATH, and nothing else — see
+"Authenticating to a cluster turnip is not running in". The vendor's
+helmfile image has no AWS CLI, so an operator-built image
+(`FROM ghcr.io/helmfile/helmfile` plus the CLI) is the whole remaining gap.
+Under `runInImage` that is a different image reference in the same place
+(`internal/jobs/build.go`), since the runner binary is already copied into
+whatever image the tool runs in.
 
 ### A stated security model, so opt-in danger is not reported as a vulnerability
 
@@ -3362,6 +3412,9 @@ turnip has no UI, no settings persistence, and no authentication for one.
 
 ### A top-level `runner:` block, merged into each Project's
 
+**Sliced as Slice 43 (`runner-defaults`) on 2026-09-23.** Kept here for
+the analysis that led to it.
+
 `TURNIP_RUNNER_SERVICE_ACCOUNT` carries a Server-wide default today, and a
 Project overrides it with `runner.serviceAccount`, gated through
 `TURNIP_ALLOWED_OVERRIDES` (Slice 13). `runner.env` is per-Project only,
@@ -3438,6 +3491,34 @@ up when it stopped building tool images.
 Not urgent while the pilot targets the cluster turnip itself runs in,
 which is also the case that needs no credentials at all.
 
+**Update 2026-09-23: neither shape is needed for EKS, and probably not
+elsewhere.** `aws eks update-kubeconfig` does not put credentials in the
+kubeconfig; it writes an `exec` stanza telling the client to run
+`aws eks get-token` whenever it needs one, and client-go — so helm,
+helmfile and kubectl — runs it on demand. The kubeconfig is therefore
+generated once, committed to the repository, and selected with
+`runner.env` (`KUBECONFIG`). With EKS Pod Identity the Pod already holds
+the role's credentials, so nothing assumes a role either, except to reach
+a cluster as a *different* role, which is `--role-arn` in the same stanza.
+The recipe is in `docs/configuration.md`, "Targeting an EKS cluster turnip
+is not running in".
+
+That removes the pre-command's motivating case. Other providers ship the
+same kind of client-go exec plugin (`gke-gcloud-auth-plugin`, `kubelogin`),
+so the declarative option is likely unnecessary too — not verified for
+each.
+
+What remains is only that `aws` has to be on the tool's PATH, which is the
+Backlog entry "Running a tool build turnip does not ship": an
+operator-allowlisted image. For how other GitOps IaC tools handle the
+pre-command side, if it is ever revisited: commands defined by the
+repository are off by default and need an explicit server-side opt-in,
+and pre-run hooks are definable only in server-side configuration. The
+same reason applies here with more force — turnip plans automatically,
+with no authorization check, on any pull request that is not from a fork,
+so a pre-command read from `turnip.yaml` would run PR-authored code with
+the Runner's credentials.
+
 ### A failed Operation's output loses the transcript's highlighting
 
 Slice 33's Decision 8 says a failure renders in the same `diff` fence as
@@ -3472,6 +3553,29 @@ Options, none chosen:
 
 Small either way; what it needs is the decision, then Decision 8 and the
 test brought into agreement with it.
+
+### A Runner that dies after starting leaves its check in progress
+
+Found by Slice 36's review (2026-09-23), not fixed there because it is not
+a refusal; the full analysis is in `check-run-refusals/design.md`, "A known
+gap: a Runner that dies after starting".
+
+A Runner that sends its first log line marks its Operation Record started.
+If it then dies without sending a result — OOMKilled, evicted, the stream
+cut — nothing completes its Project_Check. The RPC handler returns the
+stream's error without calling `HandleResult`; the sweep claims only
+records that never started (`ClaimForTimeout`, `record.go:222`); and
+`executeOne` waits out `operationTTL`, by which time the record has
+expired too. The check stays in progress indefinitely, the Operation's
+Outcome never reaches the Pull_Request_Record, and whatever the Lock was
+waiting for never arrives.
+
+`executeOne` cannot simply complete the check when its wait ends: a result
+can still arrive, and completing without the record's atomic claim races
+`HandleResult`. The fix needs a claim for a started Operation that has
+gone quiet — a liveness signal from the Runner, or the sweep reading the
+Job's own state for started records. Adjacent to Slice 40 (bounding how
+long a Runner runs), which may be the natural home for it.
 
 ### An intermittent failure in the orchestrator's property tests
 

@@ -31,7 +31,8 @@ func (v aggregateVerdict) completed() bool {
 //
 // `failure` is reserved for something the pull request's author can fix
 // by changing it (Requirements 5.6, 7): a failed apply, an invalid
-// turnip.yaml, an affected Project whose tool this Server cannot run. A
+// turnip.yaml, an affected Project whose tool this Server cannot run, or
+// one asking for an override this Server does not permit. A
 // plan awaiting its apply, a Project waiting on another pull request's
 // Lock, a plan that has not yet succeeded — none of those is red, because
 // reviewers skip pull requests showing a failure.
@@ -43,13 +44,15 @@ func verdictFor(st prStatus) aggregateVerdict {
 	sort.Strings(names)
 
 	done, failed := 0, 0
-	var unsupported []string
+	var unsupported, refused []string
 	for _, name := range names {
 		switch o := st.Projects[name].Outcome; {
 		case o.done():
 			done++
 		case o == OutcomeUnsupported:
 			unsupported = append(unsupported, name)
+		case o == OutcomeRefused:
+			refused = append(refused, name)
 		case o == OutcomeApplyFailed:
 			failed++
 		}
@@ -76,6 +79,15 @@ func verdictFor(st prStatus) aggregateVerdict {
 		return aggregateVerdict{
 			Status: "completed", Conclusion: "failure",
 			Title:   unsupportedTitle(first, st.Projects[first].Tool, len(unsupported)-1),
+			Summary: summary,
+		}
+	case len(refused) > 0:
+		// After unsupported only so one Title is chosen when both occur:
+		// each is a configuration failure, and either Title is true.
+		first := refused[0]
+		return aggregateVerdict{
+			Status: "completed", Conclusion: "failure",
+			Title:   refusedTitle(first, st.Projects[first].Setting, len(refused)-1),
 			Summary: summary,
 		}
 	case failed > 0:
@@ -128,6 +140,9 @@ func outcomeText(e ProjectEntry) string {
 	case OutcomeNothingToApply:
 		return "planned, nothing to apply"
 	case OutcomeNotPlanned:
+		if e.BlockedBy != 0 {
+			return fmt.Sprintf("not planned, locked by PR #%d", e.BlockedBy)
+		}
 		return "not planned"
 	case OutcomeApplied:
 		return "applied"
@@ -135,6 +150,8 @@ func outcomeText(e ProjectEntry) string {
 		return "apply failed"
 	case OutcomeUnsupported:
 		return fmt.Sprintf("tool `%s` is not supported by this server — fix turnip.yaml", e.Tool)
+	case OutcomeRefused:
+		return fmt.Sprintf("%s is not permitted — change turnip.yaml, or permit it in TURNIP_ALLOWED_OVERRIDES", e.Setting)
 	default:
 		return string(e.Outcome)
 	}

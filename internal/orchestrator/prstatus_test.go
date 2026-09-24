@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -130,4 +131,37 @@ func TestPRStatus_MetadataMarks(t *testing.T) {
 	assert.True(t, st.Empty)
 	assert.False(t, st.Mutated)
 	assert.Equal(t, int64(2), st.Version)
+}
+
+// An entry written before BlockedBy and Setting existed decodes as it
+// did, and one without them is written as it was: both are omitempty
+// (check-run-refusals Requirements 1.4, 3.3).
+func TestProjectEntry_WithoutTheNewFieldsDecodesUnchanged(t *testing.T) {
+	old := `{"outcome":"not_planned","operation":"diff","tool":"helmfile"}`
+
+	var entry ProjectEntry
+	require.NoError(t, json.Unmarshal([]byte(old), &entry))
+	assert.Equal(t, ProjectEntry{Outcome: OutcomeNotPlanned, Operation: "diff", Tool: "helmfile"}, entry)
+
+	written, err := json.Marshal(entry)
+	require.NoError(t, err)
+	assert.JSONEq(t, old, string(written))
+	assert.NotContains(t, string(written), "blocked_by")
+	assert.NotContains(t, string(written), "setting")
+}
+
+func TestPRStatus_BlockedByAndSettingRoundTrip(t *testing.T) {
+	store := newRecordStore(newTestRedisClient(t))
+	ctx := context.Background()
+
+	blocked := ProjectEntry{Outcome: OutcomeNotPlanned, Operation: "diff", BlockedBy: 5}
+	refused := ProjectEntry{Outcome: OutcomeRefused, Operation: "diff", Setting: "runner.serviceAccount"}
+	require.NoError(t, store.WriteOutcome(ctx, testRef, "web", blocked))
+	require.NoError(t, store.WriteOutcome(ctx, testRef, "api", refused))
+
+	st, err := store.ReadPRStatus(ctx, testRef)
+	require.NoError(t, err)
+	assert.Equal(t, blocked, st.Projects["web"])
+	assert.Equal(t, refused, st.Projects["api"])
+	assert.False(t, st.Mutated, "a refusal ran nothing")
 }

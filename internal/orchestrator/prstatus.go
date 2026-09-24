@@ -33,6 +33,10 @@ const (
 	OutcomeApplied        Outcome = "applied"
 	OutcomeApplyFailed    Outcome = "apply_failed"
 	OutcomeUnsupported    Outcome = "unsupported"
+	// OutcomeRefused is a Configuration_Refusal: the Project asked for an
+	// override this Server does not permit (check-run-refusals
+	// Requirement 3.3). Like unsupported, only the author can fix it.
+	OutcomeRefused Outcome = "refused"
 )
 
 // done reports whether the Project needs nothing further before merge.
@@ -89,11 +93,16 @@ func prStatusKey(ref prRef) string {
 
 // ProjectEntry is one Project's field in the record. Operation and Tool
 // are carried so the summary can name the Project_Check and, for an
-// unsupported Project, the tool this Server cannot run.
+// unsupported Project, the tool this Server cannot run. BlockedBy (on
+// not_planned: the pull request holding the Lock, when known) and Setting
+// (on refused: the override not permitted) are omitempty, so an entry
+// written before they existed decodes unchanged.
 type ProjectEntry struct {
 	Outcome   Outcome `json:"outcome"`
 	Operation string  `json:"operation,omitempty"`
 	Tool      string  `json:"tool,omitempty"`
+	BlockedBy int     `json:"blocked_by,omitempty"`
+	Setting   string  `json:"setting,omitempty"`
 }
 
 // Field names. Project fields and metadata fields have disjoint prefixes,

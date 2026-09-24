@@ -95,6 +95,58 @@ func unsupportedTitle(project, tool string, more int) string {
 	return title
 }
 
+// lockWaitTitle is a Lock_Wait's: the plan is queued behind another pull
+// request, not failed, so the title says who holds the Lock and what to
+// do once it is released. The holder is named when the Lock records it;
+// 0 means it could not be read, and a PR number is never guessed.
+func lockWaitTitle(blockedBy int) string {
+	if blockedBy > 0 {
+		return fmt.Sprintf("locked by PR #%d, re-plan once it's released", blockedBy)
+	}
+	return "locked by another pull request, re-plan once it's released"
+}
+
+// notPermittedTitle is a Configuration_Refusal's Project_Check: the
+// setting named exactly as TURNIP_ALLOWED_OVERRIDES spells it, so the fix
+// can be found from the title alone.
+func notPermittedTitle(setting string) string {
+	return setting + " is not permitted"
+}
+
+// refusedTitle is the turnip check's when a Project was refused: like
+// unsupportedTitle, it names the first and counts the rest, because the
+// title is one line and the summary beneath lists them all.
+func refusedTitle(project, setting string, more int) string {
+	title := fmt.Sprintf("not permitted: %s sets %s", project, setting)
+	if more > 0 {
+		title += fmt.Sprintf(", and %d more", more)
+	}
+	return title
+}
+
+// lockNotAcquiredTitle, recordNotSavedTitle and jobNotBuiltTitle are
+// Infrastructure_Errors: turnip's own failures before the tool ran. Like
+// jobNotCreatedTitle, each names the step, so none reads like the tool
+// rejecting the author's change.
+func lockNotAcquiredTitle() string {
+	return "lock could not be acquired"
+}
+
+func recordNotSavedTitle() string {
+	return "operation could not be recorded"
+}
+
+func jobNotBuiltTitle() string {
+	return "Runner Job could not be built"
+}
+
+// notStartedTitle completes a check that already exists for a refusal
+// that names no step of its own. Every site today names one; this is the
+// fallback that keeps a later site from leaving the check in progress.
+func notStartedTitle() string {
+	return "operation could not be started"
+}
+
 func noProjectsAffectedTitle() string {
 	return "no projects affected"
 }
