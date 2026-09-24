@@ -17,6 +17,7 @@ import (
 	"github.com/ivanvc/turnip/internal/github"
 	"github.com/ivanvc/turnip/internal/jobs"
 	"github.com/ivanvc/turnip/internal/lock"
+	"github.com/ivanvc/turnip/internal/plugin"
 )
 
 // fakeLockManager is a scriptable lock.LockManager. Every method defaults
@@ -586,6 +587,8 @@ func TestExecuteOne_JobCreationErrorIsRejectedAndRecordCleanedUp(t *testing.T) {
 	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
 	assert.False(t, result.Success)
 	assert.Equal(t, 1, client.updateCheckRunCalled)
+	assert.Equal(t, "Runner Job could not be created", client.updatedCheckRun.Title,
+		"turnip's own failure is named, not reported like the tool rejecting the change")
 
 	keys, err := o.records.ScanOperationKeys(context.Background())
 	require.NoError(t, err)
@@ -722,15 +725,36 @@ func TestExecuteTargets_RunsConcurrentlyAndWaitsForAll(t *testing.T) {
 	assert.Len(t, results, 2)
 }
 
-func TestExecuteOne_CheckRunCreatedWithInProgressTitle(t *testing.T) {
+// An apply's running title says what it is about to change, from the plan
+// the Lock recorded (check-run-titles Requirement 3.2).
+func TestExecuteOne_ApplyCheckRunSaysWhatItWillChange(t *testing.T) {
+	locks := &fakeLockManager{
+		getPlanFunc: func(ctx context.Context, projectKey string, prNumber int) (lock.PlanRecord, error) {
+			return lock.PlanRecord{Args: []string{"-l", "name=web"}, Summary: plugin.ChangeSummary{Add: 1, Change: 4, Destroy: 2}}, nil
+		},
+	}
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
+	o, _ := testOrchestrator(t, locks, jobsClient)
+	client := &fakeExecuteClient{}
+
+	target := testHelmfileTarget()
+	target.Operation = "apply"
+	o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+
+	assert.Equal(t, "running the recorded plan, +1 ~4 -2, -l name=web", client.createdCheckRun.Title)
+}
+
+func TestExecuteOne_CheckRunCreatedWithRunningTitle(t *testing.T) {
 	locks := &fakeLockManager{}
 	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
 	o, _ := testOrchestrator(t, locks, jobsClient)
 	client := &fakeExecuteClient{}
 
-	o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+	target := testHelmfileTarget()
+	target.ExtraArgs = []string{"-l", "name=api"}
+	o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
 
-	assert.Equal(t, "in progress", client.createdCheckRun.Title)
+	assert.Equal(t, "running, -l name=api", client.createdCheckRun.Title)
 	assert.NotEmpty(t, client.createdCheckRun.Summary, "GitHub rejects check-run output without a summary")
 	assert.Equal(t, testPR.HeadSHA, client.createdCheckRun.HeadSHA)
 }

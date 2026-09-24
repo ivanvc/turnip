@@ -322,11 +322,14 @@ func TestHandleResult_DeletesRecordAfterFinalizing(t *testing.T) {
 
 // The check run's name is its stable identity — required status checks
 // and branch protection match on it — so an Operation's outcome is
-// carried by the title and summary, which is what the checks tab renders
-// beneath the name.
-func TestCheckRunResultTitle(t *testing.T) {
-	assert.Equal(t, "success", checkRunResultTitle(true))
-	assert.Equal(t, "failure", checkRunResultTitle(false))
+// carried by the title, which the checks tab shows beside the name: what
+// changed, or which step failed (check-run-titles Requirements 2 and 4).
+func TestResultTitle(t *testing.T) {
+	rec := &OperationRecord{Project: config.Project{Tool: "helmfile"}, ExtraArgs: []string{"-l", "name=api"}}
+
+	assert.Equal(t, "+0 ~2 -0, -l name=api", resultTitle(rec, rpc.OperationResult{Success: true, Changes: rpc.ChangeSummary{Change: 2}}))
+	assert.Equal(t, "helmfile exited 1", resultTitle(rec, rpc.OperationResult{ExitCode: 1, FailureCategory: rpc.FailureToolExited}))
+	assert.Equal(t, "clone failed", resultTitle(rec, rpc.OperationResult{ExitCode: -1, FailureCategory: rpc.FailureCloneFailed}))
 }
 
 func TestCheckRunResultSummary(t *testing.T) {
@@ -350,21 +353,23 @@ func TestHandleResult_SuccessCheckRunCarriesOutcomeInTitleAndSummary(t *testing.
 		Changes: rpc.ChangeSummary{Change: 2},
 	}))
 
-	assert.Equal(t, "success", client.updatedCheckRun.Title)
+	assert.Equal(t, "+0 ~2 -0", client.updatedCheckRun.Title)
 	assert.Contains(t, client.updatedCheckRun.Summary, "change: 2")
 	assert.Contains(t, client.updatedCheckRun.Name, "diff", "the name stays the stable identity")
 }
 
-func TestHandleResult_FailureCheckRunTitleSaysFailure(t *testing.T) {
+func TestHandleResult_FailureCheckRunTitleNamesTheFailure(t *testing.T) {
 	o, client := testResultOrchestrator(t, &fakeLockManager{})
 	createTestRecord(t, o, "op-2", "diff")
 
 	require.NoError(t, o.HandleResult(context.Background(), "op-2", rpc.OperationResult{
-		Success: false,
-		Output:  "helmfile diff exited 1",
+		Success:         false,
+		Output:          "helmfile diff exited 1",
+		ExitCode:        1,
+		FailureCategory: rpc.FailureToolExited,
 	}))
 
-	assert.Equal(t, "failure", client.updatedCheckRun.Title)
+	assert.Equal(t, "helmfile exited 1", client.updatedCheckRun.Title)
 	assert.Contains(t, client.updatedCheckRun.Summary, "failed")
 	assert.Contains(t, client.updatedCheckRun.Text, "helmfile diff exited 1")
 }

@@ -441,12 +441,9 @@ func buildDetailSectionPart(r ProjectResult, chunk string, part, total int) stri
 // no usable counts — presenting its zeroes would make a run that never
 // completed look like one that planned nothing.
 func summaryLine(r ProjectResult) string {
-	detail := "no changes"
-	switch {
-	case !r.Success:
-		detail = "failed"
-	case r.Changes.Any():
-		detail = fmt.Sprintf("+%d ~%d -%d", r.Changes.Add, r.Changes.Change, r.Changes.Destroy)
+	detail := "failed"
+	if r.Success {
+		detail = ChangeText(r.Changes)
 	}
 
 	line := fmt.Sprintf("%s <code>%s</code>: %s, %s",
@@ -475,15 +472,37 @@ const scopeMarkerWidth = 40
 // "</code>" or a backtick from breaking out. Truncated before escaping, so
 // the cut can never land inside an entity such as "&amp;".
 func scopeMarker(args []string) string {
+	text := ScopeText(args)
+	if text == "" {
+		return ""
+	}
+	return "<code>" + html.EscapeString(text) + "</code>"
+}
+
+// ChangeText renders an Operation's counts as the comment's summary line
+// does: "+1 ~4 -2", or "no changes" when all are zero. Plain text, shared
+// with check run titles so the same outcome reads the same in the comment
+// and in the checks list.
+func ChangeText(c ChangeCounts) string {
+	if !c.Any() {
+		return "no changes"
+	}
+	return fmt.Sprintf("+%d ~%d -%d", c.Add, c.Change, c.Destroy)
+}
+
+// ScopeText renders the arguments an Operation ran with, truncated to the
+// width the comment's scope marker uses. Plain text: the comment escapes
+// and wraps it for <summary>, and a check run title uses it as-is, since a
+// title is not HTML.
+func ScopeText(args []string) string {
 	if len(args) == 0 {
 		return ""
 	}
-
 	joined := strings.Join(args, " ")
 	if runes := []rune(joined); len(runes) > scopeMarkerWidth {
 		joined = string(runes[:scopeMarkerWidth-1]) + "…"
 	}
-	return "<code>" + html.EscapeString(joined) + "</code>"
+	return joined
 }
 
 // nextSteps prints the commands that act on this Project alone.

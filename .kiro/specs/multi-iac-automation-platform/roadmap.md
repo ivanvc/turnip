@@ -43,7 +43,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 32 | Refuse a Closed Pull Request, Plan a Reopened One | `closed-pull-requests` | Complete | Slices 4, 6 |
 | 33 | Show What Ran and With What Scope | `execution-provenance` | Complete | Slices 2, 17, 20 |
 | 34 | What a Pull Request Must Satisfy Before an Apply | `apply-requirements` | Not Started | Slices 4, 6, 20 |
-| 35 | What the Checks List Says | `check-run-titles` | Not Started | Slices 6, 33, 37 |
+| 35 | What the Checks List Says | `check-run-titles` | Complete | Slices 6, 33, 37 |
 | 36 | A Blocked Operation Blocks the Merge, Visibly | `check-run-refusals` | Not Started | Slices 6, 32, 35, 37 |
 | 37 | One Check Branch Protection Can Require | `aggregate-check-run` | Complete | Slices 6, 17 |
 | 38 | Encrypting the Runner-to-Server Channel | `runner-server-tls` | Not Started | Slice 25 |
@@ -2353,17 +2353,48 @@ exactly the condensed reason this wants — "Job X: container stuck
 (ImagePullBackOff)" — and the title says `timed out`.
 
 **Delivers**: a shared formatter for the title, reusing the one-line shape
-Slice 33 settled for the comment's summary line, applied at the four sites
-that set one (`execute.go:198`, `execute.go:284`, `result.go:93`,
-`sweep.go:104`).
+Slice 33 settled for the comment's summary line (`summaryLine`,
+`internal/github/comment.go` — `+1 ~4 -2`, `no changes`, `failed`, then the
+scope marker), applied at every site that sets one.
 
-| State | Today | After |
-|---|---|---|
-| plan with changes | `success` | `+1 ~4 -2` |
-| plan with none | `success` | `no changes` |
-| scoped plan | `success` | `+0 ~1 -0, -l name=api` |
-| timed out | `timed out` | the diagnostic already built |
-| failed | `failure` | `exit N`, or `ErrorMessage` when set |
+**Project_Check sites** (`turnip/<operation>/<project>`, reconciled
+2026-09-23 against the code after Slice 37):
+
+| Site | State | Today | After |
+|---|---|---|---|
+| `result.go:93` | plan with changes | `success` | `+1 ~4 -2` |
+| `result.go:93` | plan with none | `success` | `no changes` |
+| `result.go:93` | scoped plan | `success` | `+0 ~1 -0, -l name=api` |
+| `result.go:93` | failed | `failure` | by Failure_Category: `helmfile exited 1`, `clone failed`, … |
+| `sweep.go:111` | timed out | `timed out` | the diagnostic already built |
+| `execute.go:317` | Job could not be created | `failure` | `Runner Job could not be created` |
+| `execute.go:233` | created, running | `in progress` | `running`; for an apply, `running the recorded plan, +1 ~4 -2` |
+
+**The Aggregate_Check site** — `verdictFor` in `verdict.go`, which Slice 37
+wrote with placeholder wording and explicitly left for this slice to
+settle. It already counts rather than summarizes, and that shape stays:
+
+| Verdict | Today |
+|---|---|
+| in progress / success | `1/2 projects applied` |
+| an apply failed | `1/2 projects applied; an apply failed` |
+| unsupported tool | `unsupported tool: infra uses terraform` |
+| nothing affected | `no projects affected` |
+| invalid configuration | `invalid turnip.yaml` |
+
+What this slice decides for it: whether "applied" is the right verb when
+a Project counted as done had nothing to apply, and how the aggregate's
+count and the comment's verdict line read as the same voice. The
+aggregate's *summary* — one line per Project, naming its Project_Check —
+is in scope only as far as its per-Project text reuses the same formatter.
+
+**Settled 2026-09-23** (spec in `check-run-titles/`): the aggregate counts
+Projects **up to date** (`1/2 projects up to date, 1 failed`), and an
+unsupported-tool title names the first Project and counts the rest. A
+failed Operation's title names its **Failure_Category**, which the Runner
+does not report today — so this slice adds a field to the Runner's result
+in `operation.proto` rather than parsing error messages, which would break
+the first time one is reworded. That makes it larger than a wording sweep.
 
 **The name is an identity, not a label.** None of this may move into the
 check run's *name*: branch protection's required-status-checks match on
@@ -2382,15 +2413,16 @@ in a list is what people act on without clicking. Per-Plugin extraction is
 the only thing that would reach Prow's quality and is a `ActsWithoutChanges`-shaped
 concept for whoever wants it.
 
-**Follows Slice 37, deliberately.** This slice is a sweep: every site
-that sets a title moves onto one formatter. Run before Slice 37 and it
-sweeps four sites, after which Slice 37 adds a fifth — the aggregate
-check — that its author has to remember to format the same way. Run after,
-and the sweep covers everything that exists. The dependency is about the
-gap left behind rather than about code that will not compile.
+**Follows Slice 37, deliberately — and now unblocked.** This slice is a
+sweep: every site that sets a title moves onto one formatter. It was held
+until Slice 37 so the sweep would cover the aggregate check rather than
+leave a fifth site formatted differently. Slice 37 landed with its titles
+as placeholders for exactly that reason.
 
-**Confirm before implementing**: the `output.title` length cap, for
-truncation. Not asserted here because it was not checked.
+**Title length, checked**: GitHub documents no limit for `output.title`,
+only 65,535 bytes for `summary` and `text`. A title is cut off visually on
+one line, which is why the unsupported-tool title names one Project and
+counts the rest.
 
 ---
 
@@ -3440,6 +3472,58 @@ Options, none chosen:
 
 Small either way; what it needs is the decision, then Decision 8 and the
 test brought into agreement with it.
+
+### An intermittent failure in the orchestrator's property tests
+
+A test in `internal/orchestrator` fails rarely, only under a loaded full
+`go test -race ./...` run, and has twice been noted and set aside without
+enough recorded to tell whether it is one flake or several. This entry is
+the record to add to, so the next sighting builds on the last.
+
+**Sightings.**
+
+| When | Test | What was kept |
+|---|---|---|
+| Slice 11 (`ha-validation`), task 2 | "the package's pre-existing `TestProperty_*` suite" — not named | nothing further; 10 clean reruns |
+| 2026-09-23, Slice 35 (`check-run-titles`), task 7 | `TestProperty_RunnerCreationPerTriggeredProject` | the assertion kind, below; rapid's fail file, since deleted |
+
+**What the 2026-09-23 failure showed.** testify's `Received unexpected
+error` — a `NoError` assertion — and not `Condition never satisfied`, so
+the fake Runner's one-second wait for a subscriber was *not* what failed.
+rapid then reported it as flaky: replaying the recorded input passed, so
+it depends on timing, not on the generated Projects. It did not reproduce
+in nine full-suite runs, 18,000 isolated iterations, or 12,000 iterations
+across four concurrent `-cpu 1` copies. The error value itself was not
+kept.
+
+**The leading hypothesis, unconfirmed.** In that test the only `NoError`
+that can fail is the one on `publishDone` inside `fakeJobCreator.Create`'s
+goroutine (`execute_test.go`). `publishDone` is a single `PUBLISH`, and
+Redis can deliver the message to the subscriber before the publisher reads
+its own reply. The subscriber's receipt ends `executeOne`, the last one
+ends the rapid iteration, and the iteration's cleanup closes the Redis
+client (`newPropertyRedisClient`) — so a `PUBLISH` whose reply is still in
+flight returns "client is closed". If so, it is a test-harness race, not a
+product bug: in the Server, the publisher (`HandleResult`) and the
+subscriber are independent, and nothing closes the client between them.
+
+**What confirms or rules it out**: the error text. "redis: client is
+closed" (or a closed-connection error) confirms it; anything else rules it
+out. That is why the next sighting must keep the full output.
+
+**When it happens again:**
+
+1. Keep the whole `go test` output — the failing test's name and the error
+   value, not only the assertion kind.
+2. Keep rapid's fail file (`internal/orchestrator/testdata/rapid/…`) until
+   the sighting is written up here; it is untracked, so it does not end up
+   in a commit by accident, but deleting it loses the seed.
+3. Add a row to the table above, whether or not it looks like the same
+   test.
+
+**If confirmed**, the fix is in the fake, not the Server: wait for the
+publisher goroutine before the iteration's cleanup runs, or stop asserting
+on a publish whose outcome the test does not depend on.
 
 ## Notes
 

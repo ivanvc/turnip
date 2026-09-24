@@ -344,7 +344,7 @@ func TestHA_AggregateCheckAcrossInstancesCarriesEveryResult(t *testing.T) {
 			cur := run(t, true)
 			require.NotNil(t, cur)
 			assert.Equal(t, "success", cur.Conclusion)
-			assert.Equal(t, "2/2 projects applied", cur.Title)
+			assert.Equal(t, "2/2 projects up to date", cur.Title)
 		})
 		t.Run(fmt.Sprintf("one-fails-%d", i), func(t *testing.T) {
 			cur := run(t, false)

@@ -70,12 +70,13 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 		}
 	}
 
+	diagnostic := timeoutDiagnostic(rec.JobName, status)
 	pr := github.ProjectResult{
 		ProjectName: rec.Project.Name,
 		Tool:        rec.Project.Tool,
 		Operation:   rec.Operation,
 		Success:     false,
-		Output:      timeoutDiagnostic(rec.JobName, status),
+		Output:      diagnostic,
 		// A timed-out Operation leaves its Lock held, and until this slice
 		// nothing here said so: Locked was never set, so it defaulted to
 		// false and the Project vanished from the comment's footer and was
@@ -108,7 +109,7 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 			Name:       checkRunName(rec.Project.Name, rec.Operation),
 			Status:     "completed",
 			Conclusion: "failure",
-			Title:      "timed out",
+			Title:      timeoutTitle(diagnostic),
 			Summary:    "The Runner never reported back within the start timeout.",
 			Text:       pr.Output,
 		})

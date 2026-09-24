@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ivanvc/turnip/internal/plugin"
+	"github.com/ivanvc/turnip/internal/rpc"
 )
 
 // safeBuffer is a mutex-guarded io.Writer/fmt.Stringer, since the test
@@ -270,6 +272,7 @@ func TestRunCloneWith_FailureReportsBeforeExitingNonZero(t *testing.T) {
 	assert.False(t, rep.lastResult.Success)
 	assert.Contains(t, rep.lastResult.ErrorMessage, "commit not found",
 		"git's own message reaches the pull request, not a later generic timeout")
+	assert.Equal(t, rpc.FailureCloneFailed, rep.lastResult.FailureCategory)
 }
 
 func TestRunCloneWith_MergeConflictStaysDistinguishable(t *testing.T) {
@@ -306,6 +309,53 @@ func TestRunCloneWith_MissingWorkspaceDirIsAConfigurationError(t *testing.T) {
 	assert.Equal(t, 1, exitCode)
 	assert.False(t, cloneCalled, "nothing is cloned when there is nowhere durable to clone into")
 	assert.Contains(t, rep.lastResult.ErrorMessage, "TURNIP_WORKSPACE_DIR")
+	assert.Equal(t, rpc.FailureCloneFailed, rep.lastResult.FailureCategory)
+}
+
+// Each failure point reports which step failed, so the Server can title
+// the check run without reading the message (check-run-titles
+// Requirement 5.2).
+func TestRunWith_ReportsTheFailureCategory(t *testing.T) {
+	cases := map[string]struct {
+		plugin *fakePlugin
+		want   rpc.FailureCategory
+	}{
+		"success is unspecified": {
+			plugin: &fakePlugin{operations: []string{"diff"}, result: &plugin.ExecuteResult{ExitCode: 0}},
+			want:   rpc.FailureUnspecified,
+		},
+		"the tool exited non-zero": {
+			plugin: &fakePlugin{operations: []string{"diff"}, result: &plugin.ExecuteResult{ExitCode: 2}},
+			want:   rpc.FailureToolExited,
+		},
+		"the tool could not be started": {
+			plugin: &fakePlugin{operations: []string{"diff"}, resultErr: errors.New(`exec: "helmfile": not found`)},
+			want:   rpc.FailureToolNotStarted,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rep := &fakeReporter{}
+			var stdout, stderr safeBuffer
+
+			runWith(context.Background(), testRunConfig(), rep, fakeSelector(tc.plugin), &stdout, &stderr)
+
+			assert.Equal(t, tc.want, rep.lastResult.FailureCategory)
+		})
+	}
+}
+
+func TestRunWith_WorkspaceFailureIsCategorized(t *testing.T) {
+	// No configured workspace falls back to a temporary directory, which
+	// cannot be created under a TMPDIR that does not exist.
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	rep := &fakeReporter{}
+	var stdout, stderr safeBuffer
+
+	runWith(context.Background(), testRunConfig(), rep, fakeSelector(&fakePlugin{operations: []string{"diff"}, result: &plugin.ExecuteResult{}}), &stdout, &stderr)
+
+	assert.False(t, rep.lastResult.Success)
+	assert.Equal(t, rpc.FailureWorkspaceFailed, rep.lastResult.FailureCategory)
 }
 
 // Reporting is best-effort: if the Server cannot be reached, the clone

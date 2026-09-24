@@ -21,6 +21,68 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// FailureCategory is which step of an Operation failed. Only failures that
+// reach the Server are listed: a Runner that cannot report never sends a
+// result, and the Server's start-deadline sweep covers it instead.
+type FailureCategory int32
+
+const (
+	FailureCategory_FAILURE_CATEGORY_UNSPECIFIED FailureCategory = 0
+	// The tool ran and exited non-zero; exit_code is its exit code.
+	FailureCategory_FAILURE_CATEGORY_TOOL_EXITED FailureCategory = 1
+	// The repository could not be cloned into the workspace.
+	FailureCategory_FAILURE_CATEGORY_CLONE_FAILED FailureCategory = 2
+	// The workspace directory could not be created.
+	FailureCategory_FAILURE_CATEGORY_WORKSPACE_FAILED FailureCategory = 3
+	// The Plugin could not start the tool, so no exit code exists.
+	FailureCategory_FAILURE_CATEGORY_TOOL_NOT_STARTED FailureCategory = 4
+)
+
+// Enum value maps for FailureCategory.
+var (
+	FailureCategory_name = map[int32]string{
+		0: "FAILURE_CATEGORY_UNSPECIFIED",
+		1: "FAILURE_CATEGORY_TOOL_EXITED",
+		2: "FAILURE_CATEGORY_CLONE_FAILED",
+		3: "FAILURE_CATEGORY_WORKSPACE_FAILED",
+		4: "FAILURE_CATEGORY_TOOL_NOT_STARTED",
+	}
+	FailureCategory_value = map[string]int32{
+		"FAILURE_CATEGORY_UNSPECIFIED":      0,
+		"FAILURE_CATEGORY_TOOL_EXITED":      1,
+		"FAILURE_CATEGORY_CLONE_FAILED":     2,
+		"FAILURE_CATEGORY_WORKSPACE_FAILED": 3,
+		"FAILURE_CATEGORY_TOOL_NOT_STARTED": 4,
+	}
+)
+
+func (x FailureCategory) Enum() *FailureCategory {
+	p := new(FailureCategory)
+	*p = x
+	return p
+}
+
+func (x FailureCategory) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FailureCategory) Descriptor() protoreflect.EnumDescriptor {
+	return file_turnip_v1_operation_proto_enumTypes[0].Descriptor()
+}
+
+func (FailureCategory) Type() protoreflect.EnumType {
+	return &file_turnip_v1_operation_proto_enumTypes[0]
+}
+
+func (x FailureCategory) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FailureCategory.Descriptor instead.
+func (FailureCategory) EnumDescriptor() ([]byte, []int) {
+	return file_turnip_v1_operation_proto_rawDescGZIP(), []int{0}
+}
+
 // FetchCloneCredentialRequest is deliberately empty.
 //
 // Which Operation's credential to return is decided by the caller's
@@ -402,15 +464,18 @@ func (x *LogLine) GetMessage() string {
 }
 
 type OperationResult struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	Output        string                 `protobuf:"bytes,2,opt,name=output,proto3" json:"output,omitempty"`
-	ExitCode      int32                  `protobuf:"varint,3,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
-	ErrorMessage  string                 `protobuf:"bytes,4,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
-	Changes       *ChangeSummary         `protobuf:"bytes,5,opt,name=changes,proto3" json:"changes,omitempty"`
-	PlanData      []byte                 `protobuf:"bytes,6,opt,name=plan_data,json=planData,proto3" json:"plan_data,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Success      bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Output       string                 `protobuf:"bytes,2,opt,name=output,proto3" json:"output,omitempty"`
+	ExitCode     int32                  `protobuf:"varint,3,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	ErrorMessage string                 `protobuf:"bytes,4,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	Changes      *ChangeSummary         `protobuf:"bytes,5,opt,name=changes,proto3" json:"changes,omitempty"`
+	PlanData     []byte                 `protobuf:"bytes,6,opt,name=plan_data,json=planData,proto3" json:"plan_data,omitempty"`
+	// failure_category names the step that failed, so the Server can title
+	// the check run without reading error_message. Unspecified on success.
+	FailureCategory FailureCategory `protobuf:"varint,7,opt,name=failure_category,json=failureCategory,proto3,enum=turnip.v1.FailureCategory" json:"failure_category,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *OperationResult) Reset() {
@@ -483,6 +548,13 @@ func (x *OperationResult) GetPlanData() []byte {
 		return x.PlanData
 	}
 	return nil
+}
+
+func (x *OperationResult) GetFailureCategory() FailureCategory {
+	if x != nil {
+		return x.FailureCategory
+	}
+	return FailureCategory_FAILURE_CATEGORY_UNSPECIFIED
 }
 
 type ChangeSummary struct {
@@ -622,19 +694,26 @@ const file_turnip_v1_operation_proto_rawDesc = "" +
 	"\aLogLine\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\tR\ttimestamp\x12\x14\n" +
 	"\x05level\x18\x02 \x01(\tR\x05level\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"\xd6\x01\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"\x9d\x02\n" +
 	"\x0fOperationResult\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x16\n" +
 	"\x06output\x18\x02 \x01(\tR\x06output\x12\x1b\n" +
 	"\texit_code\x18\x03 \x01(\x05R\bexitCode\x12#\n" +
 	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\x122\n" +
 	"\achanges\x18\x05 \x01(\v2\x18.turnip.v1.ChangeSummaryR\achanges\x12\x1b\n" +
-	"\tplan_data\x18\x06 \x01(\fR\bplanData\"S\n" +
+	"\tplan_data\x18\x06 \x01(\fR\bplanData\x12E\n" +
+	"\x10failure_category\x18\a \x01(\x0e2\x1a.turnip.v1.FailureCategoryR\x0ffailureCategory\"S\n" +
 	"\rChangeSummary\x12\x10\n" +
 	"\x03add\x18\x01 \x01(\x05R\x03add\x12\x16\n" +
 	"\x06change\x18\x02 \x01(\x05R\x06change\x12\x18\n" +
 	"\adestroy\x18\x03 \x01(\x05R\adestroy\"\x1a\n" +
-	"\x18ExecuteOperationResponse2\xda\x01\n" +
+	"\x18ExecuteOperationResponse*\xc6\x01\n" +
+	"\x0fFailureCategory\x12 \n" +
+	"\x1cFAILURE_CATEGORY_UNSPECIFIED\x10\x00\x12 \n" +
+	"\x1cFAILURE_CATEGORY_TOOL_EXITED\x10\x01\x12!\n" +
+	"\x1dFAILURE_CATEGORY_CLONE_FAILED\x10\x02\x12%\n" +
+	"!FAILURE_CATEGORY_WORKSPACE_FAILED\x10\x03\x12%\n" +
+	"!FAILURE_CATEGORY_TOOL_NOT_STARTED\x10\x042\xda\x01\n" +
 	"\x10OperationService\x12]\n" +
 	"\x10ExecuteOperation\x12\".turnip.v1.ExecuteOperationRequest\x1a#.turnip.v1.ExecuteOperationResponse(\x01\x12g\n" +
 	"\x14FetchCloneCredential\x12&.turnip.v1.FetchCloneCredentialRequest\x1a'.turnip.v1.FetchCloneCredentialResponseB2Z0github.com/ivanvc/turnip/internal/grpc/turnip/v1b\x06proto3"
@@ -651,33 +730,36 @@ func file_turnip_v1_operation_proto_rawDescGZIP() []byte {
 	return file_turnip_v1_operation_proto_rawDescData
 }
 
+var file_turnip_v1_operation_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_turnip_v1_operation_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_turnip_v1_operation_proto_goTypes = []any{
-	(*FetchCloneCredentialRequest)(nil),  // 0: turnip.v1.FetchCloneCredentialRequest
-	(*FetchCloneCredentialResponse)(nil), // 1: turnip.v1.FetchCloneCredentialResponse
-	(*ExecuteOperationRequest)(nil),      // 2: turnip.v1.ExecuteOperationRequest
-	(*OperationStart)(nil),               // 3: turnip.v1.OperationStart
-	(*LogLine)(nil),                      // 4: turnip.v1.LogLine
-	(*OperationResult)(nil),              // 5: turnip.v1.OperationResult
-	(*ChangeSummary)(nil),                // 6: turnip.v1.ChangeSummary
-	(*ExecuteOperationResponse)(nil),     // 7: turnip.v1.ExecuteOperationResponse
-	nil,                                  // 8: turnip.v1.OperationStart.ToolConfigEntry
+	(FailureCategory)(0),                 // 0: turnip.v1.FailureCategory
+	(*FetchCloneCredentialRequest)(nil),  // 1: turnip.v1.FetchCloneCredentialRequest
+	(*FetchCloneCredentialResponse)(nil), // 2: turnip.v1.FetchCloneCredentialResponse
+	(*ExecuteOperationRequest)(nil),      // 3: turnip.v1.ExecuteOperationRequest
+	(*OperationStart)(nil),               // 4: turnip.v1.OperationStart
+	(*LogLine)(nil),                      // 5: turnip.v1.LogLine
+	(*OperationResult)(nil),              // 6: turnip.v1.OperationResult
+	(*ChangeSummary)(nil),                // 7: turnip.v1.ChangeSummary
+	(*ExecuteOperationResponse)(nil),     // 8: turnip.v1.ExecuteOperationResponse
+	nil,                                  // 9: turnip.v1.OperationStart.ToolConfigEntry
 }
 var file_turnip_v1_operation_proto_depIdxs = []int32{
-	3, // 0: turnip.v1.ExecuteOperationRequest.start:type_name -> turnip.v1.OperationStart
-	4, // 1: turnip.v1.ExecuteOperationRequest.log:type_name -> turnip.v1.LogLine
-	5, // 2: turnip.v1.ExecuteOperationRequest.result:type_name -> turnip.v1.OperationResult
-	8, // 3: turnip.v1.OperationStart.tool_config:type_name -> turnip.v1.OperationStart.ToolConfigEntry
-	6, // 4: turnip.v1.OperationResult.changes:type_name -> turnip.v1.ChangeSummary
-	2, // 5: turnip.v1.OperationService.ExecuteOperation:input_type -> turnip.v1.ExecuteOperationRequest
-	0, // 6: turnip.v1.OperationService.FetchCloneCredential:input_type -> turnip.v1.FetchCloneCredentialRequest
-	7, // 7: turnip.v1.OperationService.ExecuteOperation:output_type -> turnip.v1.ExecuteOperationResponse
-	1, // 8: turnip.v1.OperationService.FetchCloneCredential:output_type -> turnip.v1.FetchCloneCredentialResponse
-	7, // [7:9] is the sub-list for method output_type
-	5, // [5:7] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	4, // 0: turnip.v1.ExecuteOperationRequest.start:type_name -> turnip.v1.OperationStart
+	5, // 1: turnip.v1.ExecuteOperationRequest.log:type_name -> turnip.v1.LogLine
+	6, // 2: turnip.v1.ExecuteOperationRequest.result:type_name -> turnip.v1.OperationResult
+	9, // 3: turnip.v1.OperationStart.tool_config:type_name -> turnip.v1.OperationStart.ToolConfigEntry
+	7, // 4: turnip.v1.OperationResult.changes:type_name -> turnip.v1.ChangeSummary
+	0, // 5: turnip.v1.OperationResult.failure_category:type_name -> turnip.v1.FailureCategory
+	3, // 6: turnip.v1.OperationService.ExecuteOperation:input_type -> turnip.v1.ExecuteOperationRequest
+	1, // 7: turnip.v1.OperationService.FetchCloneCredential:input_type -> turnip.v1.FetchCloneCredentialRequest
+	8, // 8: turnip.v1.OperationService.ExecuteOperation:output_type -> turnip.v1.ExecuteOperationResponse
+	2, // 9: turnip.v1.OperationService.FetchCloneCredential:output_type -> turnip.v1.FetchCloneCredentialResponse
+	8, // [8:10] is the sub-list for method output_type
+	6, // [6:8] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_turnip_v1_operation_proto_init() }
@@ -695,13 +777,14 @@ func file_turnip_v1_operation_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_turnip_v1_operation_proto_rawDesc), len(file_turnip_v1_operation_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_turnip_v1_operation_proto_goTypes,
 		DependencyIndexes: file_turnip_v1_operation_proto_depIdxs,
+		EnumInfos:         file_turnip_v1_operation_proto_enumTypes,
 		MessageInfos:      file_turnip_v1_operation_proto_msgTypes,
 	}.Build()
 	File_turnip_v1_operation_proto = out.File

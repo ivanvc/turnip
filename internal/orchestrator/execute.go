@@ -139,6 +139,10 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	}
 
 	var planData []byte
+	// runningTitle is what the Project_Check says while this Operation
+	// runs. A plan says its scope; everything else says what it is about to
+	// change, from the plan it replays (check-run-titles Requirement 3).
+	title := runningTitle(t.ExtraArgs)
 	// execArgs is what actually reaches the tool: the trigger's own
 	// arguments for a plan, and the scope the plan recorded for everything
 	// else. The refusal above is what makes this unambiguous — for a
@@ -218,6 +222,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		}
 		planData = plan.Data
 		execArgs = plan.Args
+		title = runningRecordedPlanTitle(changeCounts(plan.Summary), plan.Args)
 	}
 
 	// checkRunErr is deliberately its own variable, not the shared err:
@@ -230,7 +235,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		Name:    checkRunName(t.Project.Name, t.Operation),
 		HeadSHA: pr.HeadSHA,
 		Status:  "in_progress",
-		Title:   "in progress",
+		Title:   title,
 		Summary: fmt.Sprintf("Running `%s` for Project `%s`.", t.Operation, t.Project.Name),
 	})
 	if checkRunErr != nil {
@@ -314,7 +319,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		if checkRunID != 0 {
 			_ = client.UpdateCheckRun(ctx, repo.Owner, repo.Name, checkRunID, github.CheckRunOptions{
 				Name: checkRunName(t.Project.Name, t.Operation), Status: "completed", Conclusion: "failure",
-				Title:   "failure",
+				Title:   jobNotCreatedTitle(),
 				Summary: "The Runner Job could not be created, so this operation never ran.",
 				Text:    fmt.Sprintf("creating Runner Job: %v", err),
 			})

@@ -335,15 +335,18 @@ been carried out** — applied, or found to have nothing to apply? turnip
 never applies on merge, and merging releases the locks, so a plan left
 unapplied at merge would stay unapplied.
 
-| What's going on | `turnip` shows |
-|---|---|
-| No project's files changed | `skipped` — passes; there is nothing to plan |
-| Plans ran, nothing applied yet | **nothing** — GitHub shows the required check as "Expected — Waiting for status to be reported", which blocks the merge without a red ❌ |
-| Some projects applied, others waiting | in progress, e.g. "1/3 projects applied" |
-| Every project applied, or its plan found nothing to apply | `success` |
-| An apply (or `sync`) failed | `failure` |
-| `turnip.yaml` is invalid | `failure` |
-| An affected project uses a tool this server can't run | `failure`, naming the project and tool |
+| What's going on | `turnip` shows | Title |
+|---|---|---|
+| No project's files changed | `skipped` — passes; there is nothing to plan | `no projects affected` |
+| Plans ran, nothing applied yet | **nothing** — GitHub shows the required check as "Expected — Waiting for status to be reported", which blocks the merge without a red ❌ | — |
+| Some projects up to date, others waiting | in progress | `1/3 projects up to date` |
+| Every project applied, or its plan found nothing to apply | `success` | `3/3 projects up to date` |
+| An apply (or `sync`) failed | `failure` | `2/3 projects up to date, 1 failed` |
+| `turnip.yaml` is invalid | `failure` | `invalid turnip.yaml` |
+| An affected project uses a tool this server can't run | `failure` | `unsupported tool: infra uses terraform, and 1 more` |
+
+"Up to date" means the infrastructure matches this pull request: the
+project was applied, or its plan found nothing to apply.
 
 Details worth knowing:
 
@@ -369,7 +372,22 @@ Details worth knowing:
 - **Check runs**, one per (project, operation), named
   `turnip/<operation>/<project>` — `in_progress` while the Runner Job is
   executing, then `success`/`failure` with the tool's own output attached.
-  Operation first, so every `diff` (or every `sync`) lists together.
+  Operation first, so every `diff` (or every `sync`) lists together. The
+  title beside each says what the icon doesn't:
+
+  | State | Title |
+  |---|---|
+  | a plan running | `running`, or `running, -l name=api` when scoped |
+  | an apply or sync running | `running the recorded plan, +1 ~4 -2` |
+  | succeeded | `+1 ~4 -2`, or `no changes`, plus the scope when there was one |
+  | the tool failed | `helmfile exited 1` |
+  | turnip failed around the tool | `clone failed`, `workspace could not be prepared`, `helmfile could not be started` |
+  | the Runner Job was refused | `Runner Job could not be created` |
+  | timed out | what turnip found, e.g. `Job …: container stuck (ImagePullBackOff)` |
+
+  A tool's failure is reported only as its exit code: the reason is in its
+  output, one click away in the check's details, and turnip does not guess
+  at it.
 - **The `turnip` check**, one per commit, once there is something to say:
   whether every plan this pull request made has been carried out. See
   "Requiring turnip before merge".

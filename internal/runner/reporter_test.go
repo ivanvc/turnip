@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	pb "github.com/ivanvc/turnip/internal/grpc/turnip/v1"
+	"github.com/ivanvc/turnip/internal/rpc"
 )
 
 // scriptedServer fails the first failCount stream opens — returning an
@@ -336,6 +337,25 @@ func TestReporter_ReportReconnectsAndResendsFullBufferWithResumedTrue(t *testing
 	require.NotNil(t, result)
 	assert.True(t, result.Success)
 	assert.Equal(t, "done", result.Output)
+}
+
+// The failure category the Runner sets reaches the wire, so the Server
+// can title the check run by it (check-run-titles Requirement 5.1).
+func TestReporter_ReportSendsTheFailureCategory(t *testing.T) {
+	srv := &scriptedServer{}
+	client := dialScriptedServer(t, srv)
+	clock := newFakeClock()
+	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
+	r.readToken = stubToken
+
+	require.NoError(t, r.Connect(context.Background()))
+	waitForStreamCount(t, srv, 1)
+	require.NoError(t, r.Report(context.Background(), OperationResult{ExitCode: 1, FailureCategory: rpc.FailureToolExited}))
+
+	sent := srv.streamAt(0)
+	result := sent[len(sent)-1].GetResult()
+	require.NotNil(t, result)
+	assert.Equal(t, pb.FailureCategory_FAILURE_CATEGORY_TOOL_EXITED, result.GetFailureCategory())
 }
 
 func TestLogRingBuffer_DropsOldestPastBoundWithMarker(t *testing.T) {

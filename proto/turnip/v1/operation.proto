@@ -78,6 +78,24 @@ message OperationResult {
   string error_message = 4;
   ChangeSummary changes = 5;
   bytes plan_data = 6;
+  // failure_category names the step that failed, so the Server can title
+  // the check run without reading error_message. Unspecified on success.
+  FailureCategory failure_category = 7;
+}
+
+// FailureCategory is which step of an Operation failed. Only failures that
+// reach the Server are listed: a Runner that cannot report never sends a
+// result, and the Server's start-deadline sweep covers it instead.
+enum FailureCategory {
+  FAILURE_CATEGORY_UNSPECIFIED = 0;
+  // The tool ran and exited non-zero; exit_code is its exit code.
+  FAILURE_CATEGORY_TOOL_EXITED = 1;
+  // The repository could not be cloned into the workspace.
+  FAILURE_CATEGORY_CLONE_FAILED = 2;
+  // The workspace directory could not be created.
+  FAILURE_CATEGORY_WORKSPACE_FAILED = 3;
+  // The Plugin could not start the tool, so no exit code exists.
+  FAILURE_CATEGORY_TOOL_NOT_STARTED = 4;
 }
 
 message ChangeSummary {

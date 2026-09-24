@@ -66,6 +66,30 @@ later than expected, with no explanation in the PR.
   every retry failed, GitHub's API was very likely degraded at that
   moment — check GitHub's own status page.
 
+## Reading a failed check's title
+
+**Symptom**: a per-project check (`turnip/diff/web`) failed. Its title says
+which step failed; the full error and output are in the check's details.
+
+- **`helmfile exited 1`** (or another tool and code): the tool itself ran
+  and failed. The reason is in its output — turnip does not interpret it.
+  Usually a problem in the change being planned.
+- **`clone failed`**: the Runner could not check out the pull request's
+  commit. The details carry git's message — often a merge conflict with the
+  base branch, or credentials the repository's submodules need.
+- **`workspace could not be prepared`**: the Runner could not create its
+  working directory. A node or volume problem, not the change.
+- **`helmfile could not be started`**: the tool's binary was missing or
+  the operation isn't one the tool supports. See "Plugin execution errors".
+- **`Runner Job could not be created`**: Kubernetes refused the Job — a
+  quota, an admission policy, or the Server's RBAC. The operation never
+  ran; see "Runner execution errors".
+- **A description of a stuck Job or Pod**: the operation timed out, and
+  the title is what turnip found when it gave up. See "Runner execution
+  errors".
+- **`failed`** alone: the Runner reported a failure without saying which
+  step. The details have its message.
+
 ## The `turnip` check
 
 **Symptom**: the required `turnip` check blocks a merge, or shows
@@ -81,7 +105,7 @@ something unexpected. What each state means is in `docs/usage.md`
   name that the change doesn't touch — it counts too — or one whose plan
   was refused because another pull request holds its lock. Apply it, or
   push a commit so the next plan starts from a fresh record.
-- **`failure` naming an unsupported tool**: an affected project in
+- **`failure` titled `unsupported tool: …`**: an affected project in
   `turnip.yaml` uses a tool this server has no plugin for. Change the
   project's `uses`, or stop the change touching it.
 - **Blocks every pull request in a repository**: that repository has no

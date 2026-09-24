@@ -29,22 +29,22 @@ func TestVerdictFor(t *testing.T) {
 		{
 			name:   "awaiting apply is in progress, not red",
 			st:     statusWith(map[string]Outcome{"web": OutcomeAwaitingApply, "api": OutcomeApplied}),
-			status: "in_progress", title: "1/2 projects applied",
+			status: "in_progress", title: "1/2 projects up to date",
 		},
 		{
 			name:   "a Project waiting on another pull request's Lock is in progress, not red",
 			st:     statusWith(map[string]Outcome{"web": OutcomeNotPlanned, "api": OutcomeApplied}),
-			status: "in_progress", title: "1/2 projects applied",
+			status: "in_progress", title: "1/2 projects up to date",
 		},
 		{
 			name:   "applied and nothing to apply are both done",
 			st:     statusWith(map[string]Outcome{"web": OutcomeApplied, "api": OutcomeNothingToApply}),
-			status: "completed", conclusion: "success", title: "2/2 projects applied",
+			status: "completed", conclusion: "success", title: "2/2 projects up to date",
 		},
 		{
 			name:   "a failed apply fails",
 			st:     statusWith(map[string]Outcome{"web": OutcomeApplyFailed, "api": OutcomeApplied}),
-			status: "completed", conclusion: "failure", title: "1/2 projects applied; an apply failed",
+			status: "completed", conclusion: "failure", title: "1/2 projects up to date, 1 failed",
 		},
 		{
 			name:   "an unsupported tool fails, naming the Project and tool",
@@ -64,7 +64,7 @@ func TestVerdictFor(t *testing.T) {
 		{
 			name:   "an empty record is not success",
 			st:     prStatus{Projects: map[string]ProjectEntry{}},
-			status: "in_progress", title: "0/0 projects applied",
+			status: "in_progress", title: "0/0 projects up to date",
 		},
 	}
 	for _, tc := range cases {
@@ -93,6 +93,21 @@ func TestVerdictFor_Precedence(t *testing.T) {
 	st = statusWith(map[string]Outcome{"web": OutcomeApplyFailed})
 	st.Projects["infra"] = ProjectEntry{Outcome: OutcomeUnsupported, Tool: "pulumi"}
 	assert.Equal(t, "unsupported tool: infra uses pulumi", verdictFor(st).Title)
+}
+
+// The title names the first unsupported Project by name — the same order
+// as the summary — and counts the rest (check-run-titles Requirement 6.3).
+func TestVerdictFor_UnsupportedTitleNamesTheFirstAndCountsTheRest(t *testing.T) {
+	st := prStatus{Projects: map[string]ProjectEntry{
+		"infra": {Outcome: OutcomeUnsupported, Tool: "terraform"},
+		"db":    {Outcome: OutcomeUnsupported, Tool: "pulumi"},
+		"cache": {Outcome: OutcomeUnsupported, Tool: "terraform"},
+		"web":   {Outcome: OutcomeApplied},
+	}}
+	v := verdictFor(st)
+	assert.Equal(t, "unsupported tool: cache uses terraform, and 2 more", v.Title)
+	assert.Contains(t, v.Summary, "`db`", "the summary still lists every one")
+	assert.Contains(t, v.Summary, "`infra`")
 }
 
 func TestVerdictFor_SummaryNamesEachProjectCheck(t *testing.T) {

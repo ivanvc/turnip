@@ -158,7 +158,7 @@ func TestRun_SweepsPeriodicallyAndExitsOnCancel(t *testing.T) {
 	}
 }
 
-func TestSweepOnce_TimeoutCheckRunTitleSaysTimedOut(t *testing.T) {
+func TestSweepOnce_TimeoutCheckRunTitleIsTheDiagnostic(t *testing.T) {
 	jobsClient := &fakeJobCreator{t: t, statusFn: func(ctx context.Context, jobName string) (*jobs.JobStatus, error) {
 		return &jobs.JobStatus{JobFound: true, PodPhase: "Pending"}, nil
 	}}
@@ -167,7 +167,7 @@ func TestSweepOnce_TimeoutCheckRunTitleSaysTimedOut(t *testing.T) {
 
 	o.sweepOnce(context.Background())
 
-	assert.Equal(t, "timed out", client.updatedCheckRun.Title)
+	assert.Contains(t, client.updatedCheckRun.Title, "Pod still Pending")
 	assert.NotEmpty(t, client.updatedCheckRun.Summary, "GitHub rejects check-run output without a summary")
 	assert.Contains(t, client.updatedCheckRun.Text, "Pending", "the diagnostic stays in the detail text")
 }

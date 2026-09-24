@@ -49,6 +49,10 @@ type OperationResult struct {
 	ErrorMessage string
 	Changes      plugin.ChangeSummary
 	PlanData     []byte
+	// FailureCategory names the step that failed, set at each failure
+	// point in run.go, so the Server can title the check run without
+	// reading ErrorMessage. Unspecified on success.
+	FailureCategory rpc.FailureCategory
 }
 
 // reporter is the retrying gRPC client that streams an Operation's start,
@@ -256,7 +260,8 @@ func (r *reporter) reportOnce(ctx context.Context, result OperationResult) error
 			Change:  int32(result.Changes.Change),
 			Destroy: int32(result.Changes.Destroy),
 		},
-		PlanData: result.PlanData,
+		PlanData:        result.PlanData,
+		FailureCategory: rpc.FailureCategoryToProto(result.FailureCategory),
 	}
 	if err := stream.Send(&pb.ExecuteOperationRequest{Payload: &pb.ExecuteOperationRequest_Result{Result: pbResult}}); err != nil {
 		r.clearStream(stream)

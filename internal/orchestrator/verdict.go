@@ -42,16 +42,16 @@ func verdictFor(st prStatus) aggregateVerdict {
 	}
 	sort.Strings(names)
 
-	done := 0
-	var unsupported, applyFailed bool
+	done, failed := 0, 0
+	var unsupported []string
 	for _, name := range names {
 		switch o := st.Projects[name].Outcome; {
 		case o.done():
 			done++
 		case o == OutcomeUnsupported:
-			unsupported = true
+			unsupported = append(unsupported, name)
 		case o == OutcomeApplyFailed:
-			applyFailed = true
+			failed++
 		}
 	}
 	summary := verdictSummary(st, names)
@@ -60,37 +60,40 @@ func verdictFor(st prStatus) aggregateVerdict {
 	case st.ConfigInvalid:
 		return aggregateVerdict{
 			Status: "completed", Conclusion: "failure",
-			Title:   "invalid turnip.yaml",
+			Title:   invalidConfigTitle(),
 			Summary: "The turnip configuration on this commit is invalid, so nothing could be planned. The pull request comment has the details.",
 		}
 	case st.Empty && len(names) == 0:
 		return aggregateVerdict{
 			Status: "completed", Conclusion: "skipped",
-			Title:   "no projects affected",
+			Title:   noProjectsAffectedTitle(),
 			Summary: "No project's files changed in this pull request, so there is nothing to plan or apply.",
 		}
-	case unsupported:
+	case len(unsupported) > 0:
+		// The first by name, which is also the first line of the summary
+		// beneath it.
+		first := unsupported[0]
 		return aggregateVerdict{
 			Status: "completed", Conclusion: "failure",
-			Title:   unsupportedTitle(st, names),
+			Title:   unsupportedTitle(first, st.Projects[first].Tool, len(unsupported)-1),
 			Summary: summary,
 		}
-	case applyFailed:
+	case failed > 0:
 		return aggregateVerdict{
 			Status: "completed", Conclusion: "failure",
-			Title:   fmt.Sprintf("%d/%d projects applied; an apply failed", done, len(names)),
+			Title:   aggregateTitle(done, len(names), failed),
 			Summary: summary,
 		}
 	case len(names) > 0 && done == len(names):
 		return aggregateVerdict{
 			Status: "completed", Conclusion: "success",
-			Title:   fmt.Sprintf("%d/%d projects applied", done, len(names)),
+			Title:   aggregateTitle(done, len(names), 0),
 			Summary: summary,
 		}
 	default:
 		return aggregateVerdict{
 			Status:  "in_progress",
-			Title:   fmt.Sprintf("%d/%d projects applied", done, len(names)),
+			Title:   aggregateTitle(done, len(names), 0),
 			Summary: summary,
 		}
 	}
@@ -103,16 +106,6 @@ func verdictFor(st prStatus) aggregateVerdict {
 // published, it is kept current.
 func shouldPublish(st prStatus, v aggregateVerdict) bool {
 	return st.CheckRunID != 0 || st.Mutated || v.completed()
-}
-
-func unsupportedTitle(st prStatus, names []string) string {
-	var parts []string
-	for _, name := range names {
-		if e := st.Projects[name]; e.Outcome == OutcomeUnsupported {
-			parts = append(parts, fmt.Sprintf("%s uses %s", name, e.Tool))
-		}
-	}
-	return "unsupported tool: " + strings.Join(parts, ", ")
 }
 
 func verdictSummary(st prStatus, names []string) string {

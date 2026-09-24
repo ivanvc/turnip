@@ -90,7 +90,7 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 			// status checks and branch protection match on it), so the
 			// outcome goes in the title and summary — which is what the
 			// checks tab renders under the name.
-			Title:   checkRunResultTitle(result.Success),
+			Title:   resultTitle(rec, result),
 			Summary: checkRunResultSummary(result.Success, changeSummaryText(result.Changes)),
 			Text:    result.Output,
 		}
@@ -179,16 +179,20 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 	return nil
 }
 
-// checkRunResultTitle and checkRunResultSummary render an Operation's
+// resultTitle and checkRunResultSummary render an Operation's
 // outcome for the checks tab. GitHub shows a check run's title (and the
 // first part of its summary) directly beneath the name, and the name
 // itself must stay stable — it is what required status checks match on —
 // so these two fields are where the outcome belongs.
-func checkRunResultTitle(success bool) string {
-	if success {
-		return "success"
+func resultTitle(rec *OperationRecord, result rpc.OperationResult) string {
+	if result.Success {
+		return completedTitle(github.ChangeCounts{
+			Add:     int(result.Changes.Add),
+			Change:  int(result.Changes.Change),
+			Destroy: int(result.Changes.Destroy),
+		}, rec.ExtraArgs)
 	}
-	return "failure"
+	return failedTitle(rec.Project.Tool, result.FailureCategory, result.ExitCode)
 }
 
 func checkRunResultSummary(success bool, changes string) string {

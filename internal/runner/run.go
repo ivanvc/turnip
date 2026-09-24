@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/ivanvc/turnip/internal/plugin"
+	"github.com/ivanvc/turnip/internal/rpc"
 )
 
 // resultReporter is the subset of *reporter's behavior run.go depends on,
@@ -117,7 +118,7 @@ func reportCloneFailure(ctx context.Context, rep resultReporter, message string,
 		_, _ = fmt.Fprintf(stderr, "runner: connect to server: %v\n", err)
 		return 1
 	}
-	if err := rep.Report(ctx, OperationResult{Success: false, ExitCode: -1, ErrorMessage: message}); err != nil {
+	if err := rep.Report(ctx, OperationResult{Success: false, ExitCode: -1, ErrorMessage: message, FailureCategory: rpc.FailureCloneFailed}); err != nil {
 		_, _ = fmt.Fprintf(stderr, "runner: report result: %v\n", err)
 	}
 	return 1
@@ -189,7 +190,7 @@ func resolveWorkspace(dir string) (string, func(), error) {
 func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporter, stdout, stderr io.Writer) OperationResult {
 	dir, cleanup, err := resolveWorkspace(cfg.WorkspaceDir)
 	if err != nil {
-		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: fmt.Sprintf("create workdir: %v", err)}
+		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: fmt.Sprintf("create workdir: %v", err), FailureCategory: rpc.FailureWorkspaceFailed}
 	}
 	defer cleanup()
 
@@ -245,7 +246,9 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 		OnOutput:    onOutput,
 	})
 	if err != nil {
-		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: clean(fmt.Sprintf("execute failed: %v", err))}
+		// No tool process produced an exit code: the binary is missing, or
+		// the Plugin refused the Operation before running anything.
+		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: clean(fmt.Sprintf("execute failed: %v", err)), FailureCategory: rpc.FailureToolNotStarted}
 	}
 
 	opResult := OperationResult{
@@ -257,6 +260,9 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 	}
 	if result.Error != nil {
 		opResult.ErrorMessage = clean(result.Error.Error())
+	}
+	if result.ExitCode != 0 {
+		opResult.FailureCategory = rpc.FailureToolExited
 	}
 	return opResult
 }

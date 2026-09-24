@@ -38,6 +38,8 @@ type OperationResult struct {
 	ErrorMessage string
 	Changes      ChangeSummary
 	PlanData     []byte
+	// FailureCategory is set on failure; unspecified on success.
+	FailureCategory FailureCategory
 }
 
 // OperationHandler reacts to a Runner's incremental log lines and final
@@ -208,7 +210,8 @@ func (s *operationServer) ExecuteOperation(stream pb.OperationService_ExecuteOpe
 					Change:  result.GetChanges().GetChange(),
 					Destroy: result.GetChanges().GetDestroy(),
 				},
-				PlanData: result.GetPlanData(),
+				PlanData:        result.GetPlanData(),
+				FailureCategory: FailureCategoryFromProto(result.GetFailureCategory()),
 			}); err != nil {
 				return err
 			}

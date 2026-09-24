@@ -136,7 +136,7 @@ func TestPublishAggregate_AbsentUntilTheFirstApply(t *testing.T) {
 	cur := gh.current()
 	require.NotNil(t, cur)
 	assert.Equal(t, "in_progress", cur.Status)
-	assert.Equal(t, "1/2 projects applied", cur.Title)
+	assert.Equal(t, "1/2 projects up to date", cur.Title)
 	assert.Equal(t, testRef.HeadSHA, cur.HeadSHA)
 
 	record(t, o, gh, "api", OutcomeApplied)
@@ -159,7 +159,7 @@ func TestPublishAggregate_TwoInstancesOneVerdict(t *testing.T) {
 	record(t, b, gh, "api", OutcomeApplied)
 
 	assert.Equal(t, "success", gh.current().Conclusion)
-	assert.Equal(t, "2/2 projects applied", gh.current().Title)
+	assert.Equal(t, "2/2 projects up to date", gh.current().Title)
 }
 
 // A write that lands while a publish is in flight is caught by the
