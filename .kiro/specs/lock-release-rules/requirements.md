@@ -77,7 +77,7 @@ set of conditions scattered across the code that reads it.
 1. THE Lock SHALL record which of Planning, PlanReady or PlanStale it is in
 2. THE state SHALL be the single source of truth for whether a
    Mutating_Operation may run, replacing the present pair of conditions
-3. WHERE a stored Lock carries no recognisable state — one written before
+3. WHERE a stored Lock carries no recognizable state — one written before
    this slice — THE Server SHALL treat it as not PlanReady, requiring a
    new plan
 4. THE absence of a Lock SHALL remain the absence of its Redis key, NOT a

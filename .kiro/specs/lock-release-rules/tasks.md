@@ -34,7 +34,7 @@ plan.
     - `LockStatus` gains `State`, keeping `HasPlan` so no reader breaks
     - _Requirements: 1.1, 1.4_
   - [x] 1.2 Tolerant decode
-    - A stored Lock with no recognisable state decodes as **not**
+    - A stored Lock with no recognizable state decodes as **not**
       `PlanReady`
     - A test that a value written in the old shape — no state field at
       all — decodes without error and does not report `PlanReady`. This is

@@ -70,7 +70,7 @@ Requirement 10.2. Extends Requirement 10 otherwise unchanged.
 - **Suppressing auto-plan on draft pull requests.** A separate concern
   with its own slice.
 - **Hiding no-change projects** (Atlantis' `--hide-unchanged-plan-comments`)
-  and **operator-customisable templates** (its
+  and **operator-customizable templates** (its
   `--markdown-template-overrides-dir`). Preference surfaces, not missing
   information.
 - **Changing when a comment is posted versus updated.** `server-orchestration`

@@ -540,7 +540,7 @@ makes the summary table unnecessary rather than merely unfashionable.
 
 **Not in this slice**: rewriting tool output so `+`/`-`/`~` markers
 highlight (Slice 7 — helmfile needs none, Terraform will); draft pull
-requests; hiding no-change projects; operator-customisable templates; and
+requests; hiding no-change projects; operator-customizable templates; and
 when a comment is posted versus updated, which `server-orchestration`
 already settled as minimize-then-repost.
 
@@ -1932,7 +1932,7 @@ timeout is reported as a failure, strands its Lock, and may then still run
 — because nothing cancels it. `timeoutDiagnostic` already renders exactly
 this shape ("Pod still %s after 5 minutes",
 `internal/orchestrator/sweep.go:112`), which shows the condition is
-recognisable; it is simply classified as failure today, correctly, because
+recognizable; it is simply classified as failure today, correctly, because
 today nothing queues Jobs on purpose.
 
 That makes an in-process semaphore the cheaper enforcement point. Choosing
