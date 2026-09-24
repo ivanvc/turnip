@@ -187,7 +187,7 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 			var mixed *MixedSelectorError
 			if errors.As(err, &mixed) {
 				replies = append(replies, fmt.Sprintf(
-					"`*` cannot be combined with other selectors (got %s) — a trigger either names projects or asks for all of them.",
+					"`*` cannot be combined with other selectors (got %s): a trigger either names projects or asks for all of them.",
 					strings.Join(mixed.Others, ", ")))
 				continue
 			}

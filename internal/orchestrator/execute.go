@@ -225,7 +225,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		switch status.State {
 		case lock.StatePlanReady:
 		case lock.StatePlanStale:
-			return reject(refusal{reason: "the recorded plan is no longer valid — a new commit, a failed plan, or an operation that did not complete has superseded it. Re-plan before retrying."})
+			return reject(refusal{reason: "the recorded plan is no longer valid: a new commit, a failed plan, or an operation that did not complete has superseded it. Re-plan before retrying."})
 		default:
 			return reject(refusal{reason: "no plan recorded; a new plan is required"})
 		}
@@ -517,7 +517,7 @@ func appendCheckRunNote(result github.ProjectResult, err error) github.ProjectRe
 	}
 	result.Output += fmt.Sprintf(
 		"\n\nNote: this Project's GitHub check run could not be recorded (%v). "+
-			"The operation itself is unaffected — only its entry in the PR's checks tab is missing.",
+			"The operation itself is unaffected; only its entry in the PR's checks tab is missing.",
 		err,
 	)
 	return result

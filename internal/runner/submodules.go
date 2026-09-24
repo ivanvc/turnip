@@ -103,7 +103,7 @@ func accessHint(out string) string {
 	}
 	return "\nhint: turnip authenticated this fetch with its installation token, so " +
 		"\"Repository not found\" most likely means the GitHub App is not installed on " +
-		"that repository rather than that it does not exist — check the App's repository access"
+		"that repository rather than that it does not exist. Check the App's repository access"
 }
 
 // readSubmoduleURLs asks git for the submodule URLs rather than parsing

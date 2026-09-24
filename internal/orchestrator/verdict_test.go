@@ -137,7 +137,7 @@ func TestVerdictFor_SummaryNamesTheBlockerAndTheSetting(t *testing.T) {
 		"infra": {Outcome: OutcomeNotPlanned, Operation: "plan"},
 	}}
 	assert.Equal(t,
-		"- `api`: runner.serviceAccount is not permitted — change turnip.yaml, or permit it in TURNIP_ALLOWED_OVERRIDES (`turnip/diff/api`)\n"+
+		"- `api`: runner.serviceAccount is not permitted; change turnip.yaml, or permit it in TURNIP_ALLOWED_OVERRIDES (`turnip/diff/api`)\n"+
 			"- `infra`: not planned (`turnip/plan/infra`)\n"+
 			"- `web`: not planned, locked by PR #5 (`turnip/diff/web`)\n",
 		verdictFor(st).Summary)
@@ -171,7 +171,7 @@ func TestVerdictFor_SummaryNamesEachProjectCheck(t *testing.T) {
 	}}
 	assert.Equal(t,
 		"- `api`: planned, awaiting apply (`turnip/diff/api`)\n"+
-			"- `infra`: tool `terraform` is not supported by this server — fix turnip.yaml\n"+
+			"- `infra`: tool `terraform` is not supported by this server; fix turnip.yaml\n"+
 			"- `web`: applied (`turnip/sync/web`)\n",
 		verdictFor(st).Summary)
 }

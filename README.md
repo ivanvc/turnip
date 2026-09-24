@@ -45,7 +45,7 @@ graph TB
   project's `whenModified` globs, acquires a Redis lock before planning,
   creates a Kubernetes Job per triggered Operation, and posts a
   consolidated PR comment and check run once every Job reports back. All
-  state lives in Redis, not in-process — any number of Server replicas can
+  state lives in Redis, not in-process: any number of Server replicas can
   run behind one Service with no coordination between them (see
   [`docs/deployment.md`](docs/deployment.md)'s "Scaling up" section).
 - **Runner** (`cmd/runner`): one ephemeral Kubernetes Job per Operation.
@@ -53,7 +53,7 @@ graph TB
   (Terraform/Pulumi/Helmfile) via a shared Plugin interface, and streams
   logs and a final result back to the Server over gRPC.
 
-turnip's own manifests live under [`deploy/`](deploy/) —
+turnip's own manifests live under [`deploy/`](deploy/);
 `deploy/overlays/kind/` is a complete, concrete worked example.
 
 ## Documentation

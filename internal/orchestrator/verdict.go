@@ -149,9 +149,9 @@ func outcomeText(e ProjectEntry) string {
 	case OutcomeApplyFailed:
 		return "apply failed"
 	case OutcomeUnsupported:
-		return fmt.Sprintf("tool `%s` is not supported by this server — fix turnip.yaml", e.Tool)
+		return fmt.Sprintf("tool `%s` is not supported by this server; fix turnip.yaml", e.Tool)
 	case OutcomeRefused:
-		return fmt.Sprintf("%s is not permitted — change turnip.yaml, or permit it in TURNIP_ALLOWED_OVERRIDES", e.Setting)
+		return fmt.Sprintf("%s is not permitted; change turnip.yaml, or permit it in TURNIP_ALLOWED_OVERRIDES", e.Setting)
 	default:
 		return string(e.Outcome)
 	}

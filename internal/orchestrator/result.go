@@ -204,7 +204,7 @@ func checkRunResultSummary(success bool, changes string) string {
 	case changes != "":
 		return "The operation failed. " + changes
 	default:
-		return "The operation failed — see the output below."
+		return "The operation failed. See the output below."
 	}
 }
 

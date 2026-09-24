@@ -325,7 +325,7 @@ func TestBuildVerdictLine(t *testing.T) {
 		{"one project failed", []ProjectResult{failed("infra")}, "**`infra` failed.**"},
 		{
 			"mixed", []ProjectResult{changed("a", 4), clean("b"), failed("c")},
-			"**4 changes across 3 projects** — 1 with no changes, 1 failed.",
+			"**4 changes across 3 projects**: 1 with no changes, 1 failed.",
 		},
 		{
 			"all clean", []ProjectResult{clean("a"), clean("b")},
@@ -370,7 +370,7 @@ func TestBuildConsolidatedComment_DiffFenceOnSuccessPlainOnFailure(t *testing.T)
 // The note belongs outside the fence: inside it, turnip's own sentence is
 // styled as tool output and is carried away by output splitting.
 func TestBuildConsolidatedComment_LockNoteRendersOutsideTheFence(t *testing.T) {
-	const note = "Lock released — the plan failed, so nothing was recorded."
+	const note = "Lock released: the plan failed, so nothing was recorded."
 	parts := BuildConsolidatedComment([]ProjectResult{{
 		ProjectName: "web",
 		Tool:        "helmfile",

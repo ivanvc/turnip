@@ -142,7 +142,7 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 // 8.4), rather than a bare "timed out" message.
 func timeoutDiagnostic(jobName string, status *jobs.JobStatus) string {
 	if status == nil || !status.JobFound {
-		return "No Job/Pod found for this Operation — it may have been deleted or never successfully scheduled"
+		return "No Job/Pod found for this Operation; it may have been deleted or never successfully scheduled"
 	}
 	if status.PodReason != "" {
 		return fmt.Sprintf("Job %s: container stuck (%s)", jobName, status.PodReason)

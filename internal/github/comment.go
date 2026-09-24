@@ -230,9 +230,9 @@ func buildNoticeBlock(notices []string) string {
 
 func omissionNote(dropped int) string {
 	if dropped == 1 {
-		return "_(1 earlier section omitted — this comment reached GitHub's size limit)_"
+		return "_(1 earlier section omitted because this comment reached GitHub's size limit)_"
 	}
-	return fmt.Sprintf("_(%d earlier sections omitted — this comment reached GitHub's size limit)_", dropped)
+	return fmt.Sprintf("_(%d earlier sections omitted because this comment reached GitHub's size limit)_", dropped)
 }
 
 // cutWithinSection is the floor beneath dropping: one section remains and
@@ -339,7 +339,7 @@ func buildVerdictLine(results []ProjectResult) string {
 	if len(notes) == 0 {
 		return "**" + headline + ".**"
 	}
-	return "**" + headline + "** — " + strings.Join(notes, ", ") + "."
+	return "**" + headline + "**: " + strings.Join(notes, ", ") + "."
 }
 
 // singleProjectVerdict reads as a sentence about one Project rather than

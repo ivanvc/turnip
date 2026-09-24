@@ -38,7 +38,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 27 | Authenticated and Encrypted Redis | `redis-tls-auth` | Not Started | Slices 3, 10 |
 | 28 | Seeing and Dropping Locks Without Hunting for the PR | `lock-admin-ui` | Not Started | Slices 3, 4 |
 | 29 | Move the Webhook Off the Root Path | `webhook-path` | Complete | Slices 4, 10 |
-| 30 | Scheduling: Concurrency and Execution Order | `operation-scheduling` | Not Started | Slices 6, 7 |
+| 30 | Scheduling: Concurrency and Execution Order | `operation-scheduling` | Not Started | Slice 6 |
 | 31 | Runner Pod Placement: Node Selectors and Tolerations | `runner-pod-placement` | Not Started | Slices 5, 13 |
 | 32 | Refuse a Closed Pull Request, Plan a Reopened One | `closed-pull-requests` | Complete | Slices 4, 6 |
 | 33 | Show What Ran and With What Scope | `execution-provenance` | Complete | Slices 2, 17, 20 |
@@ -1885,6 +1885,13 @@ many run at once, and which must finish before others start. turnip offers
 neither today: `executeTargets` starts a goroutine per Target and waits
 for all of them (`internal/orchestrator/execute.go:30-48`), with no cap
 and no ordering.
+
+**Not tied to Terraform** (corrected 2026-09-24). This entry once
+depended on Slice 7, because its motivating example below is Terraform
+workspaces, but nothing in it touches a Plugin: the cap and the ordering
+both live in the orchestrator. A Helmfile repository with one Project per
+cluster has the same fan-out, and the same need to apply foundational
+releases before their dependants.
 
 **The motivating scale is Terraform workspaces**, and it is worth being
 precise about why, because the obvious worry is the wrong one.
