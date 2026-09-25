@@ -105,6 +105,7 @@ func TestIntegration_AutoPlanFlowEndToEnd(t *testing.T) {
 	o := &Orchestrator{
 		locks:              &fakeLockManager{},
 		plugins:            testRegistry(),
+		catalog:            testCatalog(),
 		records:            newRecordStore(redisClient),
 		redis:              redisClient,
 		installationClient: func(id int64) github.GitHubClient { return prClient },
@@ -139,7 +140,7 @@ func TestIntegration_CommentTriggeredApplyFlowEndToEnd(t *testing.T) {
 	locks := &fakeLockManager{
 		isLockedByPRFunc: func(ctx context.Context, projectKey string, prNumber int) (bool, error) { return true, nil },
 		getPlanFunc: func(ctx context.Context, projectKey string, prNumber int) (lock.PlanRecord, error) {
-			return lock.PlanRecord{Data: []byte("plan-data")}, nil
+			return lock.PlanRecord{Data: []byte("plan-data"), ImageDigest: testImageDigest}, nil
 		},
 		releaseLockFunc: func(ctx context.Context, projectKey string, prNumber int) error {
 			released = true
@@ -156,6 +157,7 @@ func TestIntegration_CommentTriggeredApplyFlowEndToEnd(t *testing.T) {
 	o := &Orchestrator{
 		locks:              locks,
 		plugins:            testRegistry(),
+		catalog:            testCatalog(),
 		records:            newRecordStore(redisClient),
 		redis:              redisClient,
 		installationClient: func(id int64) github.GitHubClient { return client },

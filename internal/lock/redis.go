@@ -128,6 +128,7 @@ func (m *RedisLockManager) Apply(ctx context.Context, projectKey string, prNumbe
 				next.PlanArgs = plan.Args
 				next.PlanData = plan.Data
 				next.PlanSummary = plan.Summary
+				next.PlanImageDigest = plan.ImageDigest
 			}
 			op, updated = "set", &next
 		}
@@ -218,9 +219,10 @@ func (m *RedisLockManager) GetPlan(ctx context.Context, projectKey string, prNum
 	}
 
 	return PlanRecord{
-		Data:    data.PlanData,
-		Args:    data.PlanArgs,
-		Summary: data.PlanSummary,
+		Data:        data.PlanData,
+		Args:        data.PlanArgs,
+		Summary:     data.PlanSummary,
+		ImageDigest: data.PlanImageDigest,
 	}, nil
 }
 

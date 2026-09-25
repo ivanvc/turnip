@@ -52,7 +52,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 41 | Runner Pods Run Without Disruption | `runner-disruption` | Not Started | Slices 5, 39, 40 |
 | 42 | The Workspace on a Per-Runner Volume | `runner-workspace-volume` | Not Started | Slices 12, 39 |
 | 43 | Runner Settings Shared Across Projects | `runner-defaults` | Not Started | Slices 13, 16 |
-| 44 | Running a Tool Image the Operator Approves | `tool-images` | Not Started | Slices 14, 20, 45 |
+| 44 | Running a Tool Image the Operator Approves | `tool-images` | Complete | Slices 14, 20, 45 |
 | 45 | One Place to Add a Tool | `plugin-registry` | Complete | Slices 2, 14 |
 
 ## Slice Details
@@ -189,6 +189,12 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
   plugins, and a program needs a language runtime chosen by the user's
   code — so it is unlikely to be a copy-out tool, and deciding that belongs
   with the work that makes Pulumi actually run
+- A custom image for a copy-out tool runs in that image, not copied out of
+  it (Slice 44, Requirement 5.1): an operator's image is chosen for the
+  utilities it carries beside the binary. The orchestrator already forces
+  run-in-image for any image other than the Alias's; this slice confirms it
+  with the real Terraform Plugin, and documents what a custom Terraform
+  image must provide
 - Property tests for each plugin
 
 **Global requirements covered**: 11, 12
@@ -3026,10 +3032,9 @@ does not carry it.
 **Settled**: `uses:` is `alias@tag` or `image@tag` (`helmfile@v1.7.4`,
 `ghcr.io/org/helmfile-aws@latest`, or a `sha256:` digest), one exact tag
 used verbatim, never naming the tool. Each Plugin defines its own alias
-(its name), in the Access_List's own format, allowing full versions or
-digests of the vendor image, along with how its tool is provisioned, so
-adding a tool is one place; the strategies themselves are implemented
-once, outside the Plugins. The operator's Access_List
+(its name), allowing full versions or digests of the image its
+provisioning Spec declares (Slice 45); turnip keeps no version-shape
+check of its own beyond those globs. The operator's Access_List
 holds `tool:image@glob` entries only, the entry supplying the tool; plain
 globs on the tag (`@*`, `@1.*.*`, `@latest`, `@sha256:*`) decide what is
 allowed. The apply runs the exact digest the plan's Pod ran, so any tag is

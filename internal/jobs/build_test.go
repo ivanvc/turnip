@@ -60,6 +60,9 @@ func testParams(tool string) OperationParams {
 		PlanData:     []byte("plan-bytes"),
 		RunnerImage:  "ghcr.io/ivanvc/turnip-runner:test",
 		Provisioning: testSpecs[tool],
+		// The reference the orchestrator composes for a Tag.
+		ImageRef:   testSpecs[tool].Image + ":" + testVersions[tool],
+		PullAlways: true,
 	}
 }
 
@@ -384,17 +387,51 @@ func TestBuildJob_RunnerImageFromParams(t *testing.T) {
 		"the main container is the vendor's image here")
 }
 
-// The image is the Spec's repository tagged with the version exactly as
-// the Project wrote it: a "v" is neither added nor removed, since vendors
-// differ on whether their tags carry one (Requirement 4.4).
-func TestBuildJob_ImageIsSpecImageTaggedWithVersionAsWritten(t *testing.T) {
-	copyOutJob, err := BuildJob(testProject("terraform"), testParams("terraform"))
-	require.NoError(t, err)
-	assert.Equal(t, "hashicorp/terraform:1.9.5", initContainerNamed(t, "provision-terraform", copyOutJob).Image)
+// The tool's image is ImageRef exactly as given: BuildJob composes nothing
+// from the Spec's image or the Project's version, so a digest reference
+// reaches the Pod unchanged.
+func TestBuildJob_ImageIsImageRefAsGiven(t *testing.T) {
+	const digestRef = "ghcr.io/helmfile/helmfile@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-	runInImageJob, err := BuildJob(testProject("helmfile"), testParams("helmfile"))
+	params := testParams("terraform")
+	params.ImageRef = "registry.local:5000/terraform@sha256:abc"
+	copyOutJob, err := BuildJob(testProject("terraform"), params)
 	require.NoError(t, err)
-	assert.Equal(t, "ghcr.io/helmfile/helmfile:v1.7.4", mainContainer(t, runInImageJob).Image)
+	assert.Equal(t, params.ImageRef, initContainerNamed(t, "provision-terraform", copyOutJob).Image)
+
+	params = testParams("helmfile")
+	params.ImageRef = digestRef
+	runInImageJob, err := BuildJob(testProject("helmfile"), params)
+	require.NoError(t, err)
+	assert.Equal(t, digestRef, mainContainer(t, runInImageJob).Image)
+}
+
+// The container running the tool's image pulls Always for a tag and
+// IfNotPresent otherwise; turnip's own Runner-image containers are left
+// with the cluster's default policy (Requirement 6.4).
+func TestBuildJob_PullPolicyOnToolContainer(t *testing.T) {
+	for _, pullAlways := range []bool{true, false} {
+		want := corev1.PullIfNotPresent
+		if pullAlways {
+			want = corev1.PullAlways
+		}
+
+		params := testParams("terraform")
+		params.PullAlways = pullAlways
+		copyOutJob, err := BuildJob(testProject("terraform"), params)
+		require.NoError(t, err)
+		assert.Equal(t, want, initContainerNamed(t, "provision-terraform", copyOutJob).ImagePullPolicy)
+		assert.Empty(t, initContainerNamed(t, "clone", copyOutJob).ImagePullPolicy)
+		assert.Empty(t, mainContainer(t, copyOutJob).ImagePullPolicy)
+
+		params = testParams("helmfile")
+		params.PullAlways = pullAlways
+		runInImageJob, err := BuildJob(testProject("helmfile"), params)
+		require.NoError(t, err)
+		assert.Equal(t, want, mainContainer(t, runInImageJob).ImagePullPolicy)
+		assert.Empty(t, initContainerNamed(t, "copy-runner", runInImageJob).ImagePullPolicy)
+		assert.Empty(t, initContainerNamed(t, "clone", runInImageJob).ImagePullPolicy)
+	}
 }
 
 // The Runner's credential is a ServiceAccountToken projection scoped to

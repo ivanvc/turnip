@@ -70,7 +70,15 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 		}
 	}
 
-	diagnostic := timeoutDiagnostic(rec.JobName, status)
+	// A timed-out plan changes nothing; a timed-out mutating Operation
+	// invalidates the stored plan, because the Runner may still be
+	// executing and infrastructure may already have moved.
+	ev := lock.EventMutatingTimedOut
+	if p, ok := o.plugins[rec.Project.Tool]; ok && rec.Operation == p.GetPlanOperation() {
+		ev = lock.EventPlanTimedOut
+	}
+
+	diagnostic := timeoutDiagnostic(rec.JobName, status, ev == lock.EventMutatingTimedOut)
 	pr := github.ProjectResult{
 		ProjectName: rec.Project.Name,
 		Tool:        rec.Project.Tool,
@@ -84,13 +92,6 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 		Locked: true,
 	}
 
-	// A timed-out plan changes nothing; a timed-out mutating Operation
-	// invalidates the stored plan, because the Runner may still be
-	// executing and infrastructure may already have moved.
-	ev := lock.EventMutatingTimedOut
-	if p, ok := o.plugins[rec.Project.Tool]; ok && rec.Operation == p.GetPlanOperation() {
-		ev = lock.EventPlanTimedOut
-	}
 	switch tr, err := o.locks.Apply(ctx, rec.ProjectKey, rec.PRNumber, ev, nil); {
 	case err != nil:
 		slog.ErrorContext(ctx, "applying lock event for timed-out operation", "operation_id", operationID, "event", string(ev), "error", err)
@@ -139,10 +140,18 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 }
 
 // timeoutDiagnostic renders a JobStatus into readable text (Requirement
-// 8.4), rather than a bare "timed out" message.
-func timeoutDiagnostic(jobName string, status *jobs.JobStatus) string {
+// 8.4), rather than a bare "timed out" message. mutating reports whether
+// the Operation was a Mutating_Operation, which runs the image digest its
+// plan recorded: a tool image it cannot pull most likely means that digest
+// is gone from the registry, and only a re-plan records one that exists.
+// A pull failure on a container running turnip's own Runner image is not
+// the recorded digest's doing, and gets the generic diagnostic.
+func timeoutDiagnostic(jobName string, status *jobs.JobStatus, mutating bool) string {
 	if status == nil || !status.JobFound {
 		return "No Job/Pod found for this Operation; it may have been deleted or never successfully scheduled"
+	}
+	if mutating && status.ToolWaiting && isImagePullFailure(status.PodReason) {
+		return fmt.Sprintf("Job %s: the image could not be pulled (%s). The image digest the plan recorded may no longer exist in the registry; re-plan", jobName, status.PodReason)
 	}
 	if status.PodReason != "" {
 		return fmt.Sprintf("Job %s: container stuck (%s)", jobName, status.PodReason)
@@ -151,4 +160,10 @@ func timeoutDiagnostic(jobName string, status *jobs.JobStatus) string {
 		return fmt.Sprintf("Job %s: Pod still %s after 5 minutes", jobName, status.PodPhase)
 	}
 	return fmt.Sprintf("Job %s: no Pod found yet after 5 minutes", jobName)
+}
+
+// isImagePullFailure reports whether a container's waiting reason means
+// its image could not be pulled.
+func isImagePullFailure(reason string) bool {
+	return reason == "ErrImagePull" || reason == "ImagePullBackOff"
 }

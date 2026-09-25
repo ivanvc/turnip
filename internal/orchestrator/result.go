@@ -138,6 +138,9 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 		Destroy: int(result.Changes.Destroy),
 	}
 	ev, planRec := o.lockEventFor(rec, result.Success, summary, result.PlanData)
+	if planRec != nil {
+		planRec.ImageDigest = o.planImageDigest(ctx, rec)
+	}
 	tr, lockErr := o.locks.Apply(ctx, rec.ProjectKey, rec.PRNumber, ev, planRec)
 	if lockErr == nil {
 		slog.InfoContext(ctx, "operation result received",
@@ -213,4 +216,35 @@ func changeSummaryText(c rpc.ChangeSummary) string {
 		return ""
 	}
 	return fmt.Sprintf("add: %d, change: %d, destroy: %d", c.Add, c.Change, c.Destroy)
+}
+
+// planImageDigest reads the digest of the image a plan's Pod ran, for
+// every Mutating_Operation that follows to run exactly it. It is read at
+// the result rather than earlier because the PlanRecord is written here
+// and the Pod is still there: Jobs are kept for their TTL.
+//
+// "" when it cannot be read (the Pod gone, the API failing, or an imageID
+// that is not a repository digest). The plan still succeeds, and the
+// Mutating_Operation refuses instead of re-resolving the tag.
+func (o *Orchestrator) planImageDigest(ctx context.Context, rec *OperationRecord) string {
+	log := slog.With("operation_id", rec.OperationID, "job", rec.JobName, "lock_key", rec.ProjectKey)
+	if rec.JobName == "" {
+		log.ErrorContext(ctx, "recording plan image digest: no job name was recorded for this operation")
+		return ""
+	}
+	status, err := o.jobs.Status(ctx, rec.JobName)
+	if err != nil {
+		log.ErrorContext(ctx, "recording plan image digest: reading job status", "error", err)
+		return ""
+	}
+	if status == nil || !status.JobFound || status.ImageID == "" {
+		log.ErrorContext(ctx, "recording plan image digest: the pod reports no image id")
+		return ""
+	}
+	digest := imageDigest(status.ImageID)
+	if digest == "" {
+		log.ErrorContext(ctx, "recording plan image digest: the image id is not a pullable sha256 repository digest", "image_id", status.ImageID)
+		return ""
+	}
+	return digest
 }

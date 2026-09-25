@@ -44,6 +44,7 @@ func testCommentsOrchestrator(t *testing.T, minimizeFlag bool) (*Orchestrator, *
 	client := newTestRedisClient(t)
 	o := &Orchestrator{
 		plugins:                      testRegistry(),
+		catalog:                      testCatalog(),
 		records:                      newRecordStore(client),
 		redis:                        client,
 		minimizeOutdatedPlanComments: minimizeFlag,

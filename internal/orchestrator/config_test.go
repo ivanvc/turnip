@@ -32,7 +32,7 @@ func envMap(overrides map[string]string) func(string) string {
 }
 
 func TestConfigFromEnv_FullyPopulated(t *testing.T) {
-	cfg, err := ConfigFromEnv(envMap(nil))
+	cfg, err := ConfigFromEnv(envMap(nil), NewPluginRegistry())
 	require.NoError(t, err)
 	assert.EqualValues(t, 123, cfg.GitHubAppID)
 	assert.Equal(t, []byte("fake-pem"), cfg.GitHubPrivateKey)
@@ -47,36 +47,36 @@ func TestConfigFromEnv_FullyPopulated(t *testing.T) {
 }
 
 func TestConfigFromEnv_MinimizeFlagDefaultsFalse(t *testing.T) {
-	cfg, err := ConfigFromEnv(envMap(nil))
+	cfg, err := ConfigFromEnv(envMap(nil), NewPluginRegistry())
 	require.NoError(t, err)
 	assert.False(t, cfg.MinimizeOutdatedPlanComments)
 }
 
 func TestConfigFromEnv_MinimizeFlagParsesTrue(t *testing.T) {
-	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS": "true"}))
+	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS": "true"}), NewPluginRegistry())
 	require.NoError(t, err)
 	assert.True(t, cfg.MinimizeOutdatedPlanComments)
 }
 
 func TestConfigFromEnv_MinimizeFlagInvalidValue(t *testing.T) {
-	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS": "not-a-bool"}))
+	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS": "not-a-bool"}), NewPluginRegistry())
 	assert.Error(t, err)
 }
 
 func TestConfigFromEnv_RunnerImageRoundTrip(t *testing.T) {
-	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_IMAGE": "ghcr.io/ivanvc/turnip-runner:v1.2.3"}))
+	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_IMAGE": "ghcr.io/ivanvc/turnip-runner:v1.2.3"}), NewPluginRegistry())
 	require.NoError(t, err)
 	assert.Equal(t, "ghcr.io/ivanvc/turnip-runner:v1.2.3", cfg.RunnerImage)
 }
 
 func TestConfigFromEnv_RunnerServiceAccountRoundTrip(t *testing.T) {
-	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_SERVICE_ACCOUNT": "turnip-runner"}))
+	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_SERVICE_ACCOUNT": "turnip-runner"}), NewPluginRegistry())
 	require.NoError(t, err)
 	assert.Equal(t, "turnip-runner", cfg.RunnerServiceAccount)
 }
 
 func TestConfigFromEnv_RunnerServiceAccountOptional(t *testing.T) {
-	cfg, err := ConfigFromEnv(envMap(nil))
+	cfg, err := ConfigFromEnv(envMap(nil), NewPluginRegistry())
 	require.NoError(t, err)
 	assert.Empty(t, cfg.RunnerServiceAccount, "unset must not be a missing-variable error")
 }
@@ -84,7 +84,7 @@ func TestConfigFromEnv_RunnerServiceAccountOptional(t *testing.T) {
 // Unset must keep behaving exactly as turnip did before the setting
 // existed: a repository could never choose its own ServiceAccount.
 func TestConfigFromEnv_AllowedOverridesDefaultsToNothing(t *testing.T) {
-	cfg, err := ConfigFromEnv(envMap(nil))
+	cfg, err := ConfigFromEnv(envMap(nil), NewPluginRegistry())
 	require.NoError(t, err)
 	assert.Empty(t, cfg.AllowedOverrides)
 }
@@ -92,7 +92,7 @@ func TestConfigFromEnv_AllowedOverridesDefaultsToNothing(t *testing.T) {
 func TestConfigFromEnv_AllowedOverridesParsesList(t *testing.T) {
 	cfg, err := ConfigFromEnv(envMap(map[string]string{
 		"TURNIP_ALLOWED_OVERRIDES": " runner.serviceAccount ",
-	}))
+	}), NewPluginRegistry())
 	require.NoError(t, err)
 	assert.True(t, cfg.AllowedOverrides[overrideServiceAccount], "surrounding whitespace is trimmed")
 }
@@ -103,14 +103,14 @@ func TestConfigFromEnv_AllowedOverridesParsesList(t *testing.T) {
 func TestConfigFromEnv_AllowedOverridesUnknownPathIsAnError(t *testing.T) {
 	_, err := ConfigFromEnv(envMap(map[string]string{
 		"TURNIP_ALLOWED_OVERRIDES": "runner.serviceaccount",
-	}))
+	}), NewPluginRegistry())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "runner.serviceaccount", "the error names what was written")
 	assert.Contains(t, err.Error(), overrideServiceAccount, "and what was probably meant")
 }
 
 func TestConfigFromEnv_MissingRunnerImage(t *testing.T) {
-	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_IMAGE": ""}))
+	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_IMAGE": ""}), NewPluginRegistry())
 	require.Error(t, err)
 	var missing *MissingEnvVarsError
 	require.ErrorAs(t, err, &missing)
@@ -121,7 +121,7 @@ func TestConfigFromEnv_MissingVariablesNamedTogether(t *testing.T) {
 	_, err := ConfigFromEnv(envMap(map[string]string{
 		"TURNIP_REDIS_ADDR": "",
 		"TURNIP_HTTP_ADDR":  "",
-	}))
+	}), NewPluginRegistry())
 	require.Error(t, err)
 	var missing *MissingEnvVarsError
 	require.ErrorAs(t, err, &missing)
@@ -130,7 +130,7 @@ func TestConfigFromEnv_MissingVariablesNamedTogether(t *testing.T) {
 }
 
 func TestConfigFromEnv_MissingAppID(t *testing.T) {
-	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_GITHUB_APP_ID": ""}))
+	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_GITHUB_APP_ID": ""}), NewPluginRegistry())
 	require.Error(t, err)
 	var missing *MissingEnvVarsError
 	require.ErrorAs(t, err, &missing)
@@ -138,7 +138,7 @@ func TestConfigFromEnv_MissingAppID(t *testing.T) {
 }
 
 func TestConfigFromEnv_InvalidAppID(t *testing.T) {
-	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_GITHUB_APP_ID": "not-a-number"}))
+	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_GITHUB_APP_ID": "not-a-number"}), NewPluginRegistry())
 	assert.Error(t, err)
 }
 
@@ -150,13 +150,13 @@ func TestConfigFromEnv_PrivateKeyFromPath(t *testing.T) {
 	cfg, err := ConfigFromEnv(envMap(map[string]string{
 		"TURNIP_GITHUB_PRIVATE_KEY":      "",
 		"TURNIP_GITHUB_PRIVATE_KEY_PATH": path,
-	}))
+	}), NewPluginRegistry())
 	require.NoError(t, err)
 	assert.Equal(t, []byte("pem-from-file"), cfg.GitHubPrivateKey)
 }
 
 func TestConfigFromEnv_MissingPrivateKey(t *testing.T) {
-	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_GITHUB_PRIVATE_KEY": ""}))
+	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_GITHUB_PRIVATE_KEY": ""}), NewPluginRegistry())
 	require.Error(t, err)
 	var missing *MissingEnvVarsError
 	require.ErrorAs(t, err, &missing)

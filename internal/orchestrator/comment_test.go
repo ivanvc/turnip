@@ -132,6 +132,7 @@ func testCommentOrchestrator(t *testing.T, locks lock.LockManager) *Orchestrator
 		locks:              locks,
 		jobs:               &fakeJobCreator{t: t, redis: client, result: github.ProjectResult{Success: true}},
 		plugins:            testRegistry(),
+		catalog:            testCatalog(),
 		records:            newRecordStore(client),
 		redis:              client,
 		installationClient: func(id int64) github.GitHubClient { return nil }, // executeOne doesn't reconstruct clients

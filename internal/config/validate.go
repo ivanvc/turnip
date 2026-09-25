@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -15,26 +14,13 @@ import (
 // file as a whole rather than to any one project.
 const configFileRef = "turnip.yaml"
 
-// versionPattern is a permissive semver-shaped check ("v1.7.4", "1.9.5",
-// "3.130.0-rc1"), not a vendor-specific grammar. It rejects obviously-wrong
-// input (typos, a floating tag like "latest", stray whitespace) rather
-// than enumerating what a vendor has published: turnip must never lag
-// behind a tool's latest release, so any well-formed version is accepted
-// whether or not turnip has heard of it.
-//
-// The leading "v" is optional because the version is the image tag as
-// written, and vendors differ: helmfile's tags carry one, terraform's do
-// not. Checking it here puts a malformed version on the pull request
-// rather than failing when the Runner's image is pulled.
-var versionPattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
-
 // usesExample is the fixed example the uses: errors show. It names a real
 // published tag so that copying it works, whichever tools are registered.
 const usesExample = "helmfile@v1.7.4"
 
-func isWellFormedVersion(v string) bool {
-	return versionPattern.MatchString(v)
-}
+// allowedImagesSetting is the Server setting an operator adds an Entry to,
+// named in the error for a uses: line no Entry allows.
+const allowedImagesSetting = "TURNIP_ALLOWED_IMAGES"
 
 // validateSchemaVersion checks the one field that explains every other
 // error in a file written for a different schema. Parse calls it before
@@ -67,13 +53,14 @@ func validateSchemaVersion(c *Config) error {
 // validate checks a parsed Config's projects, accumulating every violation
 // found rather than stopping at the first one. schemaVersion is not
 // checked here; see validateSchemaVersion.
-func validate(c *Config, tools []string) error {
+func validate(c *Config, catalog Catalog) error {
 	var errs ValidationErrors
 
 	seenNames := make(map[string]bool, len(c.Projects))
 
-	for i, p := range c.Projects {
-		ref := projectRef(p, i)
+	for i := range c.Projects {
+		p := &c.Projects[i]
+		ref := projectRef(*p, i)
 
 		if p.Directory == "" {
 			errs = append(errs, &ValidationError{
@@ -83,7 +70,7 @@ func validate(c *Config, tools []string) error {
 			})
 		}
 
-		errs = append(errs, validateUses(p, ref, tools)...)
+		errs = append(errs, resolveUses(p, ref, catalog)...)
 
 		// Names a trigger line could never address are rejected here, where
 		// the file is written, rather than when someone tries to select the
@@ -164,70 +151,6 @@ func validate(c *Config, tools []string) error {
 	if len(errs) == 0 {
 		return nil
 	}
-	return errs
-}
-
-// validateUses checks a Project's tool reference. It reads the raw Uses
-// string as well as the decomposed parts, because only the raw form
-// distinguishes "no version given" from a trailing "@" with nothing after
-// it, and the two call for different advice.
-func validateUses(p Project, ref string, tools []string) ValidationErrors {
-	var errs ValidationErrors
-
-	if p.Uses == "" {
-		return ValidationErrors{{
-			ProjectRef: ref,
-			Field:      "uses",
-			Message: fmt.Sprintf(
-				"required; set uses: <tool>@<version>, e.g. %q, where <tool> is %s",
-				usesExample, oneOf(tools),
-			),
-		}}
-	}
-
-	switch {
-	case p.Tool == "":
-		errs = append(errs, &ValidationError{
-			ProjectRef: ref,
-			Field:      "uses",
-			Message:    fmt.Sprintf("%q names no tool before %q", p.Uses, "@"),
-		})
-	case !slices.Contains(tools, p.Tool):
-		errs = append(errs, &ValidationError{
-			ProjectRef: ref,
-			Field:      "uses",
-			Message:    fmt.Sprintf("unsupported tool %q, must be %s", p.Tool, oneOf(tools)),
-		})
-	}
-
-	// turnip keeps no default version: one would choose what a Project runs
-	// from turnip's release rather than from the repository, and change it
-	// with no diff to review.
-	_, rawVersion, found := strings.Cut(p.Uses, "@")
-	switch {
-	case !found:
-		errs = append(errs, &ValidationError{
-			ProjectRef: ref,
-			Field:      "uses",
-			Message:    fmt.Sprintf("%q names no version; name one as <tool>@<version>, e.g. %q", p.Uses, usesExample),
-		})
-	case rawVersion == "":
-		errs = append(errs, &ValidationError{
-			ProjectRef: ref,
-			Field:      "uses",
-			Message:    fmt.Sprintf(`version is empty after "@"; name one, e.g. %q`, usesExample),
-		})
-	case !isWellFormedVersion(p.ToolVersion):
-		errs = append(errs, &ValidationError{
-			ProjectRef: ref,
-			Field:      "uses",
-			Message: fmt.Sprintf(
-				"%q is not a well-formed version (expected roughly semver, e.g. %q); floating tags are not accepted",
-				rawVersion, "v1.7.4",
-			),
-		})
-	}
-
 	return errs
 }
 

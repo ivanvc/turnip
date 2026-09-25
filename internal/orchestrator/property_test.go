@@ -72,6 +72,7 @@ func TestProperty_RunnerCreationPerTriggeredProject(t *testing.T) {
 			locks:         &fakeLockManager{},
 			jobs:          jobsClient,
 			plugins:       testRegistry(),
+			catalog:       testCatalog(),
 			records:       newRecordStore(redisClient),
 			redis:         redisClient,
 			startTimeout:  5 * time.Minute,
@@ -201,7 +202,7 @@ func TestProperty_ConsolidatedCommentContainsAllProjectResults(t *testing.T) {
 		}
 
 		redisClient := newPropertyRedisClient(t)
-		o := &Orchestrator{plugins: testRegistry(), records: newRecordStore(redisClient), redis: redisClient}
+		o := &Orchestrator{plugins: testRegistry(), catalog: testCatalog(), records: newRecordStore(redisClient), redis: redisClient}
 		fake := &fakeCommentClient{}
 
 		o.postResults(context.Background(), fake, testRepo, 42, results)

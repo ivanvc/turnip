@@ -127,6 +127,7 @@ func newHAOrchestrator(t *testing.T, addr string, client github.GitHubClient) *O
 	return &Orchestrator{
 		locks:              lock.NewRedisLockManager(redisClient),
 		plugins:            testRegistry(),
+		catalog:            testCatalog(),
 		records:            newRecordStore(redisClient),
 		redis:              redisClient,
 		installationClient: func(id int64) github.GitHubClient { return client },

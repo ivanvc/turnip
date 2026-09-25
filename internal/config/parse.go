@@ -37,11 +37,12 @@ var unknownFieldRe = regexp.MustCompile(`^line (\d+): field (\S+) not found in t
 // unknown-key error per field it carries, burying the single fact that
 // actually explains them.
 //
-// tools is the set of tool names a Project's uses: may name: the names of
-// the Plugins this turnip has registered. It is passed in rather than
-// known here so that this package depends on no Plugin, and error
-// messages list it in the order given, so callers pass it sorted.
-func Parse(data []byte, tools []string) (*Config, error) {
+// catalog is what this Server will run: each registered Plugin's Alias
+// Entries and the operator's Access_List. A Project's uses: line is
+// resolved against it here, so a line no Entry allows is a validation
+// error of the file like any other. It is passed in rather than known here
+// so that this package depends on no Plugin.
+func Parse(data []byte, catalog Catalog) (*Config, error) {
 	var c Config
 	if err := yaml.Unmarshal(data, &c); err != nil {
 		return nil, newParseError(err)
@@ -57,7 +58,7 @@ func Parse(data []byte, tools []string) (*Config, error) {
 
 	applyDefaults(&c)
 
-	if err := validate(&c, tools); err != nil {
+	if err := validate(&c, catalog); err != nil {
 		return nil, err
 	}
 
@@ -122,32 +123,17 @@ func unknownFieldError(entry string) *ValidationError {
 }
 
 // applyDefaults fills in fields derived from what the file said rather
-// than written in it: a Project's tool and version come apart from `uses`,
-// and a Project with no name falls back to its directory (directory is
-// required, so it's always available as an identifier).
+// than written in it: a Project with no name falls back to its directory
+// (directory is required, so it's always available as an identifier). A
+// Project's Tool, Image and ToolVersion are not defaults but a resolution
+// against the Catalog, which validation does.
 func applyDefaults(c *Config) {
 	for i := range c.Projects {
 		p := &c.Projects[i]
-
-		p.Tool, p.ToolVersion = splitUses(p.Uses)
-
 		if p.Name == "" {
 			p.Name = p.Directory
 		}
 	}
-}
-
-// splitUses decomposes "<tool>@<version>" into its parts, keeping the
-// version exactly as written: it becomes the image tag, and whether a tag
-// carries a leading "v" is the vendor's convention, not turnip's. A
-// reference with no "@" yields an empty version, which validation rejects.
-//
-// Nothing here rejects anything: an empty or malformed result is a
-// validation concern, and validate reads the raw Uses string so it can
-// tell "no version given" from "@" with nothing after it.
-func splitUses(uses string) (tool, version string) {
-	tool, version, _ = strings.Cut(uses, "@")
-	return tool, version
 }
 
 // newParseError converts a go.yaml.in/yaml/v3 error into a *ParseError,

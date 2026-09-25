@@ -21,6 +21,7 @@ func testSweepOrchestrator(t *testing.T, jobsClient jobCreator) (*Orchestrator, 
 		installationClient: func(id int64) github.GitHubClient { return fakeClient },
 		jobs:               jobsClient,
 		plugins:            testRegistry(),
+		catalog:            testCatalog(),
 		records:            newRecordStore(client),
 		redis:              client,
 		// The sweep now applies a transition, so it has a Lock dependency

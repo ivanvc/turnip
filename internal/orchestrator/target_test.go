@@ -33,9 +33,14 @@ func (f *fakePlugin) GetOperations() []string   { return f.operations }
 func (f *fakePlugin) GetPlanOperation() string  { return f.planOperation }
 func (f *fakePlugin) GetApplyOperation() string { return f.applyOperation }
 func (f *fakePlugin) ActsWithoutChanges() bool  { return f.actsWithoutChanges }
+
+// Provisioning names an image of the fake's own, so two fakes never list
+// the same image for different tools: a Catalog formed from them would
+// refuse to start (images.go).
 func (f *fakePlugin) Provisioning() provisioning.Spec {
-	return provisioning.Spec{Strategy: provisioning.RunInImage, Image: "ghcr.io/helmfile/helmfile"}
+	return provisioning.Spec{Strategy: provisioning.RunInImage, Image: "ghcr.io/" + f.name + "/" + f.name}
 }
+func (f *fakePlugin) ImageTags() []string { return []string{"v*.*.*", "sha256:*"} }
 func (f *fakePlugin) Execute(ctx context.Context, operation string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
 	panic("not used by target_test.go")
 }
@@ -45,6 +50,12 @@ func testRegistry() PluginRegistry {
 		"helmfile": &fakePlugin{name: "helmfile", operations: []string{"diff", "apply", "sync"}, planOperation: "diff", applyOperation: "apply", actsWithoutChanges: true},
 		"pulumi":   &fakePlugin{name: "pulumi", operations: []string{"preview", "up"}, planOperation: "preview", applyOperation: "up"},
 	}
+}
+
+// testCatalog is the Catalog a Server running testRegistry's Plugins with
+// no Access_List would build.
+func testCatalog() config.Catalog {
+	return NewCatalog(testRegistry(), nil)
 }
 
 func testConfig() *config.Config {

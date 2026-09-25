@@ -37,6 +37,14 @@ type Plugin interface {
 	// the repository's to state in uses:, never a Plugin's default.
 	Provisioning() provisioning.Spec
 
+	// ImageTags returns the Tag_Spec globs this Plugin's Alias allows:
+	// uses: naming the Alias runs the Provisioning image only with a Tag or
+	// Digest one of these matches. The Alias's Entries are formed from the
+	// Plugin's name, its Provisioning image and these globs, so the image is
+	// stated once. Each glob is matched with path.Match over the Tag_Spec's
+	// text.
+	ImageTags() []string
+
 	// Execute runs one of the operations returned by GetOperations.
 	Execute(ctx context.Context, operation string, opts ExecuteOptions) (*ExecuteResult, error)
 }

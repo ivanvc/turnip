@@ -96,6 +96,15 @@ configMapGenerator:
       - TURNIP_RUNNER_IMAGE=ghcr.io/ivanvc/turnip-runner:vX.Y.Z
 ```
 
+Every other setting is optional and listed in `docs/configuration.md`'s
+"The Server's own configuration". Two of them are opt-ins the base leaves
+deliberately unset, and each widens what a pull request can choose:
+`TURNIP_ALLOWED_OVERRIDES` (letting `turnip.yaml` pick the Runner's
+ServiceAccount or its submodule depth) and `TURNIP_ALLOWED_IMAGES`
+(letting `uses:` name a tool image other than the built-in aliases, such
+as one with a cloud CLI added). Add them to the same `literals:` only
+after reading what each costs in [`SECURITY.md`](../SECURITY.md).
+
 **Step 3**: generate the GitHub App credentials Secret from local files:
 `files:`, not `literals:`, for both, so the actual secret material never
 has to appear inline in this YAML at all (keep those two files outside

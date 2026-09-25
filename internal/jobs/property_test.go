@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	"pgregory.net/rapid"
 
 	"github.com/ivanvc/turnip/internal/config"
@@ -45,6 +46,8 @@ func genProject(t *rapid.T) config.Project {
 func genOperationParams(t *rapid.T, tool string) OperationParams {
 	return OperationParams{
 		Provisioning: testSpecs[tool],
+		ImageRef:     testSpecs[tool].Image + ":" + genVersion(t),
+		PullAlways:   rapid.Bool().Draw(t, "pullAlways"),
 		OperationID:  rapid.StringMatching(`[a-f0-9-]{8,36}`).Draw(t, "operationID"),
 		Operation:    rapid.StringMatching(`[a-z]{2,10}`).Draw(t, "operation"),
 		RepoURL:      "https://github.com/" + rapid.StringMatching(`[a-z]{2,10}/[a-z]{2,10}`).Draw(t, "repoURL") + ".git",
@@ -75,17 +78,21 @@ func TestProperty_RunnerJobEnvironmentVariables(t *testing.T) {
 
 // Feature: multi-iac-automation-platform, Property 23a: Runner Job Tool Provisioning
 //
-// The version, as written, tags the container that holds the tool, whichever
-// one that is: the vendor initContainer under copy-out, and the main
-// container under run-in-image, where the vendor image *is* the main
-// container.
+// ImageRef, as given, is the image of the container that holds the tool,
+// whichever one that is: the vendor initContainer under copy-out, and the
+// main container under run-in-image, where the vendor image *is* the main
+// container. That container, and only that one, follows PullAlways.
 func TestProperty_RunnerJobToolProvisioning(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		project := genProject(t)
 		spec := testSpecs[project.Tool]
-		wantImage := spec.Image + ":" + project.ToolVersion
+		params := genOperationParams(t, project.Tool)
+		wantPolicy := corev1.PullIfNotPresent
+		if params.PullAlways {
+			wantPolicy = corev1.PullAlways
+		}
 
-		job, err := BuildJob(project, genOperationParams(t, project.Tool))
+		job, err := BuildJob(project, params)
 		require.NoError(t, err)
 
 		require.Len(t, job.Spec.Template.Spec.Containers, 1)
@@ -95,12 +102,15 @@ func TestProperty_RunnerJobToolProvisioning(t *testing.T) {
 		require.Contains(t, initContainerNames(job), "clone")
 
 		if spec.Strategy == provisioning.RunInImage {
-			require.Equal(t, wantImage, main.Image)
+			require.Equal(t, params.ImageRef, main.Image)
+			require.Equal(t, wantPolicy, main.ImagePullPolicy)
 			return
 		}
 
 		provision := initContainerNamed(t, "provision-"+project.Tool, job)
-		require.Equal(t, wantImage, provision.Image)
+		require.Equal(t, params.ImageRef, provision.Image)
+		require.Equal(t, wantPolicy, provision.ImagePullPolicy)
+		require.Empty(t, main.ImagePullPolicy)
 		require.Len(t, provision.VolumeMounts, 1)
 		require.Contains(t, main.VolumeMounts, provision.VolumeMounts[0],
 			"the main container reads the volume the binary was copied onto")

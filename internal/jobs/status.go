@@ -3,6 +3,8 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -19,6 +21,16 @@ type JobStatus struct {
 	PodPhase   corev1.PodPhase // "" if no Pod found yet
 	PodReason  string          // e.g. "ImagePullBackOff", "" if none
 	PodMessage string
+	// ToolWaiting reports whether the container PodReason comes from is
+	// the one running the tool's image (see toolImageID), rather than one
+	// running turnip's own Runner image. Only then does an image-pull
+	// failure concern the tool image.
+	ToolWaiting bool
+	// ImageID is the imageID Kubernetes reports for the container that
+	// ran the tool's image: the CopyOut provisioning initContainer, or
+	// the runner container under RunInImage. Empty until the runtime has
+	// pulled it.
+	ImageID string
 }
 
 // Status looks up jobName's Job and, if found, its Pod's status. A
@@ -59,27 +71,55 @@ func (c *Client) Status(ctx context.Context, jobName string) (*JobStatus, error)
 	// BackoffLimit: 0 (build.go) guarantees at most one Pod per Job.
 	pod := pods.Items[0]
 	status.PodPhase = pod.Status.Phase
+	status.ImageID = toolImageID(pod.Status)
 
 	// Init-container statuses are checked before regular container
 	// statuses: the tool-provisioning initContainer (Requirement 8.1) is
 	// the more likely place for an ImagePullBackOff than the Runner's own,
 	// already-published image.
-	if reason, message, ok := firstWaiting(pod.Status.InitContainerStatuses); ok {
-		status.PodReason, status.PodMessage = reason, message
-		return status, nil
+	cs, ok := firstWaiting(pod.Status.InitContainerStatuses)
+	if !ok {
+		cs, ok = firstWaiting(pod.Status.ContainerStatuses)
 	}
-	if reason, message, ok := firstWaiting(pod.Status.ContainerStatuses); ok {
-		status.PodReason, status.PodMessage = reason, message
+	if ok {
+		status.PodReason, status.PodMessage = cs.State.Waiting.Reason, cs.State.Waiting.Message
+		status.ToolWaiting = cs.Name == toolContainerName(pod.Status)
 	}
 
 	return status, nil
 }
 
-func firstWaiting(statuses []corev1.ContainerStatus) (reason, message string, ok bool) {
+func firstWaiting(statuses []corev1.ContainerStatus) (corev1.ContainerStatus, bool) {
 	for _, cs := range statuses {
 		if cs.State.Waiting != nil {
-			return cs.State.Waiting.Reason, cs.State.Waiting.Message, true
+			return cs, true
 		}
 	}
-	return "", "", false
+	return corev1.ContainerStatus{}, false
+}
+
+// toolImageID finds the container that ran the tool's image. BuildJob
+// gives a CopyOut Pod a provisioning initContainer, whose image is the
+// tool's; without one, the Pod is RunInImage and the runner container
+// runs the tool's image itself.
+func toolImageID(status corev1.PodStatus) string {
+	name := toolContainerName(status)
+	for _, cs := range slices.Concat(status.InitContainerStatuses, status.ContainerStatuses) {
+		if cs.Name == name {
+			return cs.ImageID
+		}
+	}
+	return ""
+}
+
+// toolContainerName names the container that runs the tool's image: the
+// CopyOut provisioning initContainer when the Pod has one, and otherwise
+// (RunInImage) the runner container.
+func toolContainerName(status corev1.PodStatus) string {
+	for _, cs := range status.InitContainerStatuses {
+		if strings.HasPrefix(cs.Name, provisionContainerPrefix) {
+			return cs.Name
+		}
+	}
+	return runnerContainerName
 }

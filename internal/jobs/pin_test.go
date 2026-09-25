@@ -23,6 +23,11 @@ import (
 // becomes "v1.7.4", because `uses:` keeps the "v" as written, and
 // OperationParams gains the Helmfile Plugin's provisioning Spec, because
 // the jobs package stops keeping its own table of tools.
+//
+// Slice 44 (Requirement 6.4) adds the finished reference the orchestrator
+// composes for a Tag, ImageRef, and PullAlways, true for a Tag. The Job
+// is the same apart from the pull policy on the container running the
+// tool.
 func pinnedHelmfileInput() (config.Project, OperationParams) {
 	project := config.Project{
 		Name:        "web",
@@ -46,6 +51,8 @@ func pinnedHelmfileInput() (config.Project, OperationParams) {
 			Strategy: provisioning.RunInImage,
 			Image:    "ghcr.io/helmfile/helmfile",
 		},
+		ImageRef:   "ghcr.io/helmfile/helmfile:v1.7.4",
+		PullAlways: true,
 	}
 	return project, params
 }
@@ -129,11 +136,12 @@ func TestBuildJob_PinnedHelmfileJob(t *testing.T) {
 					},
 					Containers: []corev1.Container{
 						{
-							Name:         "runner",
-							Image:        "ghcr.io/helmfile/helmfile:v1.7.4",
-							Command:      []string{"/turnip/bin/runner"},
-							Env:          env(),
-							VolumeMounts: []corev1.VolumeMount{binMount, workspaceMount, tokenMount},
+							Name:            "runner",
+							Image:           "ghcr.io/helmfile/helmfile:v1.7.4",
+							ImagePullPolicy: corev1.PullAlways,
+							Command:         []string{"/turnip/bin/runner"},
+							Env:             env(),
+							VolumeMounts:    []corev1.VolumeMount{binMount, workspaceMount, tokenMount},
 						},
 					},
 					Volumes: []corev1.Volume{

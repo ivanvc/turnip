@@ -48,6 +48,7 @@ func stuckCheckOrchestrator(t *testing.T, locks lock.LockManager) (*Orchestrator
 		locks:            locks,
 		jobs:             &fakeJobCreator{t: t, redis: client},
 		plugins:          testRegistry(),
+		catalog:          testCatalog(),
 		records:          newRecordStore(client),
 		redis:            client,
 		allowedOverrides: defaultAllowedOverrides(),
@@ -64,7 +65,7 @@ var stuckCheckRef = prRef{Owner: "owner", Repo: "repo", PRNumber: 42, HeadSHA: "
 func applyLocks() *fakeLockManager {
 	return &fakeLockManager{
 		getPlanFunc: func(ctx context.Context, projectKey string, prNumber int) (lock.PlanRecord, error) {
-			return lock.PlanRecord{Data: []byte("plan-data")}, nil
+			return lock.PlanRecord{Data: []byte("plan-data"), ImageDigest: testImageDigest}, nil
 		},
 	}
 }

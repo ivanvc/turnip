@@ -19,7 +19,7 @@ projects:
       region: us-east-1
 `)
 
-	c, err := Parse(data, testTools)
+	c, err := Parse(data, testCatalog)
 	require.NoError(t, err)
 
 	got := c.Projects[0].With
@@ -39,7 +39,7 @@ projects:
     uses: terraform@1.9.5
 `)
 
-	c, err := Parse(data, testTools)
+	c, err := Parse(data, testCatalog)
 	require.NoError(t, err)
 	assert.Nil(t, c.Projects[0].With)
 }
@@ -50,7 +50,7 @@ projects:
 func TestParse_UnknownKeyInsideWithIsAccepted(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - directory: d\n    uses: helmfile@v1.7.4\n    with:\n      somethingTurnipNeverHeardOf: yes\n")
 
-	c, err := Parse(data, testTools)
+	c, err := Parse(data, testCatalog)
 	require.NoError(t, err)
 	assert.Equal(t, "yes", c.Projects[0].With["somethingTurnipNeverHeardOf"])
 }

@@ -10,8 +10,40 @@ import (
 // testTools stands in for the registered Plugins' names. Several are
 // listed, beyond the one Plugin turnip ships today, so that the tests
 // exercise a list rather than a single name; this package only ever sees
-// the names it is given.
+// the Catalog it is given.
 var testTools = []string{"helmfile", "pulumi", "terraform"}
+
+// testCatalog gives each of testTools an Alias and allows nothing else.
+var testCatalog = catalogFor(testTools)
+
+// testAliasImages are the vendor images the test Aliases stand for.
+var testAliasImages = map[string]string{
+	"helmfile":  "ghcr.io/helmfile/helmfile",
+	"pulumi":    "docker.io/pulumi/pulumi-base",
+	"terraform": "docker.io/hashicorp/terraform",
+}
+
+// catalogFor builds a Catalog with an Alias for each tool and allowed as
+// its Access_List. helmfile's Alias is the Helmfile Plugin's own (v*.*.*
+// and sha256:*); any other tool's allows full versions with no "v", as
+// terraform's and pulumi's vendors tag them, and digests.
+func catalogFor(tools []string, allowed ...Entry) Catalog {
+	c := Catalog{Aliases: map[string][]Entry{}, Allowed: allowed}
+	for _, tool := range tools {
+		image, ok := testAliasImages[tool]
+		if !ok {
+			image = "ghcr.io/example/" + tool
+		}
+		globs := []string{"*.*.*", "sha256:*"}
+		if tool == "helmfile" {
+			globs = []string{"v*.*.*", "sha256:*"}
+		}
+		for _, g := range globs {
+			c.Aliases[tool] = append(c.Aliases[tool], Entry{Tool: tool, Image: image, Glob: g})
+		}
+	}
+	return c
+}
 
 func TestParse_ValidRoundTrip(t *testing.T) {
 	data := []byte(`
@@ -26,7 +58,7 @@ projects:
       workspace: prod
 `)
 
-	c, err := Parse(data, testTools)
+	c, err := Parse(data, testCatalog)
 	require.NoError(t, err)
 	assert.Equal(t, SupportedSchemaVersion, c.SchemaVersion)
 	require.Len(t, c.Projects, 1)
@@ -43,7 +75,7 @@ projects:
 func TestParse_MalformedYAML(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - name: [unclosed\n")
 
-	c, err := Parse(data, testTools)
+	c, err := Parse(data, testCatalog)
 	require.Nil(t, c)
 
 	var parseErr *ParseError
@@ -53,7 +85,7 @@ func TestParse_MalformedYAML(t *testing.T) {
 func TestParse_NameDefaultsToDirectory(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - directory: infra/vpc\n    uses: terraform@1.9.5\n")
 
-	c, err := Parse(data, testTools)
+	c, err := Parse(data, testCatalog)
 	require.NoError(t, err)
 	assert.Equal(t, "infra/vpc", c.Projects[0].Name)
 }
@@ -61,7 +93,7 @@ func TestParse_NameDefaultsToDirectory(t *testing.T) {
 func TestParse_ExplicitNameNotOverridden(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - name: vpc\n    directory: infra/vpc\n    uses: terraform@1.9.5\n")
 
-	c, err := Parse(data, testTools)
+	c, err := Parse(data, testCatalog)
 	require.NoError(t, err)
 	assert.Equal(t, "vpc", c.Projects[0].Name)
 }
@@ -76,7 +108,7 @@ projects:
     uses: pulumi@3.130.0
 `)
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 
 	var verrs ValidationErrors
@@ -110,7 +142,7 @@ func TestParse_UsesForms(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			data := []byte("schemaVersion: v1alpha3\nprojects:\n  - directory: d\n    uses: " + tt.uses + "\n")
 
-			c, err := Parse(data, testTools)
+			c, err := Parse(data, testCatalog)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantTool, c.Projects[0].Tool)
 			assert.Equal(t, tt.wantVersion, c.Projects[0].ToolVersion)
@@ -125,8 +157,8 @@ func TestParse_UsesRejected(t *testing.T) {
 	}{
 		{name: "unknown tool", uses: "cloudformation@1.0.0"},
 		{name: "no version", uses: "helmfile"},
-		{name: "floating tag", uses: "terraform@latest"},
-		{name: "floating tag with v", uses: "helmfile@vlatest"},
+		{name: "tag the Alias does not allow", uses: "terraform@latest"},
+		{name: "tag the Alias does not allow, with v", uses: "helmfile@vlatest"},
 		{name: "bare v", uses: "helmfile@v"},
 		{name: "two-part version", uses: "terraform@1.9"},
 		{name: "empty version", uses: "terraform@"},
@@ -139,7 +171,7 @@ func TestParse_UsesRejected(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			data := []byte("schemaVersion: v1alpha3\nprojects:\n  - directory: d\n    uses: " + tt.uses + "\n")
 
-			_, err := Parse(data, testTools)
+			_, err := Parse(data, testCatalog)
 			require.Error(t, err)
 
 			var verrs ValidationErrors
@@ -153,7 +185,7 @@ func TestParse_UsesRejected(t *testing.T) {
 func TestParse_UsesIsRequired(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - directory: d\n")
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 
 	var verrs ValidationErrors
@@ -176,7 +208,7 @@ projects:
         HELM_DIFF_COLOR: "true"
 `)
 
-	c, err := Parse(data, testTools)
+	c, err := Parse(data, testCatalog)
 	require.NoError(t, err)
 	require.Len(t, c.Projects, 1)
 	assert.Equal(t, "turnip-runner", c.Projects[0].Runner.ServiceAccount)
@@ -189,7 +221,7 @@ projects:
 func TestParse_RunnerIsOptional(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - directory: infra/web\n    uses: helmfile@v1.7.4\n")
 
-	c, err := Parse(data, testTools)
+	c, err := Parse(data, testCatalog)
 	require.NoError(t, err)
 	require.Len(t, c.Projects, 1)
 	assert.Empty(t, c.Projects[0].Runner.ServiceAccount)
@@ -201,7 +233,7 @@ func TestParse_TypeMismatch(t *testing.T) {
 	// typed field, and every scalar is a valid schemaVersion.
 	data := []byte("schemaVersion: v1alpha3\nprojects: notalist\n")
 
-	c, err := Parse(data, testTools)
+	c, err := Parse(data, testCatalog)
 	require.Nil(t, c)
 
 	var parseErr *ParseError
@@ -212,7 +244,7 @@ func TestParse_TypeMismatch(t *testing.T) {
 func TestParse_EmptyProjects(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\n")
 
-	c, err := Parse(data, testTools)
+	c, err := Parse(data, testCatalog)
 	require.NoError(t, err)
 	assert.Nil(t, c.Projects)
 }
@@ -220,7 +252,7 @@ func TestParse_EmptyProjects(t *testing.T) {
 func TestParse_UnsupportedSchemaVersionRejected(t *testing.T) {
 	data := []byte("schemaVersion: v0\nprojects: []\n")
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 
 	var errs ValidationErrors
@@ -233,7 +265,7 @@ func TestParse_UnsupportedSchemaVersionRejected(t *testing.T) {
 func TestParse_MissingSchemaVersionRejected(t *testing.T) {
 	data := []byte("projects: []\n")
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 
 	var errs ValidationErrors
@@ -258,7 +290,7 @@ projects:
       AWS_PROFILE: prod
 `)
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 
 	var errs ValidationErrors
@@ -274,7 +306,7 @@ projects:
 func TestParse_BareUsesAsksForAVersion(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - directory: d\n    uses: helmfile\n")
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 
 	var verrs ValidationErrors
@@ -285,8 +317,10 @@ func TestParse_BareUsesAsksForAVersion(t *testing.T) {
 	assert.Contains(t, verrs[0].Message, `"helmfile@v1.7.4"`, "the error shows a version to copy")
 }
 
-// Requirement 4.4: the version is the image tag as written. Neither form
-// is rewritten into the other, so the two spellings stay distinct.
+// Requirement 4.4 (Slice 45), and Slice 44's Requirement 2.2: the
+// Tag_Spec is the image tag as written. Neither form is rewritten into the
+// other, so the two spellings stay distinct. helmfile's Alias allows only
+// the "v" form, so the other is written in full and allowed by an Entry.
 func TestParse_VersionKeptExactlyAsWritten(t *testing.T) {
 	data := []byte(`
 schemaVersion: v1alpha3
@@ -296,10 +330,10 @@ projects:
     uses: helmfile@v1.7.4
   - name: without-v
     directory: b
-    uses: helmfile@1.7.4
+    uses: ghcr.io/helmfile/helmfile@1.7.4
 `)
 
-	c, err := Parse(data, testTools)
+	c, err := Parse(data, catalogFor(testTools, Entry{Tool: "helmfile", Image: "ghcr.io/helmfile/helmfile", Glob: "*"}))
 	require.NoError(t, err)
 	require.Len(t, c.Projects, 2)
 	assert.Equal(t, "v1.7.4", c.Projects[0].ToolVersion)
@@ -321,7 +355,7 @@ projects:
     uses: helmfile@1.7.4
 `)
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 
 	var errs ValidationErrors

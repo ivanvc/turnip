@@ -55,6 +55,7 @@ func (p *fakePlugin) ActsWithoutChanges() bool  { return false }
 func (p *fakePlugin) Provisioning() provisioning.Spec {
 	return provisioning.Spec{Strategy: provisioning.RunInImage, Image: "ghcr.io/helmfile/helmfile"}
 }
+func (p *fakePlugin) ImageTags() []string { return []string{"v*.*.*", "sha256:*"} }
 func (p *fakePlugin) Execute(_ context.Context, _ string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
 	for _, l := range p.script {
 		if opts.OnOutput != nil {
@@ -416,6 +417,7 @@ func (p *echoWorkingDirPlugin) ActsWithoutChanges() bool  { return false }
 func (p *echoWorkingDirPlugin) Provisioning() provisioning.Spec {
 	return provisioning.Spec{Strategy: provisioning.RunInImage, Image: "ghcr.io/helmfile/helmfile"}
 }
+func (p *echoWorkingDirPlugin) ImageTags() []string { return []string{"v*.*.*", "sha256:*"} }
 func (p *echoWorkingDirPlugin) Execute(_ context.Context, _ string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
 	if opts.OnOutput != nil {
 		opts.OnOutput("stdout", "reading "+opts.WorkingDir+"/values.yaml")

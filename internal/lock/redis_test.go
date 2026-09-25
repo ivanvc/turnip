@@ -154,6 +154,40 @@ func TestStorePlan_RecordsAPlanWithNoArtifact(t *testing.T) {
 	assert.Equal(t, StatePlanReady, status.State, "the comment must be able to offer an apply")
 }
 
+// TestStorePlan_RecordsImageDigest checks that the digest of the image a
+// plan ran in round-trips through the store beside the rest of the plan,
+// and that a later plan without one clears it rather than keeping a
+// stale digest.
+func TestStorePlan_RecordsImageDigest(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestManager(t)
+	const projectKey = "owner/repo/project"
+	const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	_, err := acquireLock(ctx, m, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
+
+	rec := PlanRecord{
+		Data:        []byte("plan-bytes"),
+		Args:        []string{"-l", "name=web"},
+		Summary:     plugin.ChangeSummary{Add: 1},
+		ImageDigest: digest,
+	}
+	require.NoError(t, storePlan(ctx, m, projectKey, 1, rec))
+
+	plan, err := m.GetPlan(ctx, projectKey, 1)
+	require.NoError(t, err)
+	assert.Equal(t, rec, plan)
+
+	_, err = acquireLock(ctx, m, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
+	require.NoError(t, storePlan(ctx, m, projectKey, 1, PlanRecord{Summary: plugin.ChangeSummary{Add: 1}}))
+
+	plan, err = m.GetPlan(ctx, projectKey, 1)
+	require.NoError(t, err)
+	assert.Empty(t, plan.ImageDigest, "a re-plan whose digest could not be read must not inherit the previous one")
+}
+
 // TestStorePlan_RecordsAbsentArguments pins Requirement 1.3: a plan that
 // ran with no arguments is distinguishable from no plan at all.
 func TestStorePlan_RecordsAbsentArguments(t *testing.T) {

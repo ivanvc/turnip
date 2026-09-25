@@ -390,6 +390,15 @@ func TestRefusalSite_MutatingWithoutAUsablePlan(t *testing.T) {
 			}},
 			reason: "retrieving plan",
 		},
+		{
+			// Without the digest the plan ran, running the apply would
+			// mean resolving the tag again, the drift the digest removes.
+			name: "plan image not recorded",
+			locks: &fakeLockManager{getPlanFunc: func(context.Context, string, int) (lock.PlanRecord, error) {
+				return lock.PlanRecord{Data: []byte("plan-data")}, nil
+			}},
+			reason: "the image this plan ran could not be recorded; re-plan",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

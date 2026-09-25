@@ -20,10 +20,18 @@ func genIdentifier(t *rapid.T, label string) string {
 
 func genProject(t *rapid.T) Project {
 	tool := rapid.SampledFrom(testTools).Draw(t, "tool")
-	// Drawn with and without a leading "v": both are well-formed, and the
-	// round-trip only holds if Parse keeps whichever was written.
-	version := rapid.SampledFrom([]string{"1.9.5", "v1.7.4", "0.170.1", "3.130.0-rc1", "v1.0.0-rc.1"}).Draw(t, "version")
-	uses := tool + "@" + version
+	image := testAliasImages[tool]
+	// Drawn from what the tool's test Alias allows (helmfile's tags carry
+	// a "v", the others' do not, and a Digest is allowed for every tool),
+	// and the round-trip only holds if Parse keeps whichever was written.
+	versions := []string{"1.9.5", "0.170.1", "3.130.0-rc1", testDigest}
+	if tool == "helmfile" {
+		versions = []string{"v1.7.4", "v1.0.0-rc.1", testDigest}
+	}
+	version := rapid.SampledFrom(versions).Draw(t, "version")
+	// The Alias and the vendor's image written in full resolve alike.
+	name := rapid.SampledFrom([]string{tool, image}).Draw(t, "name before @")
+	uses := name + "@" + version
 
 	return Project{
 		Name:         genIdentifier(t, "name"),
@@ -54,11 +62,12 @@ func genProject(t *rapid.T) Project {
 			).Draw(t, "env"),
 		},
 
-		// Tool and ToolVersion are derived by Parse, so a generated
-		// fixture must carry what Parse would have produced for its Uses
-		// — otherwise the round-trip compares a hand-built struct against
-		// a parsed one and fails for a reason that isn't about YAML.
+		// Tool, Image and ToolVersion are resolved by Parse, so a
+		// generated fixture must carry what Parse would have produced for
+		// its Uses; otherwise the round-trip compares a hand-built struct
+		// against a parsed one and fails for a reason that isn't about YAML.
 		Tool:        tool,
+		Image:       image,
 		ToolVersion: version,
 	}
 }
@@ -87,7 +96,7 @@ func TestProperty_ConfigurationRoundTrip(t *testing.T) {
 		data, err := yaml.Marshal(original)
 		require.NoError(t, err)
 
-		got, err := Parse(data, testTools)
+		got, err := Parse(data, testCatalog)
 		require.NoError(t, err)
 
 		require.Equal(t, original, got)
@@ -98,14 +107,16 @@ func TestProperty_ConfigurationRoundTrip(t *testing.T) {
 func TestProperty_ToolValidationRejectsInvalidTools(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		tool := genIdentifier(t, "tool")
-		data := []byte("schemaVersion: v1alpha3\nprojects:\n  - name: p\n    directory: d\n    uses: " + tool + "@1.0.0\n")
+		// A Digest, which every test Alias allows, so that a registered
+		// tool is accepted whatever its vendor's tag convention.
+		data := []byte("schemaVersion: v1alpha3\nprojects:\n  - name: p\n    directory: d\n    uses: " + tool + "@" + testDigest + "\n")
 
-		_, err := Parse(data, testTools)
+		_, err := Parse(data, testCatalog)
 
 		if slices.Contains(testTools, tool) {
-			require.NoErrorf(t, err, "Parse(, testTools) with valid tool %q", tool)
+			require.NoErrorf(t, err, "Parse(, testCatalog) with valid tool %q", tool)
 		} else {
-			require.Errorf(t, err, "Parse(, testTools) with invalid tool %q", tool)
+			require.Errorf(t, err, "Parse(, testCatalog) with invalid tool %q", tool)
 		}
 	})
 }
@@ -119,9 +130,9 @@ func TestProperty_ReservedEnvPrefixRejectedRegardlessOfSuffix(t *testing.T) {
 		name := reservedEnvPrefix + genIdentifier(t, "suffix")
 		data := []byte("schemaVersion: v1alpha3\nprojects:\n  - name: p\n    directory: d\n    uses: helmfile@v1.7.4\n    runner:\n      env:\n        " + name + ": value\n")
 
-		_, err := Parse(data, testTools)
+		_, err := Parse(data, testCatalog)
 
-		require.Errorf(t, err, "Parse(, testTools) with reserved env name %q", name)
+		require.Errorf(t, err, "Parse(, testCatalog) with reserved env name %q", name)
 	})
 }
 

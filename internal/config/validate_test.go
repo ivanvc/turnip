@@ -35,7 +35,7 @@ func TestParse_MissingRequiredFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Parse([]byte(tt.yaml), testTools)
+			_, err := Parse([]byte(tt.yaml), testCatalog)
 			require.Error(t, err)
 			verrs := asValidationErrors(t, err)
 
@@ -53,7 +53,7 @@ func TestParse_MissingRequiredFields(t *testing.T) {
 func TestParse_MissingNameAndDirectoryRefersToProjectByIndex(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - uses: terraform@1.9.5\n")
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
 
@@ -72,7 +72,7 @@ func TestParse_MissingNameAndDirectoryRefersToProjectByIndex(t *testing.T) {
 func TestParse_UnsupportedToolListsRegisteredNames(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - name: vpc\n    directory: infra/vpc\n    uses: cloudformation@1.0.0\n")
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
 	require.Len(t, verrs, 1)
@@ -86,7 +86,7 @@ func TestParse_UnsupportedToolListsRegisteredNames(t *testing.T) {
 func TestParse_RegisteredToolsListedAlphabetically(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - name: vpc\n    directory: infra/vpc\n    uses: cloudformation@1.0.0\n")
 
-	_, err := Parse(data, []string{"terraform", "helmfile", "pulumi"})
+	_, err := Parse(data, catalogFor([]string{"terraform", "helmfile", "pulumi"}))
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
 	require.Len(t, verrs, 1)
@@ -99,10 +99,10 @@ func TestParse_RegisteredToolsListedAlphabetically(t *testing.T) {
 func TestParse_ToolAcceptedOnlyWhenRegistered(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - name: vpc\n    directory: infra/vpc\n    uses: terraform@1.9.5\n")
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.NoError(t, err)
 
-	_, err = Parse(data, []string{"helmfile"})
+	_, err = Parse(data, catalogFor([]string{"helmfile"}))
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
 	require.Len(t, verrs, 1)
@@ -114,7 +114,7 @@ func TestParse_ToolAcceptedOnlyWhenRegistered(t *testing.T) {
 func TestParse_MissingUsesListsRegisteredNames(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - name: vpc\n    directory: infra/vpc\n")
 
-	_, err := Parse(data, []string{"alpha", "beta"})
+	_, err := Parse(data, catalogFor([]string{"alpha", "beta"}))
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
 	require.Len(t, verrs, 1)
@@ -135,7 +135,7 @@ projects:
     uses: terraform@1.9.5
 `)
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
 
@@ -164,7 +164,7 @@ func TestParse_UnaddressableProjectNamesRejected(t *testing.T) {
 			data := []byte("schemaVersion: v1alpha3\nprojects:\n  - name: " + tt.projectName +
 				"\n    directory: infra/vpc\n    uses: terraform@1.9.5\n")
 
-			_, err := Parse(data, testTools)
+			_, err := Parse(data, testCatalog)
 			require.Error(t, err)
 			verrs := asValidationErrors(t, err)
 
@@ -186,7 +186,7 @@ func TestParse_UnaddressableProjectNamesRejected(t *testing.T) {
 func TestParse_DefaultedNameFromDirectoryStillRejected(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - directory: \"-infra\"\n    uses: terraform@1.9.5\n")
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
 
@@ -214,7 +214,7 @@ projects:
     uses: terraform@1.9.5
 `)
 
-	cfg, err := Parse(data, testTools)
+	cfg, err := Parse(data, testCatalog)
 	require.NoError(t, err)
 	require.Len(t, cfg.Projects, 2)
 	assert.Equal(t, "gcp/project", cfg.Projects[0].Name)
@@ -234,7 +234,7 @@ projects:
     uses: nope
 `)
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
 	assert.GreaterOrEqual(t, len(verrs), 3, "want at least 3 violations (missing uses, duplicate name, bad tool): %v", verrs)
@@ -257,7 +257,7 @@ projects:
         AWS_PROFILE: untouched
 `)
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
 	require.Len(t, verrs, 2, "both reserved names reported, and the legal one left alone: %v", verrs)
@@ -272,7 +272,7 @@ projects:
 func TestParse_UnknownTurnipPrefixedEnvNameStillRejected(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - directory: d\n    uses: helmfile@v1.7.4\n    runner:\n      env:\n        TURNIP_NOT_A_REAL_VARIABLE: x\n")
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
 	require.Len(t, verrs, 1)
@@ -282,7 +282,7 @@ func TestParse_UnknownTurnipPrefixedEnvNameStillRejected(t *testing.T) {
 func TestParse_OrdinaryEnvNamesAccepted(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - directory: d\n    uses: helmfile@v1.7.4\n    runner:\n      env:\n        AWS_PROFILE: prod\n        PATHOLOGICAL: not-PATH\n")
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.NoError(t, err, "only PATH exactly is reserved, not names that merely start with it")
 }
 
@@ -297,7 +297,7 @@ projects:
       - "infra/vpc/["
 `)
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
 
@@ -322,7 +322,7 @@ projects:
     nope: x
 `)
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
 	require.Len(t, verrs, 2, "both unknown keys reported: %v", verrs)
@@ -339,7 +339,7 @@ projects:
 func TestParse_UnknownKeyInsideRunnerRejected(t *testing.T) {
 	data := []byte("schemaVersion: v1alpha3\nprojects:\n  - directory: d\n    uses: helmfile@v1.7.4\n    runner:\n      serviceAcount: typo\n")
 
-	_, err := Parse(data, testTools)
+	_, err := Parse(data, testCatalog)
 	require.Error(t, err)
 	verrs := asValidationErrors(t, err)
 	require.Len(t, verrs, 1)
@@ -364,7 +364,7 @@ projects:
     name: b
 `)
 
-	c, err := Parse(data, testTools)
+	c, err := Parse(data, testCatalog)
 	require.NoError(t, err)
 	require.Len(t, c.Projects, 2)
 

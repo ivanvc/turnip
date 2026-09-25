@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"path"
 	"strings"
 	"testing"
 
@@ -49,6 +50,22 @@ func TestRegistry_EveryPluginDeclaresItsProvisioning(t *testing.T) {
 				assert.NotEmpty(t, spec.BinaryPath, "CopyOut needs the binary's path in the image")
 			} else {
 				assert.Empty(t, spec.BinaryPath, "only CopyOut copies a binary out of the image")
+			}
+		})
+	}
+}
+
+// TestRegistry_EveryPluginDeclaresImageTags is what stops a Plugin being
+// registered with an Alias that allows nothing: uses: naming it would be
+// refused whatever Tag_Spec it carried.
+func TestRegistry_EveryPluginDeclaresImageTags(t *testing.T) {
+	for name, p := range Registry() {
+		t.Run(name, func(t *testing.T) {
+			globs := p.ImageTags()
+			require.NotEmpty(t, globs, "the Alias must allow at least one Tag_Spec glob")
+			for _, glob := range globs {
+				_, err := path.Match(glob, "")
+				assert.NoError(t, err, "glob %q is malformed", glob)
 			}
 		})
 	}

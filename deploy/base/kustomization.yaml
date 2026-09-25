@@ -36,6 +36,11 @@ configMapGenerator:
       # ServiceAccount would let any PR author borrow that account's
       # permissions — an overlay opts in deliberately rather than the base
       # shipping it on.
+      # TURNIP_ALLOWED_IMAGES is deliberately unset too: its default
+      # permits only the built-in aliases (each tool's vendor image, full
+      # versions or digests). Allowing an image runs code the operator
+      # vouches for, with the Runner's credentials, for any PR that names
+      # it, so an overlay opts in per image. See SECURITY.md.
       # TURNIP_RUNNER_IMAGE is required (orchestrator.ConfigFromEnv), so
       # the base ships a real default rather than an empty placeholder —
       # an overlay overrides it to match its own Runner image tag

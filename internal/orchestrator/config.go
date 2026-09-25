@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/ivanvc/turnip/internal/config"
 )
 
 // Config carries the Server's own startup configuration, read from
@@ -44,6 +46,11 @@ type Config struct {
 	// paths, so defaulting off would make every repository with a
 	// submodule meet a confusing failure before anything worked.
 	CloneSubmodules string
+	// Catalog is every image this Server will run: each registered
+	// Plugin's Alias Entries and the operator's Access_List, from
+	// TURNIP_ALLOWED_IMAGES (images.go). config.Parse resolves each
+	// Project's uses: against it.
+	Catalog config.Catalog
 }
 
 // MissingEnvVarsError names every required environment variable that was
@@ -60,8 +67,10 @@ func (e *MissingEnvVarsError) Error() string {
 
 // ConfigFromEnv builds a Config from env, an injectable lookup function
 // (mirroring internal/runner.ConfigFromEnv's testability-seam convention)
-// rather than calling os.Getenv directly.
-func ConfigFromEnv(env func(string) string) (Config, error) {
+// rather than calling os.Getenv directly. plugins is the registry the
+// Server runs with: its Plugins' Aliases and names are what
+// TURNIP_ALLOWED_IMAGES is read against.
+func ConfigFromEnv(env func(string) string, plugins PluginRegistry) (Config, error) {
 	cfg := Config{
 		GitHubWebhookSecret: env("TURNIP_GITHUB_WEBHOOK_SECRET"),
 		RedisAddr:           env("TURNIP_REDIS_ADDR"),
@@ -139,6 +148,12 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("orchestrator: parsing TURNIP_CLONE_SUBMODULES: %w", err)
 	}
 	cfg.CloneSubmodules = cloneSubmodules
+
+	catalog, err := parseAllowedImages(env("TURNIP_ALLOWED_IMAGES"), plugins)
+	if err != nil {
+		return Config{}, fmt.Errorf("orchestrator: parsing TURNIP_ALLOWED_IMAGES: %w", err)
+	}
+	cfg.Catalog = catalog
 
 	return cfg, nil
 }

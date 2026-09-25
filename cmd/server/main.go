@@ -32,20 +32,24 @@ func main() {
 	level := logging.ParseLevel(os.Getenv("TURNIP_LOG_LEVEL"))
 	slog.SetDefault(logging.New(os.Stderr, level))
 
-	cfg, err := orchestrator.ConfigFromEnv(os.Getenv)
+	// One registry for the whole Server: the Catalog TURNIP_ALLOWED_IMAGES
+	// is checked against at start and the Plugins that run its Projects
+	// must be the same ones.
+	plugins := orchestrator.NewPluginRegistry()
+	cfg, err := orchestrator.ConfigFromEnv(os.Getenv, plugins)
 	if err != nil {
 		slog.Error("loading config", "error", err)
 		os.Exit(1)
 	}
 
-	if err := run(cfg, level); err != nil {
+	if err := run(cfg, plugins, level); err != nil {
 		slog.Error("running server", "error", err)
 		os.Exit(1)
 	}
 	slog.Info("server stopped")
 }
 
-func run(cfg orchestrator.Config, level slog.Level) error {
+func run(cfg orchestrator.Config, plugins orchestrator.PluginRegistry, level slog.Level) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -70,7 +74,8 @@ func run(cfg orchestrator.Config, level slog.Level) error {
 		appAuth,
 		lock.NewRedisLockManager(redisClient),
 		jobs.NewClient(clientset, cfg.KubernetesNamespace),
-		orchestrator.NewPluginRegistry(),
+		plugins,
+		cfg.Catalog,
 		redisClient,
 		cfg.MinimizeOutdatedPlanComments,
 		cfg.RunnerServerAddr,

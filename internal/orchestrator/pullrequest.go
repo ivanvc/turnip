@@ -84,7 +84,7 @@ func (o *Orchestrator) HandlePullRequest(ctx context.Context, event *github.Webh
 }
 
 func (o *Orchestrator) handlePlanTrigger(ctx context.Context, client github.GitHubClient, event *github.WebhookEvent) error {
-	cfg, err := fetchConfig(ctx, client, event.Repository.Owner, event.Repository.Name, event.PullRequest.HeadSHA, o.plugins.Names())
+	cfg, err := fetchConfig(ctx, client, event.Repository.Owner, event.Repository.Name, event.PullRequest.HeadSHA, o.catalog)
 	if err != nil {
 		// A repository with no turnip.yaml anywhere hasn't opted into
 		// turnip, and this handler runs on every PR open and every push
@@ -167,7 +167,7 @@ func prRefFor(event *github.WebhookEvent) prRef {
 func (o *Orchestrator) handlePRClosed(ctx context.Context, client github.GitHubClient, event *github.WebhookEvent) error {
 	owner, repoName, prNumber := event.Repository.Owner, event.Repository.Name, event.PullRequest.Number
 
-	cfg, err := fetchConfig(ctx, client, owner, repoName, event.PullRequest.HeadSHA, o.plugins.Names())
+	cfg, err := fetchConfig(ctx, client, owner, repoName, event.PullRequest.HeadSHA, o.catalog)
 	if err != nil {
 		// No other source of Project identity exists in this stateless
 		// design — log and skip Lock release, but the PlanCommentRecord

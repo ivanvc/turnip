@@ -95,3 +95,125 @@ func TestClient_StatusPodRunningNoWaitingStatuses(t *testing.T) {
 	assert.Equal(t, corev1.PodRunning, status.PodPhase)
 	assert.Empty(t, status.PodReason)
 }
+
+// statusWithPod returns the Status of a Job whose one Pod reports status.
+func statusWithPod(t *testing.T, podStatus corev1.PodStatus) *JobStatus {
+	t.Helper()
+	clientset := fake.NewSimpleClientset(
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "turnip-runner-abc", Namespace: "turnip"}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "turnip-runner-abc-xyz",
+				Namespace: "turnip",
+				Labels:    map[string]string{"batch.kubernetes.io/job-name": "turnip-runner-abc"},
+			},
+			Status: podStatus,
+		},
+	)
+	status, err := NewClient(clientset, "turnip").Status(context.Background(), "turnip-runner-abc")
+	require.NoError(t, err)
+	return status
+}
+
+const (
+	wantToolImageID   = "ghcr.io/helmfile/helmfile@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	wantRunnerImageID = "ghcr.io/ivanvc/turnip-runner@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+)
+
+// Under RunInImage the runner container runs the tool's image, so its
+// imageID is the one reported; turnip's own initContainers are not.
+func TestClient_StatusImageIDRunInImage(t *testing.T) {
+	status := statusWithPod(t, corev1.PodStatus{
+		Phase: corev1.PodSucceeded,
+		InitContainerStatuses: []corev1.ContainerStatus{
+			{Name: "copy-runner", ImageID: wantRunnerImageID},
+			{Name: "clone", ImageID: wantRunnerImageID},
+		},
+		ContainerStatuses: []corev1.ContainerStatus{
+			{Name: "runner", ImageID: wantToolImageID},
+		},
+	})
+	assert.Equal(t, wantToolImageID, status.ImageID)
+}
+
+// Under CopyOut the provisioning initContainer is what ran the tool's
+// image; the runner container runs turnip's.
+func TestClient_StatusImageIDCopyOut(t *testing.T) {
+	status := statusWithPod(t, corev1.PodStatus{
+		Phase: corev1.PodSucceeded,
+		InitContainerStatuses: []corev1.ContainerStatus{
+			{Name: "provision-terraform", ImageID: wantToolImageID},
+			{Name: "clone", ImageID: wantRunnerImageID},
+		},
+		ContainerStatuses: []corev1.ContainerStatus{
+			{Name: "runner", ImageID: wantRunnerImageID},
+		},
+	})
+	assert.Equal(t, wantToolImageID, status.ImageID)
+}
+
+// A waiting initContainer still reports the tool's imageID alongside the
+// reason, and an image not yet pulled reports none.
+func TestClient_StatusImageIDWithWaitingInitContainer(t *testing.T) {
+	status := statusWithPod(t, corev1.PodStatus{
+		Phase: corev1.PodPending,
+		InitContainerStatuses: []corev1.ContainerStatus{
+			{Name: "provision-terraform", ImageID: wantToolImageID},
+			{Name: "clone", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}},
+		},
+	})
+	assert.Equal(t, "CrashLoopBackOff", status.PodReason)
+	assert.Equal(t, wantToolImageID, status.ImageID)
+
+	status = statusWithPod(t, corev1.PodStatus{
+		Phase: corev1.PodPending,
+		ContainerStatuses: []corev1.ContainerStatus{
+			{Name: "runner", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ErrImagePull"}}},
+		},
+	})
+	assert.Empty(t, status.ImageID)
+}
+
+// ToolWaiting says whether the waiting container runs the tool's image, so
+// a pull failure on turnip's own Runner image is not blamed on the tool.
+func TestClient_StatusToolWaiting(t *testing.T) {
+	pull := func(name string) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: name, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}
+	}
+	pending := func(name string) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: name, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}}}
+	}
+	tests := []struct {
+		name string
+		pod  corev1.PodStatus
+		want bool
+	}{
+		{"CopyOut, provisioning initContainer", corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{pull("provision-helmfile"), pending("clone")},
+			ContainerStatuses:     []corev1.ContainerStatus{pending("runner")},
+		}, true},
+		{"CopyOut, clone initContainer", corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{{Name: "provision-helmfile"}, pull("clone")},
+			ContainerStatuses:     []corev1.ContainerStatus{pending("runner")},
+		}, false},
+		{"CopyOut, runner container", corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{{Name: "provision-helmfile"}, {Name: "clone"}},
+			ContainerStatuses:     []corev1.ContainerStatus{pull("runner")},
+		}, false},
+		{"RunInImage, copy-runner initContainer", corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{pull("copy-runner"), pending("clone")},
+			ContainerStatuses:     []corev1.ContainerStatus{pending("runner")},
+		}, false},
+		{"RunInImage, runner container", corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{{Name: "copy-runner"}, {Name: "clone"}},
+			ContainerStatuses:     []corev1.ContainerStatus{pull("runner")},
+		}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status := statusWithPod(t, tt.pod)
+			assert.NotEmpty(t, status.PodReason)
+			assert.Equal(t, tt.want, status.ToolWaiting)
+		})
+	}
+}

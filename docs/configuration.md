@@ -38,7 +38,7 @@ projects:
 | `schemaVersion` (top-level) | **yes** | the version of this file's schema; must be `v1alpha3`; see below |
 | `projects[].name` | no | defaults to `directory`; must be unique across the file once defaulted |
 | `projects[].directory` | **yes** | the tool's working directory, relative to the repo root |
-| `projects[].uses` | **yes** | what to run: `<tool>@<version>`; see below |
+| `projects[].uses` | **yes** | what to run: `<tool>@<tag>`, or a fully qualified `<image>@<tag>` the operator allows; see below |
 | `projects[].whenModified` | no | a list of glob patterns (full `**` support, [doublestar](https://github.com/bmatcuk/doublestar) syntax), matched against the paths GitHub reports as changed; a PR whose changed files match none of a project's patterns never triggers it. Matching is textual and **does not follow symlinks**: git records a change under the file's real path, so a project reached through a symlinked directory must also list the link target (e.g. both `env/prod/**` and `shared/modules/**`) |
 | `projects[].with` | no | how to call it: configuration the tool itself reads; see below |
 | `projects[].runner` | no | where it runs: settings for the Runner Pod; see below |
@@ -69,7 +69,7 @@ about which one this is:
 | | What it versions |
 |---|---|
 | `schemaVersion` (top-level) | the shape of this file (this field) |
-| the `@version` in `uses` (per project) | which release of the tool the Runner provisions |
+| the tag after `@` in `uses` (per project) | which image, and so which release of the tool, the Runner runs |
 | turnip's own release | the Server and Runner images you deploy |
 
 The `alpha` suffix is load-bearing, not decoration. Before turnip 1.0 the
@@ -116,6 +116,7 @@ than safety, unlike `runner.serviceAccount`'s (fetching a submodule the
 App can already read grants no permission the repository doesn't already
 have), but an operator may still have reason to refuse an expensive fetch,
 so it reuses the same list rather than inventing a second mechanism.
+What enabling it costs is stated in [`SECURITY.md`](../SECURITY.md).
 
 Submodules are fetched with the same installation credential as the
 repository itself, and therefore reach **only repositories your GitHub App
@@ -127,40 +128,153 @@ error.
 
 ### `uses`: what to run
 
-`<tool>@<version>`, always both:
+One of two forms, each with exactly one tag after the `@`:
 
 ```yaml
-    uses: helmfile@v1.7.4
+    uses: helmfile@v1.7.4                   # a built-in alias
+    uses: ghcr.io/org/helmfile-aws@v1.7.4   # a fully qualified image
 ```
 
-The tool must be one this Server has a Plugin for (see "Tool support"
-below); any other name is a validation error listing the ones it has.
+- **`<alias>@<tag-spec>`**: an alias is the name of a tool this Server
+  has a Plugin for (see "Tool support" below), standing for that tool's
+  vendor image. `helmfile@v1.7.4` runs `ghcr.io/helmfile/helmfile:v1.7.4`.
+- **`<image>@<tag-spec>`**: any other image, written in full, registry
+  host included (`ghcr.io/…`, `registry.example.com:5000/…`,
+  `localhost/…`). It runs only if the Server's operator allows it; see
+  "Running your own image" below.
 
-The version is required: turnip keeps no default version for any tool,
+The part after the last `@` is the **tag-spec**: one exact **tag**, or a
+**digest** written `sha256:` followed by 64 lowercase hex characters.
+Nothing else: no pattern, no version range, and no digest algorithm but
+`sha256`. It is used **exactly as written**: turnip never adds or removes a
+`v`. Write the tag the vendor publishes, the one you would `docker pull`.
+helmfile's tags carry a `v`, so it is `helmfile@v1.7.4`, not
+`helmfile@1.7.4`.
+
+`uses:` never names the tool for an image: the operator's entry allowing
+the image says which tool it runs (so `ghcr.io/org/helmfile-aws@v1.7.4`
+runs helmfile because the entry allowing it says `helmfile:`).
+
+The tag-spec is required: turnip keeps no default version for any tool,
 so what a project runs is always stated in the repository and changes
 only in a diff someone reviews. A bare `uses: helmfile` is a validation
 error that says to name a version.
 
-The version is the tool image's tag, used **exactly as written**: turnip
-never adds or removes a `v`. Write the tag the vendor publishes, the one
-you would `docker pull`. helmfile's tags carry a `v`, so it is
-`helmfile@v1.7.4`, which runs `ghcr.io/helmfile/helmfile:v1.7.4`.
+**Pasting a reference from a registry.** `uses:` separates the tag with
+`@`, not `:`. A line written the way a registry prints it is a validation
+error that shows the corrected line:
 
-turnip keeps no list of "supported" versions to validate against either.
-Any value shaped like a real version (roughly semver, with an optional
-leading `v`: `v1.7.4`, `0.170.1`, `v1.7.4-rc1`) is accepted and passed
-straight to the vendor's own per-version image, so a tool's new release
-works the moment the vendor publishes it, with no turnip release
-required.
+```yaml
+    uses: ghcr.io/org/helmfile-aws:v1.7.4   # rejected
+    uses: ghcr.io/org/helmfile-aws@v1.7.4   # what the error tells you to write
+```
 
-Malformed input is rejected when the file is parsed, so it appears as a
-validation error on the pull request rather than as a failed Job. That
-includes **floating tags**: `latest` is not accepted, because the same
-version has to still be there when the plan you approved is applied
-later. If a version is well-formed but the vendor doesn't publish that
-tag (`helmfile@1.7.4`, missing its `v`, is the usual one), the Job fails
-when its image can't be pulled, reported as a normal operation failure,
-not caught ahead of time.
+A digest pasted as the registry prints it
+(`ghcr.io/org/helmfile-aws@sha256:…`) is already the right form.
+
+**Which tags each alias allows.** An alias allows only full versions and
+digests of its vendor's image, so it can never move to a new release, or
+to a floating tag, with no change to `turnip.yaml`:
+
+| Alias | Image | Allowed tag-specs |
+|---|---|---|
+| `helmfile` | `ghcr.io/helmfile/helmfile` | `v*.*.*`, `sha256:*` |
+
+So `helmfile@latest`, `helmfile@v1.7` and `helmfile@1.7.4` are all
+validation errors, and the error names the tags the alias does allow. An
+operator cannot redefine an alias, so `helmfile@v1.7.4` means the same
+image on every turnip Server. The vendor's image under any other tag
+(its own `latest`, say) runs only written out in full and allowed by the
+operator, where a reviewer sees it.
+
+All of this is checked when the file is parsed, so it appears as a
+validation error on the pull request, with every other violation, rather
+than as a failed Job. turnip keeps no list of "supported" versions: any tag
+the alias's patterns match is passed straight to the vendor's image, so a
+tool's new release works the moment the vendor publishes it. If a tag
+matches but the vendor never published it, the Job fails when its image
+can't be pulled, reported as a normal operation failure.
+
+#### The apply runs what the plan ran
+
+Whatever the tag, turnip records the exact **image digest** a plan's Pod
+ran, as Kubernetes reports it, and an apply (or sync) of that plan runs that
+digest, never the tag resolved again. A tag can move (`latest` by design,
+and any tag a registry re-pushes), so this is what makes any allowed tag,
+`latest` included, safe between plan and apply. A plan pulls a tag on
+every start (`imagePullPolicy: Always`) so it sees what the tag means now;
+a digest never changes, so it uses the node's cache.
+
+If the digest could not be recorded, the apply is refused and asks you to
+re-plan. If the recorded digest can no longer be pulled (deleted from the
+registry since the plan), the apply fails saying so, and a re-plan
+records one that exists.
+
+#### Running your own image
+
+An image built `FROM` a vendor's with something added (a cloud CLI, a
+helm plugin), or a build the vendor has not released, runs only when the
+Server's operator lists it in **`TURNIP_ALLOWED_IMAGES`** (see the Server
+settings table below). This is an opt-in: each allowed image is code the
+operator vouches for, running with the Runner's credentials for any pull
+request that names it. What that costs is stated in
+[`SECURITY.md`](../SECURITY.md).
+
+Each entry is `tool:image@glob`, comma-separated:
+
+| Entry | Allows |
+|---|---|
+| `helmfile:ghcr.io/org/helmfile-aws@*` | any tag or digest of that image |
+| `helmfile:ghcr.io/org/helmfile-aws@v*.*.*` | full versions only |
+| `helmfile:ghcr.io/org/helmfile-aws@latest` | exactly `latest` |
+| `helmfile:ghcr.io/org/helmfile-aws@sha256:*` | digests only |
+| `helmfile:ghcr.io/helmfile/helmfile@latest` | the vendor's own `latest`, written in full: `uses: ghcr.io/helmfile/helmfile@latest` |
+
+- **The tool** is the text before the first `:`, and must be a tool this
+  Server has a Plugin for. It is how turnip knows which Plugin drives the
+  image, so one image can be listed for only one tool (including the
+  aliases' vendor images: `ghcr.io/helmfile/helmfile` is helmfile's).
+- **The image** is fully qualified and carries no tag or digest of its
+  own.
+- **The glob** is matched against the tag-spec's text: `*` matches any
+  characters, `?` one, `[…]` a class. It is a glob, not a version range,
+  so it blocks floating tags by shape: `@1.*.*` cannot match `1.16` (a
+  floating minor tag) or `latest`, only full versions such as `1.16.4`.
+
+Entries for the same tool may overlap freely. An invalid entry, or an
+image listed for two tools, stops the Server from starting, naming every
+offending entry at once. A `uses:` line no entry matches is a validation
+error of `turnip.yaml`, naming the image and `TURNIP_ALLOWED_IMAGES`.
+
+**What the image must provide.** A custom image always runs as the Job's
+main container, with turnip's runner binary handed to it (run-in-image,
+see "How a tool reaches the Runner" below), whatever strategy its tool
+normally uses. So it must have the tool on its `PATH`, and everything the
+tool's Plugin shells out to: for helmfile, `helm` and the plugins its
+commands use (helm-diff for `diff`, and helm-secrets and `sops` if your
+helmfiles decrypt anything). Building `FROM` the vendor's image keeps all
+of that and adds only what you need; the EKS recipe below does exactly
+this.
+
+**Pulling from a private registry.** turnip handles no registry
+credentials. The Runner Pod pulls the way any Pod does:
+
+- through the **node's own credentials**, for example ECR on EKS, where
+  the node role's ECR read access lets every Pod pull from that account's
+  registries with nothing else to configure; or
+- through an **`imagePullSecrets`** on the Runner's ServiceAccount (the
+  one `TURNIP_RUNNER_SERVICE_ACCOUNT` or `runner.serviceAccount` selects),
+  which Kubernetes applies to every Pod running as it:
+
+```sh
+kubectl -n <runner-namespace> create secret docker-registry registry-pull \
+  --docker-server=ghcr.io --docker-username=<user> --docker-password=<token>
+kubectl -n <runner-namespace> patch serviceaccount turnip-runner \
+  -p '{"imagePullSecrets":[{"name":"registry-pull"}]}'
+```
+
+A plan naming a tag pulls on every start, so the credential has to keep
+working, not only for the first pull.
 
 ### `with`: how to call it
 
@@ -195,7 +309,8 @@ Settings that shape the Runner Pod rather than the tool inside it:
   turnip reads this file from the pull request's own head commit, and a
   plan needs only collaborator access; without it, anyone able to open a
   PR could pick any ServiceAccount in the Runner namespace and use its
-  permissions.
+  permissions. What enabling it costs is stated in
+  [`SECURITY.md`](../SECURITY.md).
 - **`env`**: environment variables for the IaC tool's process. Unlike
   `with`, these are never interpreted by turnip at all. They are simply
   present in the environment the tool runs in, which makes this the place
@@ -248,13 +363,6 @@ Targeting any **other** cluster needs a kubeconfig. turnip does not
 generate one, and doesn't need to; see the next section.
 
 #### Targeting an EKS cluster turnip is not running in
-
-> **Not usable in turnip yet.** This needs the AWS CLI in the image the
-> tool runs in. Helmfile runs in the vendor's own image, which does not
-> carry it, and turnip cannot run a custom image yet (see the roadmap's
-> Backlog, "Running a tool build turnip does not ship"). Everything below
-> can be verified today outside turnip; the image is the one missing
-> piece.
 
 No step has to run before the tool. A kubeconfig produced by
 `aws eks update-kubeconfig` does not contain credentials: it tells the
@@ -324,19 +432,45 @@ user's `args`, and allow the Pod's role to assume it.
 **The image** needs the AWS CLI next to the tool, and a version recent
 enough to read Pod Identity's token file; older versions behave as if no
 credentials existed. EKS's Pod Identity documentation lists the minimum
-versions.
+versions. The vendor's helmfile image has no AWS CLI, so build one `FROM`
+it that adds the CLI and keeps everything else (helm, its plugins,
+`sops`):
 
-**Verifying it before turnip can run it**: start a throwaway Pod in the
-cluster turnip runs in, with the Runner's ServiceAccount and any image
-that has the AWS CLI and kubectl, copy the kubeconfig in, and run:
+```dockerfile
+# The vendor's image is Alpine-based; Alpine's aws-cli package is v2.
+FROM ghcr.io/helmfile/helmfile:v1.7.4
+RUN apk add --no-cache aws-cli && aws --version
+```
+
+Push it under a tag that tracks the helmfile it was built from (here
+`ghcr.io/org/helmfile-aws:v1.7.4`), then have the Server's operator allow
+it (see "Running your own image" above):
+
+```
+TURNIP_ALLOWED_IMAGES=helmfile:ghcr.io/org/helmfile-aws@v*.*.*
+```
+
+and point the Project at it in place of the alias:
+
+```yaml
+    uses: ghcr.io/org/helmfile-aws@v1.7.4
+```
+
+If the image lives in ECR in the cluster's own account, the nodes can
+usually pull it with no further setup; otherwise see "Pulling from a
+private registry" above.
+
+**Verifying access before the first plan** (optional; the first plan
+tells you too): start a throwaway Pod in the cluster turnip runs in, with
+the Runner's ServiceAccount and any image that has the AWS CLI and
+kubectl, copy the kubeconfig in, and run:
 
 ```sh
 aws sts get-caller-identity                       # the Pod Identity role
 KUBECONFIG=./kubeconfig kubectl --context <cluster> get namespaces
 ```
 
-If both succeed, the only thing missing is an image with the AWS CLI for
-turnip to run the tool in.
+If both succeed, the Runner can reach the cluster the same way.
 
 Helm plugins authenticate separately, and to different things.
 `helm-secrets` decrypting through a cloud KMS, or a chart pulled from a
@@ -436,7 +570,7 @@ Everything turnip creates inside a Runner Pod lives under `/turnip`:
 |---|---|---|
 | `/turnip/src` | the repository, cloned at the pull request's head commit; a project's `directory` is relative to this | always |
 | `/turnip/tools` | the provisioned IaC tool binary, prepended to the Runner's `PATH` | copy-out tools only |
-| `/turnip/bin` | turnip's own runner binary, handed to the vendor's image | run-in-image tools only |
+| `/turnip/bin` | turnip's own runner binary, handed to the tool's image | run-in-image tools and custom images only |
 
 `/turnip/src` is a fixed path rather than a per-run temporary directory
 specifically so committed configuration may reference it: an absolute
@@ -446,14 +580,16 @@ may move.
 
 The repository is cloned by an initContainer running turnip's image, not
 by the container that runs your tool, which is what lets that container
-be the tool vendor's own image, needing nothing from it but the tool.
+be the tool vendor's own image (or one built from it), needing nothing
+from it but the tool.
 
 ### Tool support
 
-The tools `uses:` accepts are exactly the ones this Server has Plugins
-for. A project naming any other tool makes `turnip.yaml` invalid: it is
-reported when the file is parsed, with every other violation, and fails
-the `turnip` check as `invalid turnip.yaml`.
+The tools `uses:` can run are exactly the ones this Server has Plugins
+for, each under its alias or in an image allowed for it. A project naming
+any other tool makes `turnip.yaml` invalid: it is reported when the file
+is parsed, with every other violation, and fails the `turnip` check as
+`invalid turnip.yaml`.
 
 | Tool | Status | Provisioned by | Operations |
 |---|---|---|---|
@@ -465,7 +601,8 @@ Adding a tool is described in [`development.md`](development.md).
 
 ### How a tool reaches the Runner
 
-Two strategies, chosen per tool by turnip rather than configured:
+Two strategies, chosen per tool by turnip rather than configured (a
+custom image always runs the second):
 
 - **copy-out**: an initContainer copies the tool's binary out of the
   vendor's image onto a shared volume, and turnip's own image runs it.
@@ -482,8 +619,9 @@ exactly the failure you'd expect: `exec: "helm": executable file not found
 in $PATH`.
 
 The practical consequence: **for a run-in-image tool, its plugins and
-helpers come from the vendor's image.** Needing one the image doesn't
-bundle means choosing an image that has it, not configuring turnip.
+helpers come from the image.** Needing one the vendor's image doesn't
+bundle means building an image that has it and having the operator allow
+it (see "Running your own image"), not configuring turnip.
 
 ## The Server's own configuration
 
@@ -505,7 +643,8 @@ than one restart-and-discover-the-next-one at a time.
 | `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` | no (default `false`) | collapse an older plan comment on the same PR once a newer one supersedes it |
 | `TURNIP_RUNNER_SERVICE_ACCOUNT` | no (default unset) | ServiceAccount every Runner Pod runs as: how a Runner gets cloud credentials (EKS Pod Identity/IRSA) and in-cluster API permissions. Unset leaves Pods on the namespace's `default` ServiceAccount, which normally has neither |
 | `TURNIP_CLONE_SUBMODULES` | no (default `top-level`) | how far the clone initializes submodules: `none`, `top-level`, or `recursive`. Applies to every repository this Server clones, unless one overrides it with `clone.submodules` *and* that path is permitted below. Defaults on, unlike `actions/checkout`: turnip clones specifically to run IaC that may reference submodule paths, so defaulting off would make every repository with a submodule fail confusingly before anything worked. An unrecognized value is a startup error |
-| `TURNIP_ALLOWED_OVERRIDES` | no (default: permits nothing) | comma-separated list of the fields a repository's own config file may set. The paths accepted today are `runner.serviceAccount` and `clone.submodules`. The default matches what turnip has always done: a repository cannot choose the identity its Runner assumes, since this file is read from the PR's own head commit. An unrecognized path is a startup error rather than a silently ineffective setting. Note that `uses` is *not* an override: turnip has no Server-side tool to fall back to, so what a project runs is always the repository's to say |
+| `TURNIP_ALLOWED_OVERRIDES` | no (default: permits nothing) | comma-separated list of the fields a repository's own config file may set. The paths accepted today are `runner.serviceAccount` and `clone.submodules`. The default matches what turnip has always done: a repository cannot choose the identity its Runner assumes, since this file is read from the PR's own head commit. An unrecognized path is a startup error rather than a silently ineffective setting. Note that `uses` is *not* an override: turnip has no Server-side tool to fall back to, so what a project runs is always the repository's to say, within the images `TURNIP_ALLOWED_IMAGES` allows. Each path is an opt-in whose cost [`SECURITY.md`](../SECURITY.md) states |
+| `TURNIP_ALLOWED_IMAGES` | no (default: only the built-in aliases) | comma-separated `tool:image@glob` entries, each allowing a fully qualified image, for one tool, with the tag-specs its glob matches; see "Running your own image". For example `helmfile:ghcr.io/org/helmfile-aws@*` (any tag or digest), `helmfile:ghcr.io/org/helmfile-aws@latest` (exactly `latest`), or `helmfile:ghcr.io/helmfile/helmfile@latest` (the vendor's own `latest`, written in full in `uses:`). A glob is not a version range: `@1.*.*` cannot match `1.16` or `latest`. An entry naming a tool with no Plugin, an unqualified image, or an image with a tag of its own, and an image listed for two tools, are startup errors naming every offending entry. Each allowed image is code the operator vouches for, running with the Runner's credentials; see [`SECURITY.md`](../SECURITY.md) |
 
 In `deploy/base`, the two credential-shaped values
 (`TURNIP_GITHUB_WEBHOOK_SECRET`, `TURNIP_GITHUB_PRIVATE_KEY`) come from a

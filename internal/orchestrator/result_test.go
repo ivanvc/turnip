@@ -22,6 +22,7 @@ func testResultOrchestrator(t *testing.T, locks *fakeLockManager) (*Orchestrator
 		installationClient: func(id int64) github.GitHubClient { return fakeClient },
 		locks:              locks,
 		plugins:            testRegistry(),
+		catalog:            testCatalog(),
 		records:            newRecordStore(client),
 		redis:              client,
 	}

@@ -53,8 +53,11 @@ type Orchestrator struct {
 	// a failure its inputs can reach, since the version check it repeated
 	// moved to parse time, but executeOne still handles its error, and a
 	// refusal nothing exercises could break unnoticed.
-	buildJob                     func(config.Project, jobs.OperationParams) (*batchv1.Job, error)
-	plugins                      PluginRegistry
+	buildJob func(config.Project, jobs.OperationParams) (*batchv1.Job, error)
+	plugins  PluginRegistry
+	// catalog is what config.Parse resolves each Project's uses: against:
+	// the Plugins' Aliases and the operator's Access_List (images.go).
+	catalog                      config.Catalog
 	records                      *recordStore
 	redis                        *redis.Client
 	minimizeOutdatedPlanComments bool
@@ -84,6 +87,7 @@ func New(
 	locks lock.LockManager,
 	jobsClient *jobs.Client,
 	plugins PluginRegistry,
+	catalog config.Catalog,
 	redisClient *redis.Client,
 	minimizeOutdatedPlanComments bool,
 	runnerServerAddr string,
@@ -97,6 +101,7 @@ func New(
 		locks:                        locks,
 		jobs:                         jobsClient,
 		plugins:                      plugins,
+		catalog:                      catalog,
 		records:                      newRecordStore(redisClient),
 		redis:                        redisClient,
 		minimizeOutdatedPlanComments: minimizeOutdatedPlanComments,

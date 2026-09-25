@@ -50,6 +50,14 @@ func (p *HelmfilePlugin) Provisioning() provisioning.Spec {
 	}
 }
 
+// ImageTags allows full versions and digests only, so the helmfile Alias
+// cannot move to a new vendor release, or to a floating tag such as
+// latest, with no change to turnip.yaml. helmfile's tags carry a leading
+// v (v1.7.4), used verbatim.
+func (p *HelmfilePlugin) ImageTags() []string {
+	return []string{"v*.*.*", "sha256:*"}
+}
+
 func (p *HelmfilePlugin) GetPlanOperation() string  { return "diff" }
 func (p *HelmfilePlugin) GetApplyOperation() string { return "apply" }
 

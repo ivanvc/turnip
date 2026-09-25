@@ -54,6 +54,11 @@ type LockData struct {
 
 	PlanData    []byte               `json:"plan_data,omitempty"`
 	PlanSummary plugin.ChangeSummary `json:"plan_summary,omitzero"`
+
+	// PlanImageDigest is the sha256 digest of the image the plan ran in,
+	// so a mutating Operation runs exactly that image rather than
+	// re-resolving a tag. Empty when it could not be read.
+	PlanImageDigest string `json:"plan_image_digest,omitempty"`
 }
 
 // DecodedState reports the Lock's state, tolerating a value this build
@@ -83,10 +88,15 @@ func (d LockData) DecodedState() LockState {
 // to replay. Data is optional — a Plugin whose plan produces no artifact
 // (Helmfile) stores an empty slice, and the Lock's StatePlanReady rather
 // than len(Data) is what reports that a usable plan exists.
+//
+// ImageDigest is the "sha256:..." digest of the image the plan ran in. It
+// is empty when the digest could not be read, and a mutating Operation
+// refuses such a record rather than re-resolving a tag.
 type PlanRecord struct {
-	Data    []byte
-	Args    []string
-	Summary plugin.ChangeSummary
+	Data        []byte
+	Args        []string
+	Summary     plugin.ChangeSummary
+	ImageDigest string
 }
 
 // LockStatus is GetLockStatus's return value.

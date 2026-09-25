@@ -18,19 +18,10 @@ signatures across packages (`config.Parse`, `github.ParseTriggers`,
 Task 9 is the first point the whole tree builds and the pinned Job is
 checked against the real wiring rather than a test harness.
 
-## Waves
-
-Tasks in a wave touch disjoint packages and run in parallel; a wave starts
-when the previous one is done. Until wave 3 lands, agents build and test
-only their own package, since callers elsewhere are updated later.
-
-| Wave | Tasks | Packages |
-|---|---|---|
-| 1 | 1 (pin today's Job) and 2 (provisioning, registry) | `internal/jobs` tests; `internal/provisioning`, `internal/plugin` |
-| 2 | 4 (jobs), 5 (config), 6 (trigger parser), 7 (runner) | `internal/jobs`; `internal/config`; `internal/github`; `internal/runner` |
-| 3 | 8 (orchestrator and server wiring), then checkpoint 9 | `internal/orchestrator`, `cmd/server` |
-| 4 | 10 (docs) | `docs/`, `README.md` |
-| 5 | review against the requirements, fixes, then checkpoint 11 | as findings require |
+Tasks in the same wave of the dependency graph (at the end) touch
+disjoint packages and ran in parallel. Until wave 3 landed, each task built
+and tested only its own package, since callers elsewhere were updated
+later.
 
 ## Tasks
 
@@ -170,3 +161,19 @@ only their own package, since callers elsewhere are updated later.
     `result.go`, `sweep.go`, `comments.go` and the refusal closure in
     `execute.go` have none. The code paths are unchanged by this slice, so
     the gap predates it
+
+## Task Dependency Graph
+
+```json
+{
+  "waves": [
+    { "id": 0, "tasks": ["1.1", "1.2", "2.1", "2.2", "2.3", "2.4"] },
+    { "id": 1, "tasks": ["3"] },
+    { "id": 2, "tasks": ["4.1", "4.2", "4.3", "5.1", "5.2", "5.3", "5.4", "6.1", "6.2", "7.1"] },
+    { "id": 3, "tasks": ["8.1", "8.2", "8.3", "8.4", "8.5", "8.6", "8.7"] },
+    { "id": 4, "tasks": ["9"] },
+    { "id": 5, "tasks": ["10.1", "10.2", "10.3"] },
+    { "id": 6, "tasks": ["11"] }
+  ]
+}
+```

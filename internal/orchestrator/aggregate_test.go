@@ -116,7 +116,7 @@ func (f *fakeChecksClient) runCount() int {
 func testAggregateOrchestrator(t *testing.T) *Orchestrator {
 	t.Helper()
 	client := newTestRedisClient(t)
-	return &Orchestrator{plugins: testRegistry(), records: newRecordStore(client), redis: client}
+	return &Orchestrator{plugins: testRegistry(), catalog: testCatalog(), records: newRecordStore(client), redis: client}
 }
 
 func record(t *testing.T, o *Orchestrator, client github.GitHubClient, project string, outcome Outcome) {
@@ -267,7 +267,7 @@ func TestProperty_PublishedVerdictConverges(t *testing.T) {
 
 		var wg sync.WaitGroup
 		for _, plan := range plans {
-			o := &Orchestrator{plugins: testRegistry(), records: newRecordStore(redisClient), redis: redisClient}
+			o := &Orchestrator{plugins: testRegistry(), catalog: testCatalog(), records: newRecordStore(redisClient), redis: redisClient}
 			wg.Go(func() {
 				for _, w := range plan {
 					assert.NoError(t, o.recordOutcome(context.Background(), gh, testRef, w.project, ProjectEntry{Outcome: w.outcome, Operation: "diff"}))

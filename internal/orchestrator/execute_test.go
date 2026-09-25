@@ -160,7 +160,7 @@ func (f *fakeLockManager) GetPlan(ctx context.Context, projectKey string, prNumb
 	if f.getPlanFunc != nil {
 		return f.getPlanFunc(ctx, projectKey, prNumber)
 	}
-	return lock.PlanRecord{Data: []byte("plan-data")}, nil
+	return lock.PlanRecord{Data: []byte("plan-data"), ImageDigest: testImageDigest}, nil
 }
 func (f *fakeLockManager) ReleaseLock(ctx context.Context, projectKey string, prNumber int) error {
 	if f.releaseLockFunc != nil {
@@ -336,6 +336,7 @@ func testOrchestrator(t *testing.T, locks lock.LockManager, jobsClient jobCreato
 		locks:   locks,
 		jobs:    jobsClient,
 		plugins: testRegistry(),
+		catalog: testCatalog(),
 		records: newRecordStore(client),
 		redis:   client,
 		// Matches what a real Server has. Left nil, every override would
@@ -349,9 +350,16 @@ func testOrchestrator(t *testing.T, locks lock.LockManager, jobsClient jobCreato
 	return o, client
 }
 
+// testImageDigest is the digest a fixture plan recorded, which every
+// Mutating_Operation after it runs.
+const testImageDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 func testHelmfileTarget() Target {
 	return Target{
-		Project:     config.Project{Name: "helm-a", Directory: "a", Uses: "helmfile", Tool: "helmfile"},
+		Project: config.Project{
+			Name: "helm-a", Directory: "a", Uses: "helmfile@v1.7.4",
+			Tool: "helmfile", Image: "ghcr.io/helmfile/helmfile", ToolVersion: "v1.7.4",
+		},
 		Operation:   "diff",
 		TriggeredBy: "auto",
 	}
@@ -392,7 +400,7 @@ func jobEnvValue(t *testing.T, job *batchv1.Job, name string) string {
 func TestExecuteOne_ApplyAfterAPlanWithNoArtifactRuns(t *testing.T) {
 	locks := &fakeLockManager{
 		getPlanFunc: func(ctx context.Context, projectKey string, prNumber int) (lock.PlanRecord, error) {
-			return lock.PlanRecord{Args: []string{"-l", "name=web"}}, nil
+			return lock.PlanRecord{ImageDigest: testImageDigest, Args: []string{"-l", "name=web"}}, nil
 		},
 	}
 	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
@@ -412,7 +420,7 @@ func TestExecuteOne_ApplyAfterAPlanWithNoArtifactRuns(t *testing.T) {
 func TestExecuteOne_MutatingOperationReplaysTheRecordedScope(t *testing.T) {
 	locks := &fakeLockManager{
 		getPlanFunc: func(ctx context.Context, projectKey string, prNumber int) (lock.PlanRecord, error) {
-			return lock.PlanRecord{Args: []string{"-l", "name=web"}}, nil
+			return lock.PlanRecord{ImageDigest: testImageDigest, Args: []string{"-l", "name=web"}}, nil
 		},
 	}
 	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
@@ -645,8 +653,9 @@ type provisionedPlugin struct {
 
 func (p provisionedPlugin) Provisioning() provisioning.Spec { return p.spec }
 
-// The Job is provisioned as the Target's Plugin declares, with the tool
-// image tagged by the version exactly as uses: wrote it. internal/jobs
+// The Job is provisioned as the Target's Plugin declares, for a Project
+// running its Alias's image, with the tool image tagged by the version
+// exactly as uses: wrote it. internal/jobs
 // keeps no table of its own to fall back on, so this is the only route the
 // Spec has.
 func TestExecuteOne_JobIsProvisionedAsThePluginDeclares(t *testing.T) {
@@ -657,6 +666,7 @@ func TestExecuteOne_JobIsProvisionedAsThePluginDeclares(t *testing.T) {
 		spec:       provisioning.Spec{Strategy: provisioning.CopyOut, Image: "registry.example.com/tools/helmfile", BinaryPath: "/usr/local/bin/helmfile"},
 	}
 	target := testHelmfileTarget()
+	target.Project.Image = "registry.example.com/tools/helmfile"
 	target.Project.ToolVersion = "v1.7.4"
 
 	o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
@@ -692,6 +702,7 @@ func TestExecuteOne_ShippedHelmfileJobMatchesThePin(t *testing.T) {
 			Directory:   "infra/web",
 			Uses:        "helmfile@v1.7.4",
 			Tool:        "helmfile",
+			Image:       "ghcr.io/helmfile/helmfile",
 			ToolVersion: "v1.7.4",
 		},
 		Operation:   "diff",
@@ -824,7 +835,7 @@ func TestExecuteTargets_RunsConcurrentlyAndWaitsForAll(t *testing.T) {
 func TestExecuteOne_ApplyCheckRunSaysWhatItWillChange(t *testing.T) {
 	locks := &fakeLockManager{
 		getPlanFunc: func(ctx context.Context, projectKey string, prNumber int) (lock.PlanRecord, error) {
-			return lock.PlanRecord{Args: []string{"-l", "name=web"}, Summary: plugin.ChangeSummary{Add: 1, Change: 4, Destroy: 2}}, nil
+			return lock.PlanRecord{ImageDigest: testImageDigest, Args: []string{"-l", "name=web"}, Summary: plugin.ChangeSummary{Add: 1, Change: 4, Destroy: 2}}, nil
 		},
 	}
 	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}

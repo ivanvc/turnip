@@ -99,7 +99,7 @@ func TestParseAllowedOverrides_AcceptsTheNewPathAndStillRejectsUnknownOnes(t *te
 // alone: an unrecognized value must stop the Server rather than be
 // silently ignored.
 func TestConfigFromEnv_UnknownCloneSubmodulesIsAStartupError(t *testing.T) {
-	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_CLONE_SUBMODULES": "shallow"}))
+	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_CLONE_SUBMODULES": "shallow"}), NewPluginRegistry())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "TURNIP_CLONE_SUBMODULES")
@@ -107,14 +107,14 @@ func TestConfigFromEnv_UnknownCloneSubmodulesIsAStartupError(t *testing.T) {
 }
 
 func TestConfigFromEnv_CloneSubmodulesDefaultsToTopLevel(t *testing.T) {
-	cfg, err := ConfigFromEnv(envMap(nil))
+	cfg, err := ConfigFromEnv(envMap(nil), NewPluginRegistry())
 
 	require.NoError(t, err)
 	assert.Equal(t, config.SubmodulesTopLevel, cfg.CloneSubmodules)
 }
 
 func TestConfigFromEnv_CloneSubmodulesFromTheEnvironment(t *testing.T) {
-	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_CLONE_SUBMODULES": config.SubmodulesNone}))
+	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_CLONE_SUBMODULES": config.SubmodulesNone}), NewPluginRegistry())
 
 	require.NoError(t, err)
 	assert.Equal(t, config.SubmodulesNone, cfg.CloneSubmodules)

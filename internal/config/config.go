@@ -47,10 +47,11 @@ type Project struct {
 	Name      string `yaml:"name"`
 	Directory string `yaml:"directory"`
 
-	// Uses names the IaC tool and the version to provision, written as
-	// "<tool>@<version>". Nothing downstream reads this field:
-	// applyDefaults decomposes it into Tool and ToolVersion, which is what
-	// makes the fused form free of consequences past the parser.
+	// Uses names what to run, written as "<alias>@<tag-spec>" (an Alias
+	// is a registered tool's name, standing for its vendor's image) or
+	// "<image>@<tag-spec>" with the image fully qualified. Nothing
+	// downstream reads this field: Parse resolves it against the Catalog
+	// into Tool, Image and ToolVersion.
 	Uses string `yaml:"uses"`
 
 	// With is configuration for this Project's Plugin and for nothing
@@ -65,12 +66,14 @@ type Project struct {
 
 	WhenModified []string `yaml:"whenModified"`
 
-	// Tool and ToolVersion are derived from Uses during parsing and are
-	// bound to no YAML key: they are neither read from a file nor written
-	// back to one. ToolVersion is the version exactly as Uses wrote it, a
-	// leading "v" included, because it becomes the image tag verbatim and
-	// vendors disagree about whether their tags carry one.
+	// Tool, Image and ToolVersion are resolved from Uses during parsing
+	// and are bound to no YAML key: they are neither read from a file nor
+	// written back to one. Tool is the one the matching Entry declares;
+	// Image is the fully qualified repository, with no tag; ToolVersion is
+	// the Tag_Spec exactly as Uses wrote it, a Tag or a sha256 Digest,
+	// because vendors disagree about whether their tags carry a "v".
 	Tool        string `yaml:"-"`
+	Image       string `yaml:"-"`
 	ToolVersion string `yaml:"-"`
 }
 

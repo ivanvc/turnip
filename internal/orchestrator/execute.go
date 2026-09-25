@@ -161,7 +161,12 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		)})
 	}
 
-	var planData []byte
+	var (
+		planData []byte
+		// recordedDigest is the image digest the plan ran, which every
+		// Mutating_Operation runs in place of re-resolving the Tag_Spec.
+		recordedDigest string
+	)
 	// runningTitle is what the Project_Check says while this Operation
 	// runs. A plan says its scope; everything else says what it is about to
 	// change, from the plan it replays (check-run-titles Requirement 3).
@@ -251,8 +256,16 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 			}
 			return reject(refusal{reason: fmt.Sprintf("retrieving plan: %v", err)})
 		}
+		// Without the digest the plan ran, the only image left to run is
+		// the Tag_Spec resolved again, which may no longer be what was
+		// reviewed. Refused before the check run exists, like the other
+		// missing-plan refusals: nothing ran, and the record is unchanged.
+		if plan.ImageDigest == "" {
+			return reject(refusal{reason: "the image this plan ran could not be recorded; re-plan"})
+		}
 		planData = plan.Data
 		execArgs = plan.Args
+		recordedDigest = plan.ImageDigest
 		title = runningRecordedPlanTitle(changeCounts(plan.Summary), plan.Args)
 	}
 
@@ -330,6 +343,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		close(done)
 	}()
 
+	imageRef, pullAlways := jobImage(t.Project, isPlan, recordedDigest)
 	build := o.buildJob
 	if build == nil {
 		build = jobs.BuildJob
@@ -346,7 +360,9 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		RunnerImage:    o.runnerImage,
 		ServiceAccount: serviceAccount,
 		Submodules:     submodules,
-		Provisioning:   p.Provisioning(),
+		Provisioning:   jobProvisioning(t.Project, p.Provisioning()),
+		ImageRef:       imageRef,
+		PullAlways:     pullAlways,
 	})
 	if err != nil {
 		o.deleteRecord(ctx, operationID)

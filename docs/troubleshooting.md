@@ -28,7 +28,18 @@ error with a line number, instead of a plan.
   one to run, e.g. `uses: helmfile@v1.7.4`.
 - **Unknown tool in `uses:`**: the error lists the tools this Server has
   Plugins for. A tool without a Plugin (today, `terraform` and `pulumi`)
-  is not accepted.
+  is not accepted. Any other image must be written in full, registry host
+  included.
+- **A tag the alias does not allow** (`helmfile@latest`,
+  `helmfile@1.7.4` missing its `v`): the error names the tags the alias
+  allows (for helmfile, full versions `v*.*.*` and digests). Write the full
+  version the vendor publishes.
+- **`uses:` names its tag with `:`**: `uses:` separates the tag with `@`;
+  the error shows the corrected line to paste back.
+- **This Server does not allow an image**: the image and tag match no
+  entry of the Server's `TURNIP_ALLOWED_IMAGES`. Ask the operator to add
+  one (see "Running your own image" in `docs/configuration.md`), or use
+  the built-in alias.
 - **Invalid project configuration**: the comment names the specific
   project and the validation error (e.g. a project missing its required
   `directory`). Fix that project's entry. Every one of these fails the
@@ -228,17 +239,21 @@ or nothing happens for several minutes before a timeout is reported.
 stdout/stderr attached.
 
 - **Tool not installed**: the comment names the missing tool/exit code.
-  A *malformed* version never gets this far; it's rejected when the file
-  is parsed, as a validation comment naming `uses`. What reaches here is a
-  well-formed version the vendor doesn't actually publish, so the
-  initContainer had nothing to pull: check the `@version` in `uses`
-  against the tool vendor's own published image tags.
+  A tag the alias or the Server's `TURNIP_ALLOWED_IMAGES` does not
+  allow never gets this far; it's rejected when the file is parsed, as a
+  validation comment naming `uses`. What reaches here is an allowed tag
+  that was never published, so there was nothing to pull: check the tag
+  after the `@` in `uses` against the image's published tags. For an
+  apply, it can also be the digest its plan recorded, since deleted from
+  the registry; the error says so, and a re-plan fixes it.
 - **A helper binary or plugin is missing** (e.g. `exec: "helm":
   executable file not found in $PATH`, or the tool reporting it can't find
   a plugin): for a run-in-image tool these come from the vendor's image
   rather than from turnip (see "How a tool reaches the Runner" in
-  `docs/configuration.md`). The fix is an image that bundles what you need,
-  not a turnip setting. Seeing this for Helmfile on a version the vendor's
+  `docs/configuration.md`). The fix is an image that bundles what you
+  need, allowed by the Server's `TURNIP_ALLOWED_IMAGES` (see "Running your
+  own image" there); for a custom image, check it provides what "What the
+  image must provide" lists. Seeing this for Helmfile on a version the vendor's
   own image ships is a turnip bug worth reporting, since that image
   contains helm, sops and the standard plugins.
 - **Tool command failed** (e.g. `terraform plan` itself errored): the

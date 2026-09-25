@@ -70,6 +70,13 @@ const (
 	// Runner is still mid-retry is never garbage-collected out from
 	// under it.
 	jobTTLSeconds = int32(15 * 60)
+
+	// runnerContainerName is the Pod's one regular container, under both
+	// strategies. provisionContainerPrefix starts the name of the CopyOut
+	// initContainer that copies the tool out of its image. Status reads
+	// both to find which container ran the tool's image.
+	runnerContainerName      = "runner"
+	provisionContainerPrefix = "provision-"
 )
 
 // TokenAudience is what the Runner's projected token is scoped to, and
@@ -119,7 +126,16 @@ type OperationParams struct {
 	// Provisioning is how the Project's tool reaches this Job, as its
 	// Plugin declares it. This package keeps no table of tools: it
 	// implements each Strategy once and builds whichever one it is handed.
+	// Only its Strategy and BinaryPath are read; the image comes from
+	// ImageRef.
 	Provisioning provisioning.Spec
+	// ImageRef is the tool's image, a finished reference (image:tag or
+	// image@sha256:...) composed by the Server. BuildJob uses it as given.
+	ImageRef string
+	// PullAlways sets the pull policy of the container running the tool:
+	// Always when true (a tag, whose meaning can move), IfNotPresent
+	// otherwise (a digest, which cannot).
+	PullAlways bool
 }
 
 // BuildJob constructs the Kubernetes Job that runs one Operation for one
@@ -132,13 +148,17 @@ type OperationParams struct {
 // cloned by an initContainer, so the container that runs the tool needs
 // nothing from its image but the tool.
 //
-// The tool's image is tagged with the Project's version exactly as its
-// uses: line wrote it, with no "v" added or removed. Vendors differ on
-// whether their tags carry one, so the repository writes the tag it would
-// pull. The version's shape is checked once, when turnip.yaml is parsed.
+// The tool's image is op.ImageRef exactly as the Server composed it; this
+// package adds no tag and resolves nothing. Only the container running
+// the tool's image follows op.PullAlways; turnip's own Runner-image
+// containers keep the cluster's default policy.
 func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) {
 	version := project.ToolVersion
-	toolImageRef := op.Provisioning.Image + ":" + version
+	toolImageRef := op.ImageRef
+	toolPullPolicy := corev1.PullIfNotPresent
+	if op.PullAlways {
+		toolPullPolicy = corev1.PullAlways
+	}
 
 	toolConfig, err := json.Marshal(project.With)
 	if err != nil {
@@ -164,10 +184,9 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		// months later says which binary produced its output — the usual
 		// answer to "why did this change when I did not touch anything".
 		//
-		// It is the version turnip *requested*, which is the one that runs
-		// while turnip.yaml validation rejects a floating tag. If floating
-		// tags are ever allowed, this is the value that has to start
-		// reporting what resolved.
+		// It is the Tag_Spec as the Project wrote it. A tag may float, so
+		// the digest that actually ran is read from the Pod afterward
+		// (JobStatus.ImageID), not from this value.
 		{Name: "TURNIP_TOOL_VERSION", Value: version},
 		{Name: "TURNIP_OPERATION", Value: op.Operation},
 		{Name: "TURNIP_REPO_URL", Value: op.RepoURL},
@@ -218,6 +237,7 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 	var (
 		initContainers []corev1.Container
 		mainImage      string
+		mainPullPolicy corev1.PullPolicy
 		mainCommand    []string
 		mainMounts     []corev1.VolumeMount
 		volumes        []corev1.Volume
@@ -238,6 +258,7 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 			cloneContainer,
 		}
 		mainImage = toolImageRef
+		mainPullPolicy = toolPullPolicy
 		// Overrides the vendor image's own entrypoint. The runner binary
 		// is statically linked (CGO_ENABLED=0), so it executes in any
 		// image regardless of libc.
@@ -255,10 +276,11 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 				// Provisioning runs before the clone so an unpullable tool
 				// version fails before turnip fetches a repository it is
 				// about to throw away.
-				Name:         "provision-" + project.Tool,
-				Image:        toolImageRef,
-				Command:      []string{"sh", "-c", fmt.Sprintf("cp %s %s/%s", op.Provisioning.BinaryPath, toolsMountPath, project.Tool)},
-				VolumeMounts: []corev1.VolumeMount{toolsMount},
+				Name:            provisionContainerPrefix + project.Tool,
+				Image:           toolImageRef,
+				ImagePullPolicy: toolPullPolicy,
+				Command:         []string{"sh", "-c", fmt.Sprintf("cp %s %s/%s", op.Provisioning.BinaryPath, toolsMountPath, project.Tool)},
+				VolumeMounts:    []corev1.VolumeMount{toolsMount},
 			},
 			cloneContainer,
 		}
@@ -326,11 +348,12 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 							// Named "runner" under both strategies, so
 							// `kubectl logs -c runner` works regardless of
 							// which image it happens to be.
-							Name:         "runner",
-							Image:        mainImage,
-							Command:      mainCommand,
-							Env:          mainEnv,
-							VolumeMounts: mainMounts,
+							Name:            runnerContainerName,
+							Image:           mainImage,
+							ImagePullPolicy: mainPullPolicy,
+							Command:         mainCommand,
+							Env:             mainEnv,
+							VolumeMounts:    mainMounts,
 						},
 					},
 					Volumes: volumes,

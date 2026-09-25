@@ -16,18 +16,8 @@ isolation — a Lock_Wait reported as a failure still produces a check. The
 checkpoint walks the table, one test per row, so a wrong kind shows up as
 a wrong status or Title rather than not at all.
 
-## Waves
-
-Tasks within a wave touch disjoint files and run in parallel; a wave
-starts when the previous one is done.
-
-| Wave | Tasks | Files |
-|---|---|---|
-| 1 | 1 (prove the bug) and 2 (titles), in parallel | a new test file; `titles.go`, `titles_test.go` |
-| 2 | 3 and 4 (record, verdict), then checkpoint 5 | `prstatus.go`, `verdict.go` and their tests |
-| 3 | 6 (the typed refusal) | `execute.go` |
-| 4 | 7 (site-table tests) and 8 (docs), in parallel | a new test file; `docs/` |
-| 5 | review against the requirements, fixes, then checkpoint 9 | as findings require |
+Tasks in the same wave of the dependency graph (at the end) touch
+disjoint files and ran in parallel.
 
 ## Tasks
 
@@ -127,3 +117,18 @@ starts when the previous one is done.
     progress; it predates this slice and is not a refusal, so it is
     recorded in design.md ("A known gap") and the roadmap Backlog rather
     than fixed here
+
+## Task Dependency Graph
+
+```json
+{
+  "waves": [
+    { "id": 0, "tasks": ["1.1", "1.2", "1.3", "1.4", "2.1", "2.2"] },
+    { "id": 1, "tasks": ["3.1", "3.2", "4.1", "4.2", "4.3"] },
+    { "id": 2, "tasks": ["5"] },
+    { "id": 3, "tasks": ["6.1", "6.2", "6.3", "6.4", "6.5", "6.6"] },
+    { "id": 4, "tasks": ["7", "8.1", "8.2"] },
+    { "id": 5, "tasks": ["9"] }
+  ]
+}
+```
