@@ -64,6 +64,7 @@ turnip's own manifests live under [`deploy/`](deploy/);
 | [`docs/configuration.md`](docs/configuration.md) | `turnip.yaml`'s schema, the Server's own environment variables, setting up the GitHub App |
 | [`docs/usage.md`](docs/usage.md) | day-to-day use: automatic plans, trigger comments, plan/apply/unlock, who can trigger what |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md) | what a given symptom (a stuck lock, a failed check run, a timeout) means and what to do about it |
+| [`docs/development.md`](docs/development.md) | contributing: adding a tool (its Plugin, how it is provisioned, registering it) |
 
 ## Development
 

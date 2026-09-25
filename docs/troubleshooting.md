@@ -20,11 +20,19 @@ error with a line number, instead of a plan.
   or a setting written at the wrong level (the one place arbitrary keys
   are allowed is inside `with`).
 - **Unsupported `schemaVersion`**: reported on its own, without also
-  listing the fields of the older schema. Migrate the file rather than
-  changing the version alone: the field names changed too.
+  listing everything the older schema allowed. Migrate the file rather
+  than changing the version alone. From `v1alpha2` to `v1alpha3`, every
+  `uses:` must name its version, written as the image tag
+  (`uses: helmfile@v1.7.4`, since helmfile's tags carry a `v`).
+- **`uses:` names no version**: turnip has no default version. Write the
+  one to run, e.g. `uses: helmfile@v1.7.4`.
+- **Unknown tool in `uses:`**: the error lists the tools this Server has
+  Plugins for. A tool without a Plugin (today, `terraform` and `pulumi`)
+  is not accepted.
 - **Invalid project configuration**: the comment names the specific
-  project and the validation error (e.g. an unsupported tool in `uses`, or
-  a project missing its required `directory`). Fix that project's entry.
+  project and the validation error (e.g. a project missing its required
+  `directory`). Fix that project's entry. Every one of these fails the
+  `turnip` check as `invalid turnip.yaml`.
 
 ## Lock contention
 
@@ -126,8 +134,9 @@ something unexpected. What each state means is in `docs/usage.md`
   design. `turnip` appears with the first apply; until then the pull
   request is under review, and the check blocks without being red. Apply
   (or sync) each project to move it. A configuration problem the author
-  has to fix is the exception: it shows at once, red (the two `failure`
-  entries below).
+  has to fix is the exception: it shows at once, red (an invalid
+  `turnip.yaml`, under "Configuration errors", or the `not permitted`
+  entry below).
 - **Stuck in progress after everything was applied**: look at the check's
   summary for the project that isn't done. Usually it is one planned by
   name that the change doesn't touch (it counts too), or one whose plan
@@ -135,9 +144,6 @@ something unexpected. What each state means is in `docs/usage.md`
   `not planned, locked by PR #5`. Re-plan that one once the lock is
   released; turnip won't do it for you. Apply the rest, or push a commit
   so the next plan starts from a fresh record.
-- **`failure` titled `unsupported tool: …`**: an affected project in
-  `turnip.yaml` uses a tool this server has no plugin for. Change the
-  project's `uses`, or stop the change touching it.
 - **`failure` titled `not permitted: web sets runner.serviceAccount, and 1
   more`**: an affected project asks for an override the Server doesn't
   permit. The summary lists every refused project and its setting. Remove

@@ -10,7 +10,7 @@ package config
 // "v1" when turnip reaches 1.0, at which point the schema version and the
 // project major coincide. "beta" is not used unless its obligation — a
 // deprecation window with migration instructions — is actually accepted.
-const SupportedSchemaVersion = "v1alpha2"
+const SupportedSchemaVersion = "v1alpha3"
 
 // Config is the parsed, validated in-memory representation of a
 // turnip.yaml file.
@@ -47,11 +47,10 @@ type Project struct {
 	Name      string `yaml:"name"`
 	Directory string `yaml:"directory"`
 
-	// Uses names the IaC tool and, optionally, the version to provision,
-	// written as "<tool>" or "<tool>@<version>". Nothing downstream reads
-	// this field: applyDefaults decomposes it into Tool and ToolVersion,
-	// which is what makes the fused form free of consequences past the
-	// parser.
+	// Uses names the IaC tool and the version to provision, written as
+	// "<tool>@<version>". Nothing downstream reads this field:
+	// applyDefaults decomposes it into Tool and ToolVersion, which is what
+	// makes the fused form free of consequences past the parser.
 	Uses string `yaml:"uses"`
 
 	// With is configuration for this Project's Plugin and for nothing
@@ -68,8 +67,9 @@ type Project struct {
 
 	// Tool and ToolVersion are derived from Uses during parsing and are
 	// bound to no YAML key: they are neither read from a file nor written
-	// back to one. ToolVersion is empty when Uses named no version, which
-	// means "the documented default for this tool" rather than "none".
+	// back to one. ToolVersion is the version exactly as Uses wrote it, a
+	// leading "v" included, because it becomes the image tag verbatim and
+	// vendors disagree about whether their tags carry one.
 	Tool        string `yaml:"-"`
 	ToolVersion string `yaml:"-"`
 }
@@ -110,10 +110,3 @@ const (
 // Runner's server address, operation, or GitHub token. Enforced in
 // validate.go.
 const reservedEnvPrefix = "TURNIP_"
-
-// Supported IaC tool values for the tool portion of Project.Uses.
-const (
-	ToolTerraform = "terraform"
-	ToolPulumi    = "pulumi"
-	ToolHelmfile  = "helmfile"
-)

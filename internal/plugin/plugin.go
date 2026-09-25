@@ -1,6 +1,10 @@
 package plugin
 
-import "context"
+import (
+	"context"
+
+	"github.com/ivanvc/turnip/internal/provisioning"
+)
 
 // Plugin defines the unified interface for all IaC tools.
 type Plugin interface {
@@ -26,6 +30,12 @@ type Plugin interface {
 	// once, when the plan's result arrives — before turnip knows which
 	// mutating operation the author will later ask for.
 	ActsWithoutChanges() bool
+
+	// Provisioning says how this tool reaches a Runner Job: which
+	// Strategy, which image, and where the binary lives in it when the
+	// Strategy copies it out. It names no version, because the version is
+	// the repository's to state in uses:, never a Plugin's default.
+	Provisioning() provisioning.Spec
 
 	// Execute runs one of the operations returned by GetOperations.
 	Execute(ctx context.Context, operation string, opts ExecuteOptions) (*ExecuteResult, error)

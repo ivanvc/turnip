@@ -137,15 +137,15 @@ func TestPRStatus_MetadataMarks(t *testing.T) {
 // did, and one without them is written as it was: both are omitempty
 // (check-run-refusals Requirements 1.4, 3.3).
 func TestProjectEntry_WithoutTheNewFieldsDecodesUnchanged(t *testing.T) {
-	old := `{"outcome":"not_planned","operation":"diff","tool":"helmfile"}`
+	old := `{"outcome":"not_planned","operation":"diff"}`
 
 	var entry ProjectEntry
 	require.NoError(t, json.Unmarshal([]byte(old), &entry))
-	assert.Equal(t, ProjectEntry{Outcome: OutcomeNotPlanned, Operation: "diff", Tool: "helmfile"}, entry)
+	assert.Equal(t, ProjectEntry{Outcome: OutcomeNotPlanned, Operation: "diff"}, entry)
 
 	written, err := json.Marshal(entry)
 	require.NoError(t, err)
-	assert.JSONEq(t, old, string(written))
+	assert.JSONEq(t, `{"outcome":"not_planned","operation":"diff"}`, string(written))
 	assert.NotContains(t, string(written), "blocked_by")
 	assert.NotContains(t, string(written), "setting")
 }

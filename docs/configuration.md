@@ -19,13 +19,13 @@ besides `config.yaml`, and a project can point at a sibling through the
 fixed workspace path described under "Where the Runner puts things".
 
 ```yaml
-schemaVersion: v1alpha2
+schemaVersion: v1alpha3
 projects:
   - name: web            # optional; defaults to `directory` if omitted
     directory: infra/web
     whenModified:
       - "infra/web/**"
-    uses: helmfile@1.7.4
+    uses: helmfile@v1.7.4
     with:
       environment: staging
     runner:
@@ -35,10 +35,10 @@ projects:
 
 | Field | Required | Notes |
 |---|---|---|
-| `schemaVersion` (top-level) | **yes** | the version of this file's schema; must be `v1alpha2`; see below |
+| `schemaVersion` (top-level) | **yes** | the version of this file's schema; must be `v1alpha3`; see below |
 | `projects[].name` | no | defaults to `directory`; must be unique across the file once defaulted |
 | `projects[].directory` | **yes** | the tool's working directory, relative to the repo root |
-| `projects[].uses` | **yes** | what to run: `<tool>` or `<tool>@<version>`; see below |
+| `projects[].uses` | **yes** | what to run: `<tool>@<version>`; see below |
 | `projects[].whenModified` | no | a list of glob patterns (full `**` support, [doublestar](https://github.com/bmatcuk/doublestar) syntax), matched against the paths GitHub reports as changed; a PR whose changed files match none of a project's patterns never triggers it. Matching is textual and **does not follow symlinks**: git records a change under the file's real path, so a project reached through a symlinked directory must also list the link target (e.g. both `env/prod/**` and `shared/modules/**`) |
 | `projects[].with` | no | how to call it: configuration the tool itself reads; see below |
 | `projects[].runner` | no | where it runs: settings for the Runner Pod; see below |
@@ -56,9 +56,10 @@ does not define.
 
 ### `schemaVersion`
 
-Required, and exactly one value is accepted today: `v1alpha2`. A file
-missing it, or carrying anything else, is rejected naming both what it
-found and what this turnip supports, and it is reported *on its own*,
+Required, and exactly one value is accepted today: `v1alpha3`. A file
+missing it, or carrying anything else (including the previous
+`v1alpha2`), is rejected naming both what it found and what this turnip
+supports, and it is reported *on its own*,
 without also listing every field the older schema used, since the version
 is the one fact that explains them.
 
@@ -68,12 +69,12 @@ about which one this is:
 | | What it versions |
 |---|---|
 | `schemaVersion` (top-level) | the shape of this file (this field) |
-| the `@version` in `uses` (per project) | which release of `terraform`/`helmfile`/`pulumi` the Runner provisions |
+| the `@version` in `uses` (per project) | which release of the tool the Runner provisions |
 | turnip's own release | the Server and Runner images you deploy |
 
 The `alpha` suffix is load-bearing, not decoration. Before turnip 1.0 the
-schema is expected to break, and advancing within alpha (`v1alpha2`,
-`v1alpha3`, …) costs no turnip release and promises nobody a migration
+schema is expected to break, and advancing within alpha (`v1alpha3`,
+`v1alpha4`, …) costs no turnip release and promises nobody a migration
 window. It graduates to `v1` at turnip 1.0, at which point the schema
 version and the project's major version coincide. There is no
 compatibility shim in the meantime: a file on an older schema is
@@ -86,14 +87,14 @@ produces a single clone that every matched project then runs in, so this
 describes the checkout itself rather than any one project.
 
 ```yaml
-schemaVersion: v1alpha2
+schemaVersion: v1alpha3
 
 clone:
   submodules: recursive
 
 projects:
   - directory: infrastructure
-    uses: helmfile@1.1.7
+    uses: helmfile@v1.1.7
 ```
 
 **`submodules`** decides how far submodule initialization goes:
@@ -126,31 +127,40 @@ error.
 
 ### `uses`: what to run
 
-`<tool>`, or `<tool>@<version>`:
+`<tool>@<version>`, always both:
 
 ```yaml
-    uses: helmfile              # the documented default version
-    uses: helmfile@1.7.4        # pinned
-    uses: terraform@v1.9.5      # a leading "v" is accepted and normalized
+    uses: helmfile@v1.7.4
 ```
 
-The tool must be one of `terraform`, `pulumi`, `helmfile` (see "Tool
-support" below).
+The tool must be one this Server has a Plugin for (see "Tool support"
+below); any other name is a validation error listing the ones it has.
 
-Omit the version to get turnip's current default for that tool. When you
-do pin one, turnip keeps no list of "supported" versions to validate
-against. Any value shaped like a real version (roughly semver: `1.9.5`,
-`0.170.1`, `1.7.4-rc1`) is accepted and passed straight to the vendor's
-own per-version image, so a tool's new release works the moment the
-vendor publishes it, with no turnip release required.
+The version is required: turnip keeps no default version for any tool,
+so what a project runs is always stated in the repository and changes
+only in a diff someone reviews. A bare `uses: helmfile` is a validation
+error that says to name a version.
+
+The version is the tool image's tag, used **exactly as written**: turnip
+never adds or removes a `v`. Write the tag the vendor publishes, the one
+you would `docker pull`. helmfile's tags carry a `v`, so it is
+`helmfile@v1.7.4`, which runs `ghcr.io/helmfile/helmfile:v1.7.4`.
+
+turnip keeps no list of "supported" versions to validate against either.
+Any value shaped like a real version (roughly semver, with an optional
+leading `v`: `v1.7.4`, `0.170.1`, `v1.7.4-rc1`) is accepted and passed
+straight to the vendor's own per-version image, so a tool's new release
+works the moment the vendor publishes it, with no turnip release
+required.
 
 Malformed input is rejected when the file is parsed, so it appears as a
 validation error on the pull request rather than as a failed Job. That
 includes **floating tags**: `latest` is not accepted, because the same
 version has to still be there when the plan you approved is applied
 later. If a version is well-formed but the vendor doesn't publish that
-tag, the Job fails when its initContainer can't pull the image,
-reported as a normal operation failure, not caught ahead of time.
+tag (`helmfile@1.7.4`, missing its `v`, is the usual one), the Job fails
+when its image can't be pulled, reported as a normal operation failure,
+not caught ahead of time.
 
 ### `with`: how to call it
 
@@ -440,14 +450,18 @@ be the tool vendor's own image, needing nothing from it but the tool.
 
 ### Tool support
 
+The tools `uses:` accepts are exactly the ones this Server has Plugins
+for. A project naming any other tool makes `turnip.yaml` invalid: it is
+reported when the file is parsed, with every other violation, and fails
+the `turnip` check as `invalid turnip.yaml`.
+
 | Tool | Status | Provisioned by | Operations |
 |---|---|---|---|
 | Helmfile | implemented | run-in-image | `diff` (plan), `apply`, `sync` |
-| Terraform | **not yet implemented** | copy-out | recognized by the config parser (won't reject your config), but no Plugin exists yet to actually run it |
-| Pulumi | **not yet implemented** | copy-out | same as Terraform |
+| Terraform | **not yet implemented** | not decided | none; `uses: terraform@…` is a validation error until its Plugin lands |
+| Pulumi | **not yet implemented** | not decided | same as Terraform |
 
-A project can name `terraform`/`pulumi` today without error, but nothing
-will actually trigger for it until support lands.
+Adding a tool is described in [`development.md`](development.md).
 
 ### How a tool reaches the Runner
 

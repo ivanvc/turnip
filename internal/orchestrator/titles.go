@@ -84,17 +84,6 @@ func aggregateTitle(upToDate, total, failed int) string {
 	return title
 }
 
-// unsupportedTitle names one affected Project whose tool this Server
-// cannot run and counts the rest: a title is shown on one line and cut
-// off, and the summary beneath lists them all.
-func unsupportedTitle(project, tool string, more int) string {
-	title := fmt.Sprintf("unsupported tool: %s uses %s", project, tool)
-	if more > 0 {
-		title += fmt.Sprintf(", and %d more", more)
-	}
-	return title
-}
-
 // lockWaitTitle is a Lock_Wait's: the plan is queued behind another pull
 // request, not failed, so the title says who holds the Lock and what to
 // do once it is released. The holder is named when the Lock records it;
@@ -113,9 +102,9 @@ func notPermittedTitle(setting string) string {
 	return setting + " is not permitted"
 }
 
-// refusedTitle is the turnip check's when a Project was refused: like
-// unsupportedTitle, it names the first and counts the rest, because the
-// title is one line and the summary beneath lists them all.
+// refusedTitle is the turnip check's when a Project was refused: it names
+// the first and counts the rest, because the title is one line and the
+// summary beneath lists them all.
 func refusedTitle(project, setting string, more int) string {
 	title := fmt.Sprintf("not permitted: %s sets %s", project, setting)
 	if more > 0 {

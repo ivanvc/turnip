@@ -105,8 +105,9 @@ or scope it to one tool by using the tool's own name instead of `turnip`:
 ```
 
 The difference: `/turnip ...` considers projects using any tool;
-`/helmfile ...` (or `/terraform`, `/pulumi`) considers only projects
-whose `tool` field matches. `<operation>` must be one the tool actually
+`/helmfile ...` considers only projects whose `tool` field matches.
+Each tool this Server has a Plugin for gets its own trigger word, and
+today that is only `/helmfile`. `<operation>` must be one the tool actually
 supports (Helmfile: `diff`, `apply`, `sync`).
 
 ## Which projects a command targets
@@ -192,9 +193,11 @@ order (one finishes before the next starts), and a malformed line (e.g.
 `/turnip` with nothing after it) is reported back without blocking the
 other, well-formed lines in the same comment.
 
-Only `/turnip`, `/terraform`, `/pulumi` and `/helmfile` are turnip's.
-A line starting with anything else (another bot's command like `/jira`,
-a `/cc`, or a file path pasted at the start of a line) is ignored
+Only `/turnip` and one trigger per tool this Server has a Plugin for
+(today `/helmfile`) are turnip's. A line starting with anything else
+(`/terraform` and `/pulumi` until their Plugins land, another bot's
+command like `/jira`, a `/cc`, or a file path pasted at the start of a
+line) is ignored
 completely: no operation, and no reply saying it was ignored. Turnip
 stays silent on comments that aren't addressed to it.
 
@@ -344,7 +347,6 @@ unapplied at merge would stay unapplied.
 | Every project applied, or its plan found nothing to apply | `success` | `3/3 projects up to date` |
 | An apply (or `sync`) failed | `failure` | `2/3 projects up to date, 1 failed` |
 | `turnip.yaml` is invalid | `failure` | `invalid turnip.yaml` |
-| An affected project uses a tool this server can't run | `failure` | `unsupported tool: infra uses terraform, and 1 more` |
 | A project's `turnip.yaml` asks for an override the Server doesn't permit | `failure` | `not permitted: web sets runner.serviceAccount, and 1 more` |
 
 "Up to date" means the infrastructure matches this pull request: the

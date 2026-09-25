@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"testing"
 
 	yaml "go.yaml.in/yaml/v3"
@@ -18,13 +19,11 @@ func genIdentifier(t *rapid.T, label string) string {
 }
 
 func genProject(t *rapid.T) Project {
-	tool := rapid.SampledFrom([]string{ToolTerraform, ToolPulumi, ToolHelmfile}).Draw(t, "tool")
-	version := rapid.SampledFrom([]string{"", "1.9.5", "0.170.1", "3.130.0-rc1"}).Draw(t, "version")
-
-	uses := tool
-	if version != "" {
-		uses = tool + "@" + version
-	}
+	tool := rapid.SampledFrom(testTools).Draw(t, "tool")
+	// Drawn with and without a leading "v": both are well-formed, and the
+	// round-trip only holds if Parse keeps whichever was written.
+	version := rapid.SampledFrom([]string{"1.9.5", "v1.7.4", "0.170.1", "3.130.0-rc1", "v1.0.0-rc.1"}).Draw(t, "version")
+	uses := tool + "@" + version
 
 	return Project{
 		Name:         genIdentifier(t, "name"),
@@ -88,7 +87,7 @@ func TestProperty_ConfigurationRoundTrip(t *testing.T) {
 		data, err := yaml.Marshal(original)
 		require.NoError(t, err)
 
-		got, err := Parse(data)
+		got, err := Parse(data, testTools)
 		require.NoError(t, err)
 
 		require.Equal(t, original, got)
@@ -99,15 +98,14 @@ func TestProperty_ConfigurationRoundTrip(t *testing.T) {
 func TestProperty_ToolValidationRejectsInvalidTools(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		tool := genIdentifier(t, "tool")
-		data := []byte("schemaVersion: v1alpha2\nprojects:\n  - name: p\n    directory: d\n    uses: " + tool + "\n")
+		data := []byte("schemaVersion: v1alpha3\nprojects:\n  - name: p\n    directory: d\n    uses: " + tool + "@1.0.0\n")
 
-		_, err := Parse(data)
+		_, err := Parse(data, testTools)
 
-		valid := tool == ToolTerraform || tool == ToolPulumi || tool == ToolHelmfile
-		if valid {
-			require.NoErrorf(t, err, "Parse() with valid tool %q", tool)
+		if slices.Contains(testTools, tool) {
+			require.NoErrorf(t, err, "Parse(, testTools) with valid tool %q", tool)
 		} else {
-			require.Errorf(t, err, "Parse() with invalid tool %q", tool)
+			require.Errorf(t, err, "Parse(, testTools) with invalid tool %q", tool)
 		}
 	})
 }
@@ -119,11 +117,11 @@ func TestProperty_ToolValidationRejectsInvalidTools(t *testing.T) {
 func TestProperty_ReservedEnvPrefixRejectedRegardlessOfSuffix(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		name := reservedEnvPrefix + genIdentifier(t, "suffix")
-		data := []byte("schemaVersion: v1alpha2\nprojects:\n  - name: p\n    directory: d\n    uses: helmfile\n    runner:\n      env:\n        " + name + ": value\n")
+		data := []byte("schemaVersion: v1alpha3\nprojects:\n  - name: p\n    directory: d\n    uses: helmfile@v1.7.4\n    runner:\n      env:\n        " + name + ": value\n")
 
-		_, err := Parse(data)
+		_, err := Parse(data, testTools)
 
-		require.Errorf(t, err, "Parse() with reserved env name %q", name)
+		require.Errorf(t, err, "Parse(, testTools) with reserved env name %q", name)
 	})
 }
 

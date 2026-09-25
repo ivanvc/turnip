@@ -7,14 +7,21 @@ import (
 	"pgregory.net/rapid"
 
 	"github.com/ivanvc/turnip/internal/config"
+	"github.com/ivanvc/turnip/internal/provisioning"
 )
 
 func genTool(t *rapid.T) string {
-	tools := make([]string, 0, len(toolImages))
-	for tool := range toolImages {
+	tools := make([]string, 0, len(testSpecs))
+	for tool := range testSpecs {
 		tools = append(tools, tool)
 	}
 	return rapid.SampledFrom(tools).Draw(t, "tool")
+}
+
+// genVersion draws a version of the shape turnip.yaml validation accepts,
+// with or without a leading "v", since BuildJob uses it as written.
+func genVersion(t *rapid.T) string {
+	return rapid.StringMatching(`v?[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}`).Draw(t, "version")
 }
 
 // genProject builds a Project the way Parse would have left one: Tool and
@@ -23,23 +30,28 @@ func genTool(t *rapid.T) string {
 // alone would produce a Project with no tool at all.
 func genProject(t *rapid.T) config.Project {
 	tool := genTool(t)
+	version := genVersion(t)
 	return config.Project{
-		Name:      rapid.StringMatching(`[a-z][a-z0-9-]{0,15}`).Draw(t, "name"),
-		Directory: rapid.StringMatching(`[a-z][a-z0-9/_-]{0,20}`).Draw(t, "directory"),
-		Uses:      tool,
-		Tool:      tool,
+		Name:        rapid.StringMatching(`[a-z][a-z0-9-]{0,15}`).Draw(t, "name"),
+		Directory:   rapid.StringMatching(`[a-z][a-z0-9/_-]{0,20}`).Draw(t, "directory"),
+		Uses:        tool + "@" + version,
+		Tool:        tool,
+		ToolVersion: version,
 	}
 }
 
-func genOperationParams(t *rapid.T) OperationParams {
+// genOperationParams pairs the parameters with the Spec of the Project's
+// tool, as the orchestrator does from the tool's Plugin.
+func genOperationParams(t *rapid.T, tool string) OperationParams {
 	return OperationParams{
-		OperationID: rapid.StringMatching(`[a-f0-9-]{8,36}`).Draw(t, "operationID"),
-		Operation:   rapid.StringMatching(`[a-z]{2,10}`).Draw(t, "operation"),
-		RepoURL:     "https://github.com/" + rapid.StringMatching(`[a-z]{2,10}/[a-z]{2,10}`).Draw(t, "repoURL") + ".git",
-		CommitSHA:   rapid.StringMatching(`[a-f0-9]{40}`).Draw(t, "commitSHA"),
-		ServerAddr:  rapid.StringMatching(`[a-z0-9.-]{3,20}:[0-9]{2,5}`).Draw(t, "serverAddr"),
-		ExtraArgs:   rapid.SliceOfN(rapid.StringMatching(`--[a-z-]{2,10}`), 0, 3).Draw(t, "extraArgs"),
-		PlanData:    []byte(rapid.String().Draw(t, "planData")),
+		Provisioning: testSpecs[tool],
+		OperationID:  rapid.StringMatching(`[a-f0-9-]{8,36}`).Draw(t, "operationID"),
+		Operation:    rapid.StringMatching(`[a-z]{2,10}`).Draw(t, "operation"),
+		RepoURL:      "https://github.com/" + rapid.StringMatching(`[a-z]{2,10}/[a-z]{2,10}`).Draw(t, "repoURL") + ".git",
+		CommitSHA:    rapid.StringMatching(`[a-f0-9]{40}`).Draw(t, "commitSHA"),
+		ServerAddr:   rapid.StringMatching(`[a-z0-9.-]{3,20}:[0-9]{2,5}`).Draw(t, "serverAddr"),
+		ExtraArgs:    rapid.SliceOfN(rapid.StringMatching(`--[a-z-]{2,10}`), 0, 3).Draw(t, "extraArgs"),
+		PlanData:     []byte(rapid.String().Draw(t, "planData")),
 	}
 }
 
@@ -47,7 +59,7 @@ func genOperationParams(t *rapid.T) OperationParams {
 func TestProperty_RunnerJobEnvironmentVariables(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		project := genProject(t)
-		params := genOperationParams(t)
+		params := genOperationParams(t, project.Tool)
 
 		job, err := BuildJob(project, params)
 		require.NoError(t, err)
@@ -63,22 +75,17 @@ func TestProperty_RunnerJobEnvironmentVariables(t *testing.T) {
 
 // Feature: multi-iac-automation-platform, Property 23a: Runner Job Tool Provisioning
 //
-// The resolved version reaches the container that holds the tool, whichever
+// The version, as written, tags the container that holds the tool, whichever
 // one that is: the vendor initContainer under copy-out, and the main
 // container under run-in-image, where the vendor image *is* the main
 // container.
 func TestProperty_RunnerJobToolProvisioning(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		tool := genTool(t)
-		ti := toolImages[tool]
-		version := rapid.SampledFrom(ti.versions).Draw(t, "version")
-
 		project := genProject(t)
-		project.Uses = tool + "@" + version
-		project.Tool = tool
-		project.ToolVersion = version
+		spec := testSpecs[project.Tool]
+		wantImage := spec.Image + ":" + project.ToolVersion
 
-		job, err := BuildJob(project, genOperationParams(t))
+		job, err := BuildJob(project, genOperationParams(t, project.Tool))
 		require.NoError(t, err)
 
 		require.Len(t, job.Spec.Template.Spec.Containers, 1)
@@ -87,13 +94,13 @@ func TestProperty_RunnerJobToolProvisioning(t *testing.T) {
 		// Every Job clones in an initContainer, whatever the strategy.
 		require.Contains(t, initContainerNames(job), "clone")
 
-		if ti.strategy == runInImage {
-			require.Contains(t, main.Image, version)
+		if spec.Strategy == provisioning.RunInImage {
+			require.Equal(t, wantImage, main.Image)
 			return
 		}
 
-		provision := initContainerNamed(t, "provision-"+tool, job)
-		require.Contains(t, provision.Image, version)
+		provision := initContainerNamed(t, "provision-"+project.Tool, job)
+		require.Equal(t, wantImage, provision.Image)
 		require.Len(t, provision.VolumeMounts, 1)
 		require.Contains(t, main.VolumeMounts, provision.VolumeMounts[0],
 			"the main container reads the volume the binary was copied onto")
@@ -105,7 +112,8 @@ func TestProperty_RunnerJobToolProvisioning(t *testing.T) {
 // explicit post-completion delete call.)
 func TestProperty_JobCleanupAfterCompletion(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		job, err := BuildJob(genProject(t), genOperationParams(t))
+		project := genProject(t)
+		job, err := BuildJob(project, genOperationParams(t, project.Tool))
 		require.NoError(t, err)
 		require.NotNil(t, job.Spec.TTLSecondsAfterFinished)
 		require.Equal(t, jobTTLSeconds, *job.Spec.TTLSecondsAfterFinished)
@@ -123,7 +131,7 @@ func TestProperty_JobCleanupAfterCompletion(t *testing.T) {
 func TestProperty_TokenPropagationToCloneContainer(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		project := genProject(t)
-		params := genOperationParams(t)
+		params := genOperationParams(t, project.Tool)
 
 		job, err := BuildJob(project, params)
 		require.NoError(t, err)

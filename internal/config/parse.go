@@ -36,7 +36,12 @@ var unknownFieldRe = regexp.MustCompile(`^line (\d+): field (\S+) not found in t
 // file written for the previous schema would otherwise report one
 // unknown-key error per field it carries, burying the single fact that
 // actually explains them.
-func Parse(data []byte) (*Config, error) {
+//
+// tools is the set of tool names a Project's uses: may name: the names of
+// the Plugins this turnip has registered. It is passed in rather than
+// known here so that this package depends on no Plugin, and error
+// messages list it in the order given, so callers pass it sorted.
+func Parse(data []byte, tools []string) (*Config, error) {
 	var c Config
 	if err := yaml.Unmarshal(data, &c); err != nil {
 		return nil, newParseError(err)
@@ -52,7 +57,7 @@ func Parse(data []byte) (*Config, error) {
 
 	applyDefaults(&c)
 
-	if err := validate(&c); err != nil {
+	if err := validate(&c, tools); err != nil {
 		return nil, err
 	}
 
@@ -132,19 +137,17 @@ func applyDefaults(c *Config) {
 	}
 }
 
-// splitUses decomposes "<tool>@<version>" into its parts, normalizing a
-// leading "v" off the version. A reference with no "@" yields an empty
-// version, meaning "the documented default for this tool".
+// splitUses decomposes "<tool>@<version>" into its parts, keeping the
+// version exactly as written: it becomes the image tag, and whether a tag
+// carries a leading "v" is the vendor's convention, not turnip's. A
+// reference with no "@" yields an empty version, which validation rejects.
 //
 // Nothing here rejects anything: an empty or malformed result is a
 // validation concern, and validate reads the raw Uses string so it can
 // tell "no version given" from "@" with nothing after it.
 func splitUses(uses string) (tool, version string) {
-	tool, version, found := strings.Cut(uses, "@")
-	if !found {
-		return tool, ""
-	}
-	return tool, strings.TrimPrefix(version, "v")
+	tool, version, _ = strings.Cut(uses, "@")
+	return tool, version
 }
 
 // newParseError converts a go.yaml.in/yaml/v3 error into a *ParseError,

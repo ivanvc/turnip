@@ -16,7 +16,7 @@ import (
 func TestBuildJob_SubmoduleModeReachesOnlyTheCloneContainer(t *testing.T) {
 	for _, tool := range []string{"helmfile", "terraform"} {
 		t.Run(tool, func(t *testing.T) {
-			params := testParams()
+			params := testParams(tool)
 			params.Submodules = config.SubmodulesRecursive
 
 			job, err := BuildJob(testProject(tool), params)
@@ -36,7 +36,7 @@ func TestBuildJob_SubmoduleModeReachesOnlyTheCloneContainer(t *testing.T) {
 // top-level, so a Job whose Server never set one still initializes
 // submodules instead of silently leaving an empty directory.
 func TestBuildJob_EmptySubmoduleModeIsStillPresentOnTheCloneContainer(t *testing.T) {
-	job, err := BuildJob(testProject("helmfile"), testParams())
+	job, err := BuildJob(testProject("helmfile"), testParams("helmfile"))
 	require.NoError(t, err)
 
 	clone := envMap(initContainerNamed(t, "clone", job))

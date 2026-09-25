@@ -137,7 +137,7 @@ func (o *Orchestrator) recordFinishedOutcome(ctx context.Context, client github.
 		return pr
 	}
 	ref := prRef{Owner: rec.Owner, Repo: rec.Repo, PRNumber: rec.PRNumber, HeadSHA: rec.HeadSHA}
-	entry := ProjectEntry{Outcome: outcome, Operation: rec.Operation, Tool: rec.Project.Tool}
+	entry := ProjectEntry{Outcome: outcome, Operation: rec.Operation}
 	if err := o.recordOutcome(ctx, client, ref, rec.Project.Name, entry); err != nil {
 		slog.ErrorContext(ctx, "recording outcome for the aggregate check", "operation_id", rec.OperationID, "error", err)
 		return appendAggregateNote(pr, err)

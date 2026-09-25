@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/ivanvc/turnip/internal/config"
 	"github.com/ivanvc/turnip/internal/github"
@@ -85,7 +84,7 @@ func (o *Orchestrator) HandlePullRequest(ctx context.Context, event *github.Webh
 }
 
 func (o *Orchestrator) handlePlanTrigger(ctx context.Context, client github.GitHubClient, event *github.WebhookEvent) error {
-	cfg, err := fetchConfig(ctx, client, event.Repository.Owner, event.Repository.Name, event.PullRequest.HeadSHA)
+	cfg, err := fetchConfig(ctx, client, event.Repository.Owner, event.Repository.Name, event.PullRequest.HeadSHA, o.plugins.Names())
 	if err != nil {
 		// A repository with no turnip.yaml anywhere hasn't opted into
 		// turnip, and this handler runs on every PR open and every push
@@ -125,54 +124,21 @@ func (o *Orchestrator) handlePlanTrigger(ctx context.Context, client github.GitH
 		return nil
 	}
 
-	targets, unsupported := planTargetsFor(matched, o.plugins, cfg.Clone)
+	targets := planTargetsFor(matched, o.plugins, cfg.Clone)
 
 	// Detach from the request context: the webhook HTTP handler responds
 	// as soon as this method returns, but executing Targets can take far
 	// longer than GitHub's webhook delivery timeout allows for. Run it in
 	// the background on a context stripped of the request's cancellation
 	// (but not its values), and return immediately.
-	go o.runTargetsAndPost(context.WithoutCancel(ctx), client, event.Repository, *event.PullRequest, event.Installation.ID, targets, unsupported)
+	go o.runTargetsAndPost(context.WithoutCancel(ctx), client, event.Repository, *event.PullRequest, event.Installation.ID, targets)
 
 	return nil
 }
 
-func (o *Orchestrator) runTargetsAndPost(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, installationID int64, targets []Target, unsupported []config.Project) {
-	notices := o.recordUnsupported(ctx, client, repo, pr, unsupported)
-	if len(targets) == 0 {
-		// With nothing planned there is no result for a notice to ride on,
-		// so it is posted on its own — the rule HandleIssueComment applies
-		// to an orphaned notice.
-		if len(notices) > 0 {
-			if _, err := client.PostComment(ctx, repo.Owner, repo.Name, pr.Number, strings.Join(notices, "\n")); err != nil {
-				slog.ErrorContext(ctx, "posting unsupported-tool notice", "owner", repo.Owner, "repo", repo.Name, "pr_number", pr.Number, "error", err)
-			}
-		}
-		return
-	}
+func (o *Orchestrator) runTargetsAndPost(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, installationID int64, targets []Target) {
 	results := o.executeTargets(ctx, client, repo, pr, installationID, targets)
-	o.postResults(ctx, client, repo, pr.Number, results, notices...)
-}
-
-// recordUnsupported records each affected Project whose tool this Server
-// has no Plugin for, and returns a notice for each to lead the comment.
-// It is a configuration problem — turnip.yaml asks this Server for
-// something it cannot do — so the aggregate check fails for it rather
-// than waiting on a plan that will never run (aggregate-check-run
-// Requirement 7.3).
-func (o *Orchestrator) recordUnsupported(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, unsupported []config.Project) []string {
-	ref := prRef{Owner: repo.Owner, Repo: repo.Name, PRNumber: pr.Number, HeadSHA: pr.HeadSHA}
-	var notices []string
-	for _, project := range unsupported {
-		entry := ProjectEntry{Outcome: OutcomeUnsupported, Tool: project.Tool}
-		if err := o.recordOutcome(ctx, client, ref, project.Name, entry); err != nil {
-			slog.ErrorContext(ctx, "recording unsupported project for the aggregate check", "owner", repo.Owner, "repo", repo.Name, "pr_number", pr.Number, "project", project.Name, "error", err)
-		}
-		notices = append(notices, fmt.Sprintf(
-			"Project `%s` uses `%s`, which this turnip server cannot run, so it was not planned. The `%s` check fails until turnip.yaml changes.",
-			project.Name, project.Tool, aggregateCheckName))
-	}
-	return notices
+	o.postResults(ctx, client, repo, pr.Number, results)
 }
 
 // markAutomaticVerdict records a whole-commit fact the automatic plan found
@@ -201,7 +167,7 @@ func prRefFor(event *github.WebhookEvent) prRef {
 func (o *Orchestrator) handlePRClosed(ctx context.Context, client github.GitHubClient, event *github.WebhookEvent) error {
 	owner, repoName, prNumber := event.Repository.Owner, event.Repository.Name, event.PullRequest.Number
 
-	cfg, err := fetchConfig(ctx, client, owner, repoName, event.PullRequest.HeadSHA)
+	cfg, err := fetchConfig(ctx, client, owner, repoName, event.PullRequest.HeadSHA, o.plugins.Names())
 	if err != nil {
 		// No other source of Project identity exists in this stateless
 		// design — log and skip Lock release, but the PlanCommentRecord

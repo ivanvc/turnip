@@ -7,8 +7,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
-
-	"github.com/ivanvc/turnip/internal/config"
 )
 
 // tokenPattern generates safe, non-whitespace tokens with no "-" characters
@@ -20,11 +18,12 @@ func genToken(t *rapid.T, label string) string {
 	return rapid.StringMatching(tokenPattern).Draw(t, label)
 }
 
-// knownToolNames mirrors parser.go's knownTools. Trigger-line generators
-// draw from these rather than from arbitrary tokens: a line naming any
-// other tool is deliberately not a trigger at all (Requirement 4.2a), so
-// an arbitrary token can no longer stand in for "some tool name".
-var knownToolNames = []string{"turnip", config.ToolTerraform, config.ToolPulumi, config.ToolHelmfile}
+// knownToolNames mirrors the set parser.go's knownTools builds from
+// testTools. Trigger-line generators draw from these rather than from
+// arbitrary tokens: a line naming any other tool is deliberately not a
+// trigger at all (Requirement 4.2a), so an arbitrary token can no longer
+// stand in for "some tool name".
+var knownToolNames = append([]string{"turnip"}, testTools...)
 
 func genKnownTool(t *rapid.T, label string) string {
 	return rapid.SampledFrom(knownToolNames).Draw(t, label)
@@ -48,7 +47,7 @@ func TestProperty_CommentTriggerPatternRecognition(t *testing.T) {
 			body += " -- " + strings.Join(extraArgs, " ")
 		}
 
-		got, err := ParseTriggers(body)
+		got, err := ParseTriggers(body, testTools)
 		require.NoError(t, err)
 		require.Len(t, got, 1)
 		require.Equal(t, tool, got[0].Tool)
@@ -66,7 +65,7 @@ func TestProperty_SelectiveProjectTriggeringFromComments(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		project := genToken(t, "project")
 
-		got, err := ParseTriggers("/turnip apply " + project)
+		got, err := ParseTriggers("/turnip apply "+project, testTools)
 		require.NoError(t, err)
 		require.Len(t, got, 1)
 		require.Equal(t, []string{project}, got[0].Projects)
@@ -155,7 +154,7 @@ func TestProperty_MultiLineTriggerOrderingAndPartialFailureIsolation(t *testing.
 		}
 		body := strings.Join(bodyLines, "\n")
 
-		got, err := ParseTriggers(body)
+		got, err := ParseTriggers(body, testTools)
 
 		if n == 0 {
 			require.Nil(t, got, "no well-formed lines")
@@ -188,7 +187,7 @@ func TestProperty_UnknownToolIsNeverATrigger(t *testing.T) {
 		operation := genToken(t, "operation")
 		project := genToken(t, "project")
 
-		got, err := ParseTriggers("/" + tool + " " + operation + " " + project)
+		got, err := ParseTriggers("/"+tool+" "+operation+" "+project, testTools)
 		require.ErrorIs(t, err, ErrNoTrigger)
 		require.Nil(t, got)
 	})

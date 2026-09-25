@@ -39,7 +39,7 @@ func TestHandleResult_RecordsTheOutcomeAndPublishes(t *testing.T) {
 	createTestRecord(t, o, "op-apply", "apply")
 	publishedResult(t, o, "op-apply", rpc.OperationResult{Success: true})
 	st := readTestRecord(t, o, resultRef)
-	assert.Equal(t, ProjectEntry{Outcome: OutcomeApplied, Operation: "apply", Tool: "helmfile"}, st.Projects["helm-a"])
+	assert.Equal(t, ProjectEntry{Outcome: OutcomeApplied, Operation: "apply"}, st.Projects["helm-a"])
 	assert.Equal(t, aggregateCheckName, client.createdCheckRun.Name)
 	assert.Equal(t, "success", client.createdCheckRun.Conclusion)
 }
@@ -197,35 +197,29 @@ func TestAutomaticPlan_NothingAffectedIsSkipped(t *testing.T) {
 	assert.Equal(t, "no projects affected", client.checks.current().Title)
 }
 
-const unsupportedToolTurnipYAML = `
-schemaVersion: v1alpha2
+const unregisteredToolTurnipYAML = `
+schemaVersion: v1alpha3
 projects:
   - name: infra
     directory: infra
-    uses: terraform
+    uses: terraform@1.9.0
     whenModified:
       - "infra/**"
-  - name: other
-    directory: other
-    uses: terraform
-    whenModified:
-      - "other/**"
 `
 
-// An affected Project whose tool this Server cannot run is a turnip.yaml
-// problem: it fails the check, and the comment says why (Requirement 7.3).
-// A Project naming such a tool that the change does not touch is not
-// recorded (7.4).
-func TestAutomaticPlan_UnsupportedToolFailsTheCheck(t *testing.T) {
-	o, client := runAutoPlan(t, map[string][]byte{"turnip.yaml": []byte(unsupportedToolTurnipYAML)}, []string{"infra/main.tf"})
+// A Project naming a tool this Server has no Plugin for is an invalid
+// turnip.yaml, caught when it is parsed against the registered names
+// (plugin-registry Requirement 3.3): the check fails as for any other
+// invalid configuration, and the comment lists the tools that are
+// registered, sorted, so the author can see what to write instead.
+func TestAutomaticPlan_UnregisteredToolIsAnInvalidConfig(t *testing.T) {
+	o, client := runAutoPlan(t, map[string][]byte{"turnip.yaml": []byte(unregisteredToolTurnipYAML)}, []string{"infra/main.tf"})
 
-	require.Eventually(t, func() bool { return len(client.postedComments()) > 0 }, 2*time.Second, 10*time.Millisecond)
-	assert.Contains(t, client.postedComments()[0], "Project `infra` uses `terraform`")
-
-	st := readTestRecord(t, o, testRef)
-	assert.Equal(t, ProjectEntry{Outcome: OutcomeUnsupported, Tool: "terraform"}, st.Projects["infra"])
-	assert.NotContains(t, st.Projects, "other")
+	assert.True(t, readTestRecord(t, o, testRef).ConfigInvalid)
+	assert.Empty(t, readTestRecord(t, o, testRef).Projects)
 	require.NotNil(t, client.checks.current())
 	assert.Equal(t, "failure", client.checks.current().Conclusion)
-	assert.Equal(t, "unsupported tool: infra uses terraform", client.checks.current().Title)
+	assert.Equal(t, invalidConfigTitle(), client.checks.current().Title)
+	require.Len(t, client.postedComments(), 1)
+	assert.Contains(t, client.postedComments()[0], `unsupported tool "terraform", must be one of "helmfile", "pulumi"`)
 }

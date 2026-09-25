@@ -2,15 +2,20 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
+
+	batchv1 "k8s.io/api/batch/v1"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ivanvc/turnip/internal/config"
 	"github.com/ivanvc/turnip/internal/github"
+	"github.com/ivanvc/turnip/internal/jobs"
 	"github.com/ivanvc/turnip/internal/lock"
 )
 
@@ -70,7 +75,7 @@ func applyLocks() *fakeLockManager {
 func seedAwaitingApply(t *testing.T, o *Orchestrator) prStatus {
 	t.Helper()
 	require.NoError(t, o.records.WriteOutcome(context.Background(), stuckCheckRef, "helm-a",
-		ProjectEntry{Outcome: OutcomeAwaitingApply, Operation: "diff", Tool: "helmfile"}))
+		ProjectEntry{Outcome: OutcomeAwaitingApply, Operation: "diff"}))
 	before, err := o.records.ReadPRStatus(context.Background(), stuckCheckRef)
 	require.NoError(t, err)
 	return before
@@ -124,13 +129,18 @@ func TestExecuteOne_ApplyRecordNotSavedCompletesTheCheck(t *testing.T) {
 	assert.Equal(t, before, after, "a refused apply ran nothing, so the record must not change")
 }
 
-// unbuildableTarget pins a tool version jobs.BuildJob refuses. Config
-// validation rejects it at parse time in production, but BuildJob checks
-// again, and that check is the one reachable failure of the build step.
+// failBuildJob makes the build step fail. No input reaches a failure of
+// jobs.BuildJob itself any more, so the step is replaced rather than fed
+// something it refuses.
+func failBuildJob(o *Orchestrator) {
+	o.buildJob = func(config.Project, jobs.OperationParams) (*batchv1.Job, error) {
+		return nil, errors.New("jobs: marshal tool config: unsupported value")
+	}
+}
+
 func unbuildableTarget(operation string) Target {
 	t := testHelmfileTarget()
 	t.Operation = operation
-	t.Project.ToolVersion = "not-a-version"
 	return t
 }
 
@@ -138,6 +148,7 @@ func unbuildableTarget(operation string) Target {
 // Project_Check it already created.
 func TestExecuteOne_PlanJobNotBuiltCompletesTheCheck(t *testing.T) {
 	o, _ := stuckCheckOrchestrator(t, &fakeLockManager{})
+	failBuildJob(o)
 	client := &fakeExecuteClient{}
 
 	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, unbuildableTarget("diff"))
@@ -151,6 +162,7 @@ func TestExecuteOne_PlanJobNotBuiltCompletesTheCheck(t *testing.T) {
 // as it was.
 func TestExecuteOne_ApplyJobNotBuiltCompletesTheCheck(t *testing.T) {
 	o, _ := stuckCheckOrchestrator(t, applyLocks())
+	failBuildJob(o)
 	before := seedAwaitingApply(t, o)
 	client := &fakeExecuteClient{}
 

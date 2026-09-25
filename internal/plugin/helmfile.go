@@ -4,6 +4,8 @@ import (
 	"context"
 	"slices"
 	"strings"
+
+	"github.com/ivanvc/turnip/internal/provisioning"
 )
 
 // HelmfilePlugin implements Plugin by shelling out to the helmfile CLI.
@@ -34,6 +36,19 @@ func (p *HelmfilePlugin) GetOperations() []string {
 // `sync` from every Project whose diff came back clean, permanently — a
 // re-plan would find no changes and release the Lock again.
 func (p *HelmfilePlugin) ActsWithoutChanges() bool { return true }
+
+// Provisioning runs in helmfile's own image rather than copying a binary
+// out, because helmfile is a runtime, not a binary: it shells out to
+// `helm`, `helmfile diff` needs the helm-diff plugin, helm-secrets needs
+// `sops`, and helm locates its plugins through an environment this image
+// sets. Copying one binary out fails with `exec: "helm": executable file
+// not found in $PATH`.
+func (p *HelmfilePlugin) Provisioning() provisioning.Spec {
+	return provisioning.Spec{
+		Strategy: provisioning.RunInImage,
+		Image:    "ghcr.io/helmfile/helmfile",
+	}
+}
 
 func (p *HelmfilePlugin) GetPlanOperation() string  { return "diff" }
 func (p *HelmfilePlugin) GetApplyOperation() string { return "apply" }

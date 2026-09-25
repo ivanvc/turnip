@@ -38,7 +38,7 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 	client := o.installationClient(event.Installation.ID)
 	owner, repoName := event.Repository.Owner, event.Repository.Name
 
-	commands, err := github.ParseTriggers(event.Comment.Body)
+	commands, err := github.ParseTriggers(event.Comment.Body, o.plugins.Names())
 	if errors.Is(err, github.ErrNoTrigger) {
 		return nil
 	}
@@ -126,7 +126,7 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 		return github.ErrRefused
 	}
 
-	cfg, err := fetchConfig(ctx, client, owner, repoName, pr.HeadSHA)
+	cfg, err := fetchConfig(ctx, client, owner, repoName, pr.HeadSHA, o.plugins.Names())
 	if err != nil {
 		_, postErr := client.PostComment(ctx, owner, repoName, event.PullRequest.Number, configErrorComment(err))
 		return postErr

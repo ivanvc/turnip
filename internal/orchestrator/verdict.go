@@ -31,11 +31,10 @@ func (v aggregateVerdict) completed() bool {
 //
 // `failure` is reserved for something the pull request's author can fix
 // by changing it (Requirements 5.6, 7): a failed apply, an invalid
-// turnip.yaml, an affected Project whose tool this Server cannot run, or
-// one asking for an override this Server does not permit. A
-// plan awaiting its apply, a Project waiting on another pull request's
-// Lock, a plan that has not yet succeeded — none of those is red, because
-// reviewers skip pull requests showing a failure.
+// turnip.yaml, or an affected Project asking for an override this Server
+// does not permit. A plan awaiting its apply, a Project waiting on another
+// pull request's Lock, a plan that has not yet succeeded — none of those
+// is red, because reviewers skip pull requests showing a failure.
 func verdictFor(st prStatus) aggregateVerdict {
 	names := make([]string, 0, len(st.Projects))
 	for name := range st.Projects {
@@ -44,13 +43,11 @@ func verdictFor(st prStatus) aggregateVerdict {
 	sort.Strings(names)
 
 	done, failed := 0, 0
-	var unsupported, refused []string
+	var refused []string
 	for _, name := range names {
 		switch o := st.Projects[name].Outcome; {
 		case o.done():
 			done++
-		case o == OutcomeUnsupported:
-			unsupported = append(unsupported, name)
 		case o == OutcomeRefused:
 			refused = append(refused, name)
 		case o == OutcomeApplyFailed:
@@ -72,18 +69,9 @@ func verdictFor(st prStatus) aggregateVerdict {
 			Title:   noProjectsAffectedTitle(),
 			Summary: "No project's files changed in this pull request, so there is nothing to plan or apply.",
 		}
-	case len(unsupported) > 0:
+	case len(refused) > 0:
 		// The first by name, which is also the first line of the summary
 		// beneath it.
-		first := unsupported[0]
-		return aggregateVerdict{
-			Status: "completed", Conclusion: "failure",
-			Title:   unsupportedTitle(first, st.Projects[first].Tool, len(unsupported)-1),
-			Summary: summary,
-		}
-	case len(refused) > 0:
-		// After unsupported only so one Title is chosen when both occur:
-		// each is a configuration failure, and either Title is true.
 		first := refused[0]
 		return aggregateVerdict{
 			Status: "completed", Conclusion: "failure",
@@ -148,8 +136,6 @@ func outcomeText(e ProjectEntry) string {
 		return "applied"
 	case OutcomeApplyFailed:
 		return "apply failed"
-	case OutcomeUnsupported:
-		return fmt.Sprintf("tool `%s` is not supported by this server; fix turnip.yaml", e.Tool)
 	case OutcomeRefused:
 		return fmt.Sprintf("%s is not permitted; change turnip.yaml, or permit it in TURNIP_ALLOWED_OVERRIDES", e.Setting)
 	default:

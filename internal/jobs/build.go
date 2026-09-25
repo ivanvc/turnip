@@ -14,6 +14,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"github.com/ivanvc/turnip/internal/config"
+	"github.com/ivanvc/turnip/internal/provisioning"
 )
 
 const (
@@ -23,12 +24,12 @@ const (
 	//
 	// toolsVolumeName/toolsMountPath are the shared emptyDir volume an
 	// initContainer copies a tool binary onto, and the main container
-	// reads it from (Requirement 8.1/8.2). Used by copyOut only.
+	// reads it from (Requirement 8.1/8.2). Used by CopyOut only.
 	toolsVolumeName = "tools"
 	toolsMountPath  = "/turnip/tools"
 
 	// binVolumeName/binMountPath carry turnip's *own* runner binary into a
-	// vendor image under runInImage. Deliberately separate from the tools
+	// vendor image under RunInImage. Deliberately separate from the tools
 	// volume: what lands here is turnip's binary, not the tool's, and
 	// naming it "tools" would make the Pod lie about what it holds.
 	binVolumeName = "bin"
@@ -97,8 +98,8 @@ type OperationParams struct {
 	PlanData    []byte
 	// RunnerImage is turnip's own image, from the Server's
 	// TURNIP_RUNNER_IMAGE config. It serves two roles depending on the
-	// tool's strategy: under copyOut it is the main container's image,
-	// and under runInImage it is the image the runner binary is copied
+	// tool's strategy: under CopyOut it is the main container's image,
+	// and under RunInImage it is the image the runner binary is copied
 	// *out of*, while the vendor's image runs as the main container. One
 	// field rather than two, because a Job never needs two turnip images.
 	RunnerImage string
@@ -115,26 +116,29 @@ type OperationParams struct {
 	// means top-level, so a Job carrying no value still initializes
 	// submodules rather than silently leaving an empty directory.
 	Submodules string
+	// Provisioning is how the Project's tool reaches this Job, as its
+	// Plugin declares it. This package keeps no table of tools: it
+	// implements each Strategy once and builds whichever one it is handed.
+	Provisioning provisioning.Spec
 }
 
 // BuildJob constructs the Kubernetes Job that runs one Operation for one
-// Project. It resolves the Project's requested tool version before
-// constructing anything else, returning an error immediately — and building
-// no part of the Job spec — on an unrecognized version (Requirement 8.4).
+// Project.
 //
-// The Job's shape depends on the tool's provisioning strategy: copyOut
+// The Job's shape depends on the tool's provisioning strategy: CopyOut
 // copies a binary out of the vendor image for turnip's Runner image to
-// execute, while runInImage makes the vendor image the main container and
+// execute, while RunInImage makes the vendor image the main container and
 // hands it turnip's runner binary instead. Either way the repository is
 // cloned by an initContainer, so the container that runs the tool needs
 // nothing from its image but the tool.
+//
+// The tool's image is tagged with the Project's version exactly as its
+// uses: line wrote it, with no "v" added or removed. Vendors differ on
+// whether their tags carry one, so the repository writes the tag it would
+// pull. The version's shape is checked once, when turnip.yaml is parsed.
 func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) {
-	version, err := resolveVersion(project.Tool, project.ToolVersion)
-	if err != nil {
-		return nil, err
-	}
-	ti := toolImages[project.Tool]
-	toolImageRef := fmt.Sprintf(ti.image, version)
+	version := project.ToolVersion
+	toolImageRef := op.Provisioning.Image + ":" + version
 
 	toolConfig, err := json.Marshal(project.With)
 	if err != nil {
@@ -148,7 +152,7 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 	// baseEnv is what both the clone initContainer and the container
 	// running the tool need. Two things are deliberately absent: the
 	// GitHub token, which only the clone needs, and TURNIP_TOOLS_DIR,
-	// which only means anything under copyOut.
+	// which only means anything under CopyOut.
 	baseEnv := []corev1.EnvVar{
 		{Name: "TURNIP_SERVER_ADDR", Value: op.ServerAddr},
 		{Name: "TURNIP_OPERATION_ID", Value: op.OperationID},
@@ -161,9 +165,9 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		// answer to "why did this change when I did not touch anything".
 		//
 		// It is the version turnip *requested*, which is the one that runs
-		// while resolveVersion rejects a floating tag. If floating tags
-		// are ever allowed, this is the value that has to start reporting
-		// what resolved.
+		// while turnip.yaml validation rejects a floating tag. If floating
+		// tags are ever allowed, this is the value that has to start
+		// reporting what resolved.
 		{Name: "TURNIP_TOOL_VERSION", Value: version},
 		{Name: "TURNIP_OPERATION", Value: op.Operation},
 		{Name: "TURNIP_REPO_URL", Value: op.RepoURL},
@@ -220,8 +224,10 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 	)
 	mainEnv := slices.Clone(baseEnv)
 
-	switch ti.strategy {
-	case runInImage:
+	// Why a tool picks one strategy over the other is documented on
+	// provisioning.Strategy and on each Plugin's Provisioning method.
+	switch op.Provisioning.Strategy {
+	case provisioning.RunInImage:
 		initContainers = []corev1.Container{
 			{
 				Name:         "copy-runner",
@@ -243,7 +249,7 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		// own PATH. The Runner needs no branch for this — pathWithToolsDir
 		// leaves PATH untouched when the variable is absent.
 
-	default: // copyOut
+	default: // provisioning.CopyOut
 		initContainers = []corev1.Container{
 			{
 				// Provisioning runs before the clone so an unpullable tool
@@ -251,7 +257,7 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 				// about to throw away.
 				Name:         "provision-" + project.Tool,
 				Image:        toolImageRef,
-				Command:      []string{"sh", "-c", fmt.Sprintf("cp %s %s/%s", ti.binaryPath, toolsMountPath, project.Tool)},
+				Command:      []string{"sh", "-c", fmt.Sprintf("cp %s %s/%s", op.Provisioning.BinaryPath, toolsMountPath, project.Tool)},
 				VolumeMounts: []corev1.VolumeMount{toolsMount},
 			},
 			cloneContainer,

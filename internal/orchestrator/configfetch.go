@@ -42,17 +42,18 @@ func configFilePathList(quote string) string {
 // does (Requirement 1.2); any other GetFile error is returned as-is
 // (Requirement 1.3); a config.Parse failure (*config.ParseError or
 // config.ValidationErrors) is returned as-is too (Requirement 1.4).
+// tools is the registered tool names, the only ones uses: may name.
 //
 // Exactly one request per location, and no more: this runs on every pull
 // request open and synchronize in every installed repository, including
 // those that never onboard, so the not-found path is the one paid most
 // often.
-func fetchConfig(ctx context.Context, client github.GitHubClient, owner, repo, headSHA string) (*config.Config, error) {
+func fetchConfig(ctx context.Context, client github.GitHubClient, owner, repo, headSHA string, tools []string) (*config.Config, error) {
 	for _, path := range configFilePaths {
 		data, err := client.GetFile(ctx, owner, repo, path, headSHA)
 		switch {
 		case err == nil:
-			return config.Parse(data)
+			return config.Parse(data, tools)
 		case errors.Is(err, github.ErrFileNotFound):
 			continue
 		default:

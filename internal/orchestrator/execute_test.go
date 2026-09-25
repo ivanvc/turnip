@@ -3,11 +3,13 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -18,6 +20,7 @@ import (
 	"github.com/ivanvc/turnip/internal/jobs"
 	"github.com/ivanvc/turnip/internal/lock"
 	"github.com/ivanvc/turnip/internal/plugin"
+	"github.com/ivanvc/turnip/internal/provisioning"
 )
 
 // fakeLockManager is a scriptable lock.LockManager. Every method defaults
@@ -631,6 +634,97 @@ func TestExecuteOne_JobCarriesPullRequestBaseRef(t *testing.T) {
 		env[e.Name] = e.Value
 	}
 	assert.Equal(t, testPR.BaseRef, env["TURNIP_BASE_REF"])
+}
+
+// provisionedPlugin overrides a fake's Provisioning, so a test can tell
+// the Spec the Target's Plugin declared from any other.
+type provisionedPlugin struct {
+	*fakePlugin
+	spec provisioning.Spec
+}
+
+func (p provisionedPlugin) Provisioning() provisioning.Spec { return p.spec }
+
+// The Job is provisioned as the Target's Plugin declares, with the tool
+// image tagged by the version exactly as uses: wrote it. internal/jobs
+// keeps no table of its own to fall back on, so this is the only route the
+// Spec has.
+func TestExecuteOne_JobIsProvisionedAsThePluginDeclares(t *testing.T) {
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
+	o, _ := testOrchestrator(t, &fakeLockManager{}, jobsClient)
+	o.plugins["helmfile"] = provisionedPlugin{
+		fakePlugin: o.plugins["helmfile"].(*fakePlugin),
+		spec:       provisioning.Spec{Strategy: provisioning.CopyOut, Image: "registry.example.com/tools/helmfile", BinaryPath: "/usr/local/bin/helmfile"},
+	}
+	target := testHelmfileTarget()
+	target.Project.ToolVersion = "v1.7.4"
+
+	o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
+
+	job := jobsClient.lastCreatedJob()
+	require.NotNil(t, job)
+	var provision *corev1.Container
+	for i, c := range job.Spec.Template.Spec.InitContainers {
+		if c.Name == "provision-helmfile" {
+			provision = &job.Spec.Template.Spec.InitContainers[i]
+		}
+	}
+	require.NotNil(t, provision, "CopyOut adds an init container copying the binary out")
+	assert.Equal(t, "registry.example.com/tools/helmfile:v1.7.4", provision.Image)
+	assert.Contains(t, strings.Join(provision.Command, " "), "/usr/local/bin/helmfile")
+}
+
+// The Job internal/jobs/pin_test.go pins, reached through the wiring a real
+// Server runs: the shipped registry supplies the Helmfile Plugin's Spec,
+// and executeOne hands it to the real BuildJob. The pin alone passes the
+// Spec in by hand, so it could not catch the orchestrator forgetting to
+// fill it, or the Plugin declaring something other than what the pin
+// expects (Slice 45, Requirement 6.1). The expected values are the pin's,
+// written out literally for the same reason it writes them out.
+func TestExecuteOne_ShippedHelmfileJobMatchesThePin(t *testing.T) {
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
+	o, _ := testOrchestrator(t, &fakeLockManager{}, jobsClient)
+	o.plugins = NewPluginRegistry()
+	o.runnerImage = "ghcr.io/ivanvc/turnip-runner:test"
+	target := Target{
+		Project: config.Project{
+			Name:        "web",
+			Directory:   "infra/web",
+			Uses:        "helmfile@v1.7.4",
+			Tool:        "helmfile",
+			ToolVersion: "v1.7.4",
+		},
+		Operation:   "diff",
+		TriggeredBy: "auto",
+	}
+
+	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
+	require.True(t, result.Success, "the Job must be built and dispatched: %s", result.Output)
+
+	job := jobsClient.lastCreatedJob()
+	require.NotNil(t, job)
+	spec := job.Spec.Template.Spec
+
+	type shape struct {
+		Name, Image string
+		Command     []string
+		Args        []string
+	}
+	shapes := func(cs []corev1.Container) []shape {
+		out := make([]shape, 0, len(cs))
+		for _, c := range cs {
+			out = append(out, shape{Name: c.Name, Image: c.Image, Command: c.Command, Args: c.Args})
+		}
+		return out
+	}
+	assert.Equal(t, []shape{
+		{Name: "copy-runner", Image: "ghcr.io/ivanvc/turnip-runner:test", Command: []string{"sh", "-c", "cp /runner /turnip/bin/runner"}},
+		{Name: "clone", Image: "ghcr.io/ivanvc/turnip-runner:test", Args: []string{"clone"}},
+	}, shapes(spec.InitContainers))
+	assert.Equal(t, []shape{
+		{Name: "runner", Image: "ghcr.io/helmfile/helmfile:v1.7.4", Command: []string{"/turnip/bin/runner"}},
+	}, shapes(spec.Containers))
+	assert.Equal(t, "v1.7.4", jobEnvValue(t, job, "TURNIP_TOOL_VERSION"))
 }
 
 // A check run that can't be created is invisible on the PR otherwise:

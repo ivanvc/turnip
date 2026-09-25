@@ -77,11 +77,11 @@ func (f *fakePRClient) getFileCallLog() []string {
 }
 
 const validTurnipYAML = `
-schemaVersion: v1alpha2
+schemaVersion: v1alpha3
 projects:
   - name: helm-a
     directory: a
-    uses: helmfile
+    uses: helmfile@v1.7.4
     whenModified:
       - "a/**"
 `
@@ -388,7 +388,7 @@ func TestHandlePlanTrigger_DedicatedDirectoryWinsOverRoot(t *testing.T) {
 	client := &fakePRClient{
 		files: map[string][]byte{
 			".turnip/config.yaml": []byte(validTurnipYAML),
-			"turnip.yaml":         []byte("schemaVersion: v1alpha2\nprojects: []\n"),
+			"turnip.yaml":         []byte("schemaVersion: v1alpha3\nprojects: []\n"),
 		},
 		modifiedFiles: []string{"unrelated/file.txt"},
 	}
@@ -430,7 +430,7 @@ func TestHandlePlanTrigger_MissingConfigPostsNothing(t *testing.T) {
 func TestHandlePlanTrigger_InvalidConfigStillPostsComment(t *testing.T) {
 	o, _ := testPullRequestOrchestrator(t)
 	client := &fakePRClient{files: map[string][]byte{
-		"turnip.yaml": []byte("schemaVersion: v1alpha2\nprojects:\n  - name: broken\n"), // no directory/uses
+		"turnip.yaml": []byte("schemaVersion: v1alpha3\nprojects:\n  - name: broken\n"), // no directory/uses
 	}}
 
 	event := &github.WebhookEvent{
@@ -455,7 +455,7 @@ func TestHandlePRClosed_ReleasesOnlyLocksHeldByThisPR(t *testing.T) {
 		},
 	}
 	client := newTestRedisClient(t)
-	o := &Orchestrator{locks: locks, records: newRecordStore(client), redis: client}
+	o := &Orchestrator{locks: locks, plugins: testRegistry(), records: newRecordStore(client), redis: client}
 
 	prClient := &fakePRClient{files: map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)}}
 	event := &github.WebhookEvent{
@@ -476,7 +476,7 @@ func TestHandlePRClosed_NoLocksHeldPostsNoComment(t *testing.T) {
 		},
 	}
 	client := newTestRedisClient(t)
-	o := &Orchestrator{locks: locks, records: newRecordStore(client), redis: client}
+	o := &Orchestrator{locks: locks, plugins: testRegistry(), records: newRecordStore(client), redis: client}
 
 	prClient := &fakePRClient{files: map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)}}
 	event := &github.WebhookEvent{
@@ -491,7 +491,7 @@ func TestHandlePRClosed_NoLocksHeldPostsNoComment(t *testing.T) {
 func TestHandlePRClosed_AlwaysDeletesPlanCommentRecord(t *testing.T) {
 	locks := &fakeLockManager{isLockedByPRFunc: func(ctx context.Context, projectKey string, prNumber int) (bool, error) { return false, nil }}
 	client := newTestRedisClient(t)
-	o := &Orchestrator{locks: locks, records: newRecordStore(client), redis: client}
+	o := &Orchestrator{locks: locks, plugins: testRegistry(), records: newRecordStore(client), redis: client}
 	require.NoError(t, o.records.SetPlanCommentRecord(context.Background(), "owner", "repo", 42, []string{"node-1"}))
 
 	prClient := &fakePRClient{files: map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)}}

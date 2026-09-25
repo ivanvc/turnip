@@ -344,21 +344,21 @@ func TestHandleIssueComment_UnlockNeverCreatesJobOrRecord(t *testing.T) {
 // Three Projects, so "one reply rather than one refusal per Project" is
 // demonstrated rather than merely asserted on a set of one.
 const multiProjectTurnipYAML = `
-schemaVersion: v1alpha2
+schemaVersion: v1alpha3
 projects:
   - name: helm-a
     directory: a
-    uses: helmfile
+    uses: helmfile@v1.7.4
     whenModified:
       - "a/**"
   - name: helm-b
     directory: b
-    uses: helmfile
+    uses: helmfile@v1.7.4
     whenModified:
       - "b/**"
   - name: helm-c
     directory: c
-    uses: helmfile
+    uses: helmfile@v1.7.4
     whenModified:
       - "c/**"
 `

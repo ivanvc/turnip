@@ -104,11 +104,11 @@ func (c *haFakeClient) commentsFor(prNumber int) []string {
 }
 
 const haTurnipYAML = `
-schemaVersion: v1alpha2
+schemaVersion: v1alpha3
 projects:
   - name: helm-a
     directory: a
-    uses: helmfile
+    uses: helmfile@v1.7.4
     whenModified:
       - "a/**"
 `

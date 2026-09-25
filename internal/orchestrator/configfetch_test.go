@@ -33,7 +33,7 @@ func TestConfigErrorComment_MissingIsAGitHubWarningAlert(t *testing.T) {
 // it ranks WARNING — CAUTION stays reserved for failures needing an
 // operator, which is what makes it worth noticing.
 func TestConfigErrorComment_InvalidConfigIsAWarningWithDetailsOutsideTheAlert(t *testing.T) {
-	_, err := config.Parse([]byte("schemaVersion: v1alpha2\nprojects:\n  - name: broken\n"))
+	_, err := config.Parse([]byte("schemaVersion: v1alpha3\nprojects:\n  - name: broken\n"), []string{"helmfile"})
 	require.Error(t, err, "a project with no directory or uses is invalid")
 
 	body := configErrorComment(err)

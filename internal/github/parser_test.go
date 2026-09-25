@@ -7,6 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testTools stands in for the registered tool names the orchestrator
+// passes. The parser treats them as opaque input, so these need not match
+// any real Plugin.
+var testTools = []string{"terraform", "pulumi", "helmfile"}
+
 func TestParseTriggers_SingleCommandExamples(t *testing.T) {
 	tests := []struct {
 		body string
@@ -21,7 +26,7 @@ func TestParseTriggers_SingleCommandExamples(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.body, func(t *testing.T) {
-			got, err := ParseTriggers(tt.body)
+			got, err := ParseTriggers(tt.body, testTools)
 			require.NoError(t, err)
 			require.Len(t, got, 1)
 			assert.Equal(t, tt.want, got[0])
@@ -30,7 +35,7 @@ func TestParseTriggers_SingleCommandExamples(t *testing.T) {
 }
 
 func TestParseTriggers_MultipleProjectsAndExtraArgs(t *testing.T) {
-	got, err := ParseTriggers("/turnip apply proj-a proj-b -- -destroy -auto-approve")
+	got, err := ParseTriggers("/turnip apply proj-a proj-b -- -destroy -auto-approve", testTools)
 	require.NoError(t, err)
 	want := &TriggerCommand{
 		Tool:      "turnip",
@@ -43,14 +48,14 @@ func TestParseTriggers_MultipleProjectsAndExtraArgs(t *testing.T) {
 }
 
 func TestParseTriggers_LiteralDoubleDashInExtraArgs(t *testing.T) {
-	got, err := ParseTriggers("/turnip plan -- -destroy -- extra")
+	got, err := ParseTriggers("/turnip plan -- -destroy -- extra", testTools)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, []string{"-destroy", "--", "extra"}, got[0].ExtraArgs)
 }
 
 func TestParseTriggers_ExplanatoryTextAroundTriggerLine(t *testing.T) {
-	got, err := ParseTriggers("please review this\n/turnip apply\nthanks!")
+	got, err := ParseTriggers("please review this\n/turnip apply\nthanks!", testTools)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "turnip", got[0].Tool)
@@ -58,13 +63,13 @@ func TestParseTriggers_ExplanatoryTextAroundTriggerLine(t *testing.T) {
 }
 
 func TestParseTriggers_NonTriggerCommentReturnsErrNoTrigger(t *testing.T) {
-	got, err := ParseTriggers("just a regular comment, looks good to me")
+	got, err := ParseTriggers("just a regular comment, looks good to me", testTools)
 	require.ErrorIs(t, err, ErrNoTrigger)
 	assert.Nil(t, got)
 }
 
 func TestParseTriggers_MissingOperationReturnsMalformed(t *testing.T) {
-	got, err := ParseTriggers("/turnip")
+	got, err := ParseTriggers("/turnip", testTools)
 	assert.Nil(t, got)
 	require.ErrorIs(t, err, ErrMalformedTrigger)
 
@@ -87,23 +92,49 @@ func TestParseTriggers_CommandForAnotherBotIsNotATrigger(t *testing.T) {
 		"/cc @teammate",
 		"/etc/hosts is the file I meant",
 	} {
-		got, err := ParseTriggers(body)
+		got, err := ParseTriggers(body, testTools)
 		require.ErrorIs(t, err, ErrNoTrigger, "body: %q", body)
 		assert.Nil(t, got, "body: %q", body)
 	}
 }
 
 func TestParseTriggers_EveryKnownToolIsRecognized(t *testing.T) {
-	for _, tool := range []string{"turnip", "terraform", "pulumi", "helmfile"} {
-		got, err := ParseTriggers("/" + tool + " diff")
+	for _, tool := range append([]string{"turnip"}, testTools...) {
+		got, err := ParseTriggers("/"+tool+" diff", testTools)
 		require.NoError(t, err, "tool: %s", tool)
 		require.Len(t, got, 1)
 		assert.Equal(t, tool, got[0].Tool)
 	}
 }
 
+// The vocabulary is whatever the caller registered: a name the parser has
+// never heard of becomes a trigger the moment it is passed in.
+func TestParseTriggers_RegisteredToolIsATrigger(t *testing.T) {
+	got, err := ParseTriggers("/kustomize build web", []string{"kustomize"})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "kustomize", got[0].Tool)
+	assert.Equal(t, "build", got[0].Operation)
+	assert.Equal(t, []string{"web"}, got[0].Projects)
+}
+
+// A tool with no registered Plugin is no different from another bot's
+// command: not a trigger, and not malformed either, even when it names a
+// tool turnip once shipped with.
+func TestParseTriggers_UnregisteredToolIsSomeoneElsesCommand(t *testing.T) {
+	got, err := ParseTriggers("/terraform plan web", []string{"helmfile"})
+	require.ErrorIs(t, err, ErrNoTrigger)
+	assert.Nil(t, got)
+
+	// "turnip" needs no registration: it addresses every Project.
+	got, err = ParseTriggers("/turnip plan web", nil)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "turnip", got[0].Tool)
+}
+
 func TestParseTriggers_UnknownToolAlongsideRealTriggerIsIgnored(t *testing.T) {
-	got, err := ParseTriggers("/jira comment something\n/turnip diff web")
+	got, err := ParseTriggers("/jira comment something\n/turnip diff web", testTools)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "turnip", got[0].Tool)
@@ -111,7 +142,7 @@ func TestParseTriggers_UnknownToolAlongsideRealTriggerIsIgnored(t *testing.T) {
 }
 
 func TestParseTriggers_MultipleWellFormedLinesBatchIntoOneComment(t *testing.T) {
-	got, err := ParseTriggers("/turnip plan project-1\n/turnip plan project-2")
+	got, err := ParseTriggers("/turnip plan project-1\n/turnip plan project-2", testTools)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, []string{"project-1"}, got[0].Projects)
@@ -144,7 +175,7 @@ func TestParseTriggers_ArgumentsNeedNoDelimiter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseTriggers(tt.body)
+			got, err := ParseTriggers(tt.body, testTools)
 			require.NoError(t, err)
 			require.Len(t, got, 1)
 			assert.Equal(t, tt.wantProjects, got[0].Projects)
@@ -154,7 +185,7 @@ func TestParseTriggers_ArgumentsNeedNoDelimiter(t *testing.T) {
 }
 
 func TestParseTriggers_MalformedLineDoesNotDiscardWellFormedOnes(t *testing.T) {
-	got, err := ParseTriggers("/turnip plan project-1\n/turnip\n/turnip plan project-2")
+	got, err := ParseTriggers("/turnip plan project-1\n/turnip\n/turnip plan project-2", testTools)
 
 	require.Len(t, got, 2)
 	assert.Equal(t, []string{"project-1"}, got[0].Projects)

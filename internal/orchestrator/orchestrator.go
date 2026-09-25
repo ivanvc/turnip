@@ -8,6 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/ivanvc/turnip/internal/config"
 	"github.com/ivanvc/turnip/internal/github"
 	"github.com/ivanvc/turnip/internal/jobs"
 	"github.com/ivanvc/turnip/internal/lock"
@@ -44,9 +45,15 @@ const defaultSweepInterval = 30 * time.Second
 type installationClientFunc func(installationID int64) github.GitHubClient
 
 type Orchestrator struct {
-	installationClient           installationClientFunc
-	locks                        lock.LockManager
-	jobs                         jobCreator
+	installationClient installationClientFunc
+	locks              lock.LockManager
+	jobs               jobCreator
+	// buildJob is jobs.BuildJob when nil, which is what New leaves it.
+	// It exists so tests can fail the build step: BuildJob no longer has
+	// a failure its inputs can reach, since the version check it repeated
+	// moved to parse time, but executeOne still handles its error, and a
+	// refusal nothing exercises could break unnoticed.
+	buildJob                     func(config.Project, jobs.OperationParams) (*batchv1.Job, error)
 	plugins                      PluginRegistry
 	records                      *recordStore
 	redis                        *redis.Client

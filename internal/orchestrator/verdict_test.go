@@ -10,7 +10,7 @@ import (
 func statusWith(entries map[string]Outcome) prStatus {
 	st := prStatus{Projects: map[string]ProjectEntry{}}
 	for name, outcome := range entries {
-		st.Projects[name] = ProjectEntry{Outcome: outcome, Operation: "diff", Tool: "helmfile"}
+		st.Projects[name] = ProjectEntry{Outcome: outcome, Operation: "diff"}
 		if outcome.mutating() {
 			st.Mutated = true
 		}
@@ -45,11 +45,6 @@ func TestVerdictFor(t *testing.T) {
 			name:   "a failed apply fails",
 			st:     statusWith(map[string]Outcome{"web": OutcomeApplyFailed, "api": OutcomeApplied}),
 			status: "completed", conclusion: "failure", title: "1/2 projects up to date, 1 failed",
-		},
-		{
-			name:   "an unsupported tool fails, naming the Project and tool",
-			st:     prStatus{Projects: map[string]ProjectEntry{"infra": {Outcome: OutcomeUnsupported, Tool: "terraform"}}},
-			status: "completed", conclusion: "failure", title: "unsupported tool: infra uses terraform",
 		},
 		{
 			name:   "a refused override fails, naming the Project and setting",
@@ -94,14 +89,9 @@ func TestVerdictFor_Precedence(t *testing.T) {
 	st.Empty = true
 	assert.Equal(t, "in_progress", verdictFor(st).Status)
 
-	// Unsupported outranks a refusal, which outranks a failed apply,
-	// which outranks success.
+	// A refusal outranks a failed apply, which outranks success.
 	st = statusWith(map[string]Outcome{"web": OutcomeApplyFailed, "api": OutcomeApplied})
 	st.Projects["db"] = ProjectEntry{Outcome: OutcomeRefused, Setting: overrideCloneSubmodules}
-	st.Projects["infra"] = ProjectEntry{Outcome: OutcomeUnsupported, Tool: "pulumi"}
-	assert.Equal(t, "unsupported tool: infra uses pulumi", verdictFor(st).Title)
-
-	delete(st.Projects, "infra")
 	v := verdictFor(st)
 	assert.Equal(t, "failure", v.Conclusion)
 	assert.Equal(t, "not permitted: db sets clone.submodules", v.Title)
@@ -115,8 +105,8 @@ func TestVerdictFor_Precedence(t *testing.T) {
 	assert.Equal(t, "success", verdictFor(st).Conclusion)
 }
 
-// Like the unsupported Title, the refused one names the first refused
-// Project by name and counts the rest (check-run-refusals Requirement 3.4).
+// The refused Title names the first refused Project by name and counts the
+// rest (check-run-refusals Requirement 3.4).
 func TestVerdictFor_RefusedTitleNamesTheFirstAndCountsTheRest(t *testing.T) {
 	st := prStatus{Projects: map[string]ProjectEntry{
 		"web":   {Outcome: OutcomeRefused, Setting: "runner.serviceAccount"},
@@ -148,30 +138,13 @@ func TestOutcomeRefused_IsNeitherDoneNorMutating(t *testing.T) {
 	assert.False(t, OutcomeRefused.mutating())
 }
 
-// The title names the first unsupported Project by name — the same order
-// as the summary — and counts the rest (check-run-titles Requirement 6.3).
-func TestVerdictFor_UnsupportedTitleNamesTheFirstAndCountsTheRest(t *testing.T) {
-	st := prStatus{Projects: map[string]ProjectEntry{
-		"infra": {Outcome: OutcomeUnsupported, Tool: "terraform"},
-		"db":    {Outcome: OutcomeUnsupported, Tool: "pulumi"},
-		"cache": {Outcome: OutcomeUnsupported, Tool: "terraform"},
-		"web":   {Outcome: OutcomeApplied},
-	}}
-	v := verdictFor(st)
-	assert.Equal(t, "unsupported tool: cache uses terraform, and 2 more", v.Title)
-	assert.Contains(t, v.Summary, "`db`", "the summary still lists every one")
-	assert.Contains(t, v.Summary, "`infra`")
-}
-
 func TestVerdictFor_SummaryNamesEachProjectCheck(t *testing.T) {
 	st := prStatus{Projects: map[string]ProjectEntry{
-		"web":   {Outcome: OutcomeApplied, Operation: "sync"},
-		"api":   {Outcome: OutcomeAwaitingApply, Operation: "diff"},
-		"infra": {Outcome: OutcomeUnsupported, Tool: "terraform"},
+		"web": {Outcome: OutcomeApplied, Operation: "sync"},
+		"api": {Outcome: OutcomeAwaitingApply, Operation: "diff"},
 	}}
 	assert.Equal(t,
 		"- `api`: planned, awaiting apply (`turnip/diff/api`)\n"+
-			"- `infra`: tool `terraform` is not supported by this server; fix turnip.yaml\n"+
 			"- `web`: applied (`turnip/sync/web`)\n",
 		verdictFor(st).Summary)
 }
@@ -196,7 +169,7 @@ func TestShouldPublish(t *testing.T) {
 func TestProperty_OnlyDoneOutcomesSucceed(t *testing.T) {
 	outcomes := []Outcome{
 		OutcomeAwaitingApply, OutcomeNothingToApply, OutcomeNotPlanned,
-		OutcomeApplied, OutcomeApplyFailed, OutcomeUnsupported, OutcomeRefused,
+		OutcomeApplied, OutcomeApplyFailed, OutcomeRefused,
 	}
 	rapid.Check(t, func(t *rapid.T) {
 		n := rapid.IntRange(1, 6).Draw(t, "n")

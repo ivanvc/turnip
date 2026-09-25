@@ -96,12 +96,12 @@ func readSitesRecord(t *testing.T, o *Orchestrator) prStatus {
 func seedSitesAwaitingApply(t *testing.T, o *Orchestrator) prStatus {
 	t.Helper()
 	require.NoError(t, o.records.WriteOutcome(context.Background(), sitesRef, "helm-a",
-		ProjectEntry{Outcome: OutcomeAwaitingApply, Operation: "diff", Tool: "helmfile"}))
+		ProjectEntry{Outcome: OutcomeAwaitingApply, Operation: "diff"}))
 	return readSitesRecord(t, o)
 }
 
 func planEntry(outcome Outcome) ProjectEntry {
-	return ProjectEntry{Outcome: outcome, Operation: "diff", Tool: "helmfile"}
+	return ProjectEntry{Outcome: outcome, Operation: "diff"}
 }
 
 // requireOneCreated is the Project_Check a refusal created for a plan that
@@ -133,9 +133,12 @@ func assertNoProjectCheck(t *testing.T, client *sitesClient, target Target) {
 	assert.Empty(t, updated)
 }
 
-// :97 — a tool with no Plugin. Nothing can say which of its Operations is
-// the plan, so it is neither given a check nor recorded here.
-func TestRefusalSite_ToolNotSupported(t *testing.T) {
+// A Target whose tool has no Plugin is not a refusal site: Targets are
+// built only from Projects validated against the registered tools, so a
+// miss is turnip's bug. It is reported as an internal error naming the
+// tool, with no check and nothing recorded, rather than refused as though
+// the author could fix it.
+func TestExecuteOne_MissingPluginIsAnInternalError(t *testing.T) {
 	o, jobsClient := sitesOrchestrator(t, &fakeLockManager{})
 	client := newSitesClient()
 	target := testHelmfileTarget()
@@ -145,7 +148,7 @@ func TestRefusalSite_ToolNotSupported(t *testing.T) {
 	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
 
 	assert.False(t, result.Success)
-	assert.Contains(t, result.Output, `tool "terraform" is not supported`)
+	assert.Equal(t, `internal error: no plugin is registered for tool "terraform"`, result.Output)
 	assertNoProjectCheck(t, client, target)
 	assert.Empty(t, readSitesRecord(t, o).Projects)
 	assert.Zero(t, jobsClient.createCount())
@@ -456,14 +459,12 @@ func TestRefusalSite_OperationNotRecorded(t *testing.T) {
 	assert.Zero(t, jobsClient.createCount())
 }
 
-// :313 — building the Runner Job failed. BuildJob rejects a tool version
-// config validation would have refused at parse time; its own check is the
-// one reachable failure of this step.
+// :313 — building the Runner Job failed.
 func TestRefusalSite_JobNotBuilt(t *testing.T) {
 	o, jobsClient := sitesOrchestrator(t, &fakeLockManager{})
+	failBuildJob(o)
 	client := newSitesClient()
 	target := testHelmfileTarget()
-	target.Project.ToolVersion = "not-a-version"
 
 	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
 

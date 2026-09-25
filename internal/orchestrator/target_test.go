@@ -11,6 +11,7 @@ import (
 	"github.com/ivanvc/turnip/internal/github"
 	"github.com/ivanvc/turnip/internal/lock"
 	"github.com/ivanvc/turnip/internal/plugin"
+	"github.com/ivanvc/turnip/internal/provisioning"
 )
 
 // fakePlugin is a minimal plugin.Plugin for exercising target.go's
@@ -32,6 +33,9 @@ func (f *fakePlugin) GetOperations() []string   { return f.operations }
 func (f *fakePlugin) GetPlanOperation() string  { return f.planOperation }
 func (f *fakePlugin) GetApplyOperation() string { return f.applyOperation }
 func (f *fakePlugin) ActsWithoutChanges() bool  { return f.actsWithoutChanges }
+func (f *fakePlugin) Provisioning() provisioning.Spec {
+	return provisioning.Spec{Strategy: provisioning.RunInImage, Image: "ghcr.io/helmfile/helmfile"}
+}
 func (f *fakePlugin) Execute(ctx context.Context, operation string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
 	panic("not used by target_test.go")
 }

@@ -38,7 +38,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 27 | Authenticated and Encrypted Redis | `redis-tls-auth` | Not Started | Slices 3, 10 |
 | 28 | Seeing and Dropping Locks Without Hunting for the PR | `lock-admin-ui` | Not Started | Slices 3, 4 |
 | 29 | Move the Webhook Off the Root Path | `webhook-path` | Complete | Slices 4, 10 |
-| 30 | Scheduling: Concurrency and Execution Order | `operation-scheduling` | Not Started | Slice 6 |
+| 30 | Scheduling: Concurrency and Dependencies | `operation-scheduling` | Not Started | Slice 6 |
 | 31 | Runner Pod Placement: Node Selectors and Tolerations | `runner-pod-placement` | Not Started | Slices 5, 13 |
 | 32 | Refuse a Closed Pull Request, Plan a Reopened One | `closed-pull-requests` | Complete | Slices 4, 6 |
 | 33 | Show What Ran and With What Scope | `execution-provenance` | Complete | Slices 2, 17, 20 |
@@ -52,6 +52,8 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 41 | Runner Pods Run Without Disruption | `runner-disruption` | Not Started | Slices 5, 39, 40 |
 | 42 | The Workspace on a Per-Runner Volume | `runner-workspace-volume` | Not Started | Slices 12, 39 |
 | 43 | Runner Settings Shared Across Projects | `runner-defaults` | Not Started | Slices 13, 16 |
+| 44 | Running a Tool Image the Operator Approves | `tool-images` | Not Started | Slices 14, 20, 45 |
+| 45 | One Place to Add a Tool | `plugin-registry` | Complete | Slices 2, 14 |
 
 ## Slice Details
 
@@ -1878,13 +1880,40 @@ alongside its actual feature.
 
 ---
 
-### Slice 30: Scheduling — Concurrency and Execution Order (`operation-scheduling`)
+### Slice 30: Scheduling: Concurrency and Dependencies (`operation-scheduling`)
 
 **Goal**: Let a repository control how its Operations are scheduled — how
 many run at once, and which must finish before others start. turnip offers
 neither today: `executeTargets` starts a goroutine per Target and waits
 for all of them (`internal/orchestrator/execute.go:30-48`), with no cap
 and no ordering.
+
+**Settled 2026-09-24** (spec in `operation-scheduling/`), from a
+repository of ~300 Projects over 8 clusters, where each cluster's
+foundation must precede that cluster's staging and production and nothing
+else is ordered:
+
+- **A global cap**, `TURNIP_MAX_CONCURRENT_OPERATIONS`, counted in Redis
+  through the Operation Records, with the queue in turnip before a Job is
+  created, so waiting never runs the start-timeout clock. Unset is
+  unlimited.
+- **A repository limit**, `concurrency:` in `turnip.yaml`, which can only
+  lower the cap for that repository (1 is sequential) and so is ungated.
+- **Waiting Runs take turns** for free slots, so one large apply cannot
+  starve everyone else.
+- **Per-Project `dependsOn`, not execution-order groups.** Groups would
+  let one cluster's failed foundation stop every cluster, and make every
+  production wait for the slowest foundation anywhere. Dependencies order
+  and block **mutating Operations only**; plans run in parallel under the
+  caps. A dependency the pull request does not change is satisfied; one it
+  changes but the command omits blocks the dependant until applied, and
+  is never pulled in automatically.
+- **A Server restart loses waiting Operations**, visibly (each has a
+  queued check) and safely (repeating the command runs only what is
+  left). Resuming Runs is recorded in the Backlog.
+
+The analysis below is the entry as first written; where it discusses
+groups, dependencies superseded them.
 
 **Not tied to Terraform** (corrected 2026-09-24). This entry once
 depended on Slice 7, because its motivating example below is Terraform
@@ -2984,6 +3013,61 @@ Slices 31 and 39 both add one.
 Promoted from the Backlog entry "A top-level `runner:` block, merged into
 each Project's", which carries the original analysis.
 
+### Slice 44: Running a Tool Image the Operator Approves (`tool-images`)
+
+**Goal**: Let `turnip.yaml` run a tool in an image other than the
+vendor's, when the operator has allowed that image.
+
+**Why now** (2026-09-24): it blocks migrating a repository whose clusters
+are outside the one turnip runs in. Reaching them needs only `aws` next to
+helmfile (see `docs/configuration.md`'s EKS recipe), and the vendor image
+does not carry it.
+
+**Settled**: `uses:` is `alias@tag` or `image@tag` (`helmfile@v1.7.4`,
+`ghcr.io/org/helmfile-aws@latest`, or a `sha256:` digest), one exact tag
+used verbatim, never naming the tool. Each Plugin defines its own alias
+(its name), in the Access_List's own format, allowing full versions or
+digests of the vendor image, along with how its tool is provisioned, so
+adding a tool is one place; the strategies themselves are implemented
+once, outside the Plugins. The operator's Access_List
+holds `tool:image@glob` entries only, the entry supplying the tool; plain
+globs on the tag (`@*`, `@1.*.*`, `@latest`, `@sha256:*`) decide what is
+allowed. The apply runs the exact digest the plan's Pod ran, so any tag is
+safe between plan and apply. The security model (a root `SECURITY.md`
+covering every opt-in) is this slice's first requirement rather than a
+slice of its own.
+
+Promoted from the Backlog entries "Running a tool build turnip does not
+ship", "A stated security model", and "Resolving a floating tool version".
+Follows Slice 45, so the image model changes in one place.
+
+### Slice 45: One Place to Add a Tool (`plugin-registry`)
+
+**Goal**: Make each Plugin the one place a tool is defined, as the Plugin
+interface intended.
+
+**What's wrong** (found 2026-09-24 while designing Slice 44): knowledge of
+which tools exist, and how each is provisioned, lives in five places
+outside `internal/plugin` — the tool list in `internal/config`, the
+trigger vocabulary in `internal/github/parser.go`, the per-tool table in
+`internal/jobs/versions.go`, the Server's registry, and a second, separate
+`switch` in the Runner. Adding a tool edits all five, and the two
+registries can disagree.
+
+**Delivers**: one Plugin_Registry in `internal/plugin` used by Server and
+Runner; each Plugin declaring its provisioning strategy, image and binary
+path, with the strategies implemented once outside the Plugins; the config
+validator and trigger parser receiving the registered names as input. A
+refactor with three deliberate breaking changes: a tool with no Plugin
+becomes a validation error when `turnip.yaml` is parsed; `uses:` must name
+a version, because turnip no longer supplies a default (turnip must never
+be what a repository waits on to adopt a tool release); and the version
+is used verbatim as the image tag, with no `v` handling, so helmfile is
+`helmfile@v1.7.4`. The schema version advances to `v1alpha3`.
+
+**Precedes Slice 44**, which then only changes what a Plugin declares
+about its image.
+
 ---
 
 ## Backlog (not yet sliced)
@@ -3056,6 +3140,9 @@ containment checks is how they drift apart.
 
 ### Running a tool build turnip does not ship
 
+**Sliced into Slice 44 (`tool-images`) on 2026-09-24.** Kept here for
+the analysis that led to it.
+
 `internal/jobs/versions.go` hardcodes one image template per tool —
 helmfile's is `ghcr.io/helmfile/helmfile:v%s` — and `uses: <tool>@<version>`
 substitutes only the version into it. There is no per-Project image field
@@ -3114,6 +3201,9 @@ Under `runInImage` that is a different image reference in the same place
 whatever image the tool runs in.
 
 ### A stated security model, so opt-in danger is not reported as a vulnerability
+
+**Sliced into Slice 44 (`tool-images`) on 2026-09-24.** Kept here for
+the analysis that led to it.
 
 turnip has **no `SECURITY.md`** — not at the root, not under `.github/`,
 not in `docs/`. The only security prose in the repository is two
@@ -3360,6 +3450,9 @@ instead of reopening a decision.
 
 ### Resolving a floating tool version
 
+**Sliced into Slice 44 (`tool-images`) on 2026-09-24.** Kept here for
+the analysis that led to it.
+
 `uses: terraform@latest` is rejected, because a floating tag breaks the
 guarantee locking exists to provide: plan on Monday against 1.9.5, apply
 on Thursday against 1.10.0, and the binary that runs is not the one that
@@ -3560,6 +3653,21 @@ Options, none chosen:
 
 Small either way; what it needs is the decision, then Decision 8 and the
 test brought into agreement with it.
+
+### Resuming a scheduled Run after a Server restart
+
+Deferred from Slice 30 (2026-09-24). A Run's queue and dependency order
+live in the goroutine of the replica that received the trigger. If that
+replica stops, Operations still waiting for a slot or a dependency are
+lost. They stay visible as queued Project_Checks, and repeating the
+command runs only what is left, so Slice 30 accepts this and documents
+it.
+
+Resuming instead needs the Run in Redis: a durable queue, an owner per
+Run, and hand-over when an owner stops. Worth building if long, capped
+Runs make restarts mid-run common in practice. Completing the stranded
+queued checks is the smaller half, and shares its mechanism with the
+entry below.
 
 ### A Runner that dies after starting leaves its check in progress
 

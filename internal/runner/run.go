@@ -24,15 +24,18 @@ type pluginSelector func(tool string) (plugin.Plugin, error)
 
 type cloner func(ctx context.Context, dir, repoURL, commitSHA, baseRef, submodules string) error
 
-// selectPlugin resolves cfg.Tool to a Plugin (Requirement 6.1). Today only
-// "helmfile" (Slice 2) exists; Slice 7 adds Terraform and Pulumi.
+// selectPlugin resolves cfg.Tool to a Plugin (Requirement 6.1) through the
+// same registry the Server validates turnip.yaml against, so the Runner
+// accepts exactly the tools the Server dispatches. An unregistered tool
+// still fails here, before connecting or cloning: a Job naming one was
+// built by a Server with a different registry, and nothing after this
+// point could do anything useful with it.
 func selectPlugin(tool string) (plugin.Plugin, error) {
-	switch tool {
-	case "helmfile":
-		return plugin.NewHelmfilePlugin(), nil
-	default:
+	p, ok := plugin.Registry()[tool]
+	if !ok {
 		return nil, fmt.Errorf("runner: unrecognized tool %q", tool)
 	}
+	return p, nil
 }
 
 // pathWithToolsDir prepends toolsDir to path (PATH's existing value),

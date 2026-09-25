@@ -6,16 +6,22 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ivanvc/turnip/internal/config"
 	"github.com/ivanvc/turnip/internal/github"
 	"github.com/ivanvc/turnip/internal/lock"
 )
 
 func TestNewPluginRegistry_HasHelmfile(t *testing.T) {
 	registry := NewPluginRegistry()
-	p, ok := registry[config.ToolHelmfile]
+	p, ok := registry["helmfile"]
 	require.True(t, ok)
 	assert.Equal(t, "helmfile", p.Name())
+}
+
+// The names reach config.Parse and github.ParseTriggers, whose errors list
+// them; sorted, those errors read the same whatever order the map yields.
+func TestPluginRegistry_NamesAreSorted(t *testing.T) {
+	assert.Equal(t, []string{"helmfile", "pulumi"}, testRegistry().Names())
+	assert.Empty(t, PluginRegistry{}.Names())
 }
 
 func TestNew_ConstructsOrchestratorWithDefaults(t *testing.T) {

@@ -29,8 +29,6 @@ func TestTitles(t *testing.T) {
 		"timeout":                   {timeoutTitle("Job x: container stuck (ImagePullBackOff)"), "Job x: container stuck (ImagePullBackOff)"},
 		"aggregate":                 {aggregateTitle(1, 2, 0), "1/2 projects up to date"},
 		"aggregate with a failure":  {aggregateTitle(1, 2, 1), "1/2 projects up to date, 1 failed"},
-		"unsupported, one":          {unsupportedTitle("infra", "terraform", 0), "unsupported tool: infra uses terraform"},
-		"unsupported, several":      {unsupportedTitle("infra", "terraform", 2), "unsupported tool: infra uses terraform, and 2 more"},
 		"nothing affected":          {noProjectsAffectedTitle(), "no projects affected"},
 		"invalid configuration":     {invalidConfigTitle(), "invalid turnip.yaml"},
 		"lock wait":                 {lockWaitTitle(5), "locked by PR #5, re-plan once it's released"},

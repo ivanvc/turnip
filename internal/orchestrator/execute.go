@@ -108,9 +108,16 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		return rejected
 	}
 
+	// Every Target has a Plugin: Targets come only from a turnip.yaml that
+	// config.Parse validated against these same tool names, or from a
+	// comment whose selection already looked the Plugin up. A miss is a bug
+	// in turnip, not something the author can fix, so it is reported as one
+	// rather than refused like a user's mistake: no check run, and nothing
+	// recorded against the Project.
 	p, ok := o.plugins[t.Project.Tool]
 	if !ok {
-		return reject(refusal{reason: fmt.Sprintf("tool %q is not supported", t.Project.Tool)})
+		log.ErrorContext(ctx, "no plugin registered for a target's tool", "tool", t.Project.Tool)
+		return rejectedResult(t, fmt.Sprintf("internal error: no plugin is registered for tool %q", t.Project.Tool))
 	}
 
 	// Resolved before any Lock is acquired: a refused ServiceAccount must
@@ -323,7 +330,11 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		close(done)
 	}()
 
-	job, err := jobs.BuildJob(t.Project, jobs.OperationParams{
+	build := o.buildJob
+	if build == nil {
+		build = jobs.BuildJob
+	}
+	job, err := build(t.Project, jobs.OperationParams{
 		OperationID:    operationID,
 		Operation:      t.Operation,
 		RepoURL:        repo.URL,
@@ -335,6 +346,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		RunnerImage:    o.runnerImage,
 		ServiceAccount: serviceAccount,
 		Submodules:     submodules,
+		Provisioning:   p.Provisioning(),
 	})
 	if err != nil {
 		o.deleteRecord(ctx, operationID)
@@ -426,7 +438,7 @@ func overrideRefusal(err error) refusal {
 // recorded as refused; a Lock_Wait or turnip's own failure leaves the
 // Project not planned, which keeps the aggregate check in progress.
 func refusalEntry(t Target, r refusal) ProjectEntry {
-	entry := ProjectEntry{Outcome: OutcomeNotPlanned, Operation: t.Operation, Tool: t.Project.Tool}
+	entry := ProjectEntry{Outcome: OutcomeNotPlanned, Operation: t.Operation}
 	switch r.kind {
 	case refusalLockWait:
 		entry.BlockedBy = r.blockedBy

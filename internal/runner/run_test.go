@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ivanvc/turnip/internal/plugin"
+	"github.com/ivanvc/turnip/internal/provisioning"
 	"github.com/ivanvc/turnip/internal/rpc"
 )
 
@@ -51,6 +52,9 @@ func (p *fakePlugin) GetOperations() []string   { return p.operations }
 func (p *fakePlugin) GetPlanOperation() string  { return p.operations[0] }
 func (p *fakePlugin) GetApplyOperation() string { return p.operations[0] }
 func (p *fakePlugin) ActsWithoutChanges() bool  { return false }
+func (p *fakePlugin) Provisioning() provisioning.Spec {
+	return provisioning.Spec{Strategy: provisioning.RunInImage, Image: "ghcr.io/helmfile/helmfile"}
+}
 func (p *fakePlugin) Execute(_ context.Context, _ string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
 	for _, l := range p.script {
 		if opts.OnOutput != nil {
@@ -219,6 +223,20 @@ func TestRunWith_UnrecognizedToolFailsFastBeforeConnect(t *testing.T) {
 
 	assert.Equal(t, 1, exitCode)
 	assert.Equal(t, 0, rep.connectCalls, "Connect must not be attempted for an unrecognized tool")
+}
+
+// TestSelectPlugin_UsesRegistry pins the real selector to plugin.Registry():
+// every registered tool resolves to its own Plugin, and anything else fails
+// with the error runWith reports before connecting.
+func TestSelectPlugin_UsesRegistry(t *testing.T) {
+	for name := range plugin.Registry() {
+		p, err := selectPlugin(name)
+		require.NoError(t, err, name)
+		assert.Equal(t, name, p.Name())
+	}
+
+	_, err := selectPlugin("not-a-tool")
+	require.EqualError(t, err, `runner: unrecognized tool "not-a-tool"`)
 }
 
 func TestRunWith_ConnectFailureFailsFast(t *testing.T) {
@@ -395,6 +413,9 @@ func (p *echoWorkingDirPlugin) GetOperations() []string   { return p.operations 
 func (p *echoWorkingDirPlugin) GetPlanOperation() string  { return p.operations[0] }
 func (p *echoWorkingDirPlugin) GetApplyOperation() string { return p.operations[0] }
 func (p *echoWorkingDirPlugin) ActsWithoutChanges() bool  { return false }
+func (p *echoWorkingDirPlugin) Provisioning() provisioning.Spec {
+	return provisioning.Spec{Strategy: provisioning.RunInImage, Image: "ghcr.io/helmfile/helmfile"}
+}
 func (p *echoWorkingDirPlugin) Execute(_ context.Context, _ string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
 	if opts.OnOutput != nil {
 		opts.OnOutput("stdout", "reading "+opts.WorkingDir+"/values.yaml")
