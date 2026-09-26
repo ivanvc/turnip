@@ -9,7 +9,9 @@ happens day-to-day on a pull request.
 Opening a PR, or pushing a new commit to one, triggers a **plan**
 automatically for every project whose `whenModified` glob matches at
 least one changed file, no comment needed. For Helmfile, "plan" means
-`helmfile diff`.
+`helmfile diff`. A project with no `whenModified` is never planned this
+way: it runs only when a comment names it (see "Which projects a command
+targets").
 
 Each triggered project gets its own check run
 (`turnip/<operation>/<project>`, e.g. `turnip/diff/web`) and a
@@ -105,10 +107,42 @@ or scope it to one tool by using the tool's own name instead of `turnip`:
 ```
 
 The difference: `/turnip ...` considers projects using any tool;
-`/helmfile ...` considers only projects whose `tool` field matches.
+`/helmfile ...` considers only the projects whose `uses:` runs Helmfile.
 Each tool this Server has a Plugin for gets its own trigger word, and
 today that is only `/helmfile`. `<operation>` must be one the tool actually
 supports (Helmfile: `diff`, `apply`, `sync`).
+
+### Plan commands and mutating commands
+
+Every tool has exactly one **plan command**, which shows what a change
+would do, and any number of **mutating commands**, which change
+infrastructure. A mutating command is every operation the tool offers
+other than its plan; turnip does not keep a list of them, so a tool's
+new operation is mutating unless it is the plan.
+
+| Tool | Plan command | Mutating commands |
+|---|---|---|
+| Helmfile | `diff` | `apply`, `sync` |
+
+The split decides most of what turnip allows:
+
+- **Who can run it.** Any collaborator can run a plan; a mutating command
+  needs write access (see "Who can trigger what").
+- **What it needs first.** A mutating command runs only on a project this
+  pull request has planned, and runs what that plan saw (see "Plan →
+  apply").
+- **Extra arguments.** Only a plan takes them; a mutating command's
+  arguments come from the plan it follows.
+- **What the operator can require.** `TURNIP_MUTATION_REQUIREMENTS` can
+  hold every mutating command until the pull request is approved, or has
+  no merge conflicts (see "Mutation requirements" in
+  `docs/configuration.md`).
+- **What runs by itself.** Only plans. turnip never runs a mutating
+  command without a comment asking for it.
+
+A plan changes no infrastructure, but it is not read-only: it runs the
+project's code with the Runner's credentials (Helmfile's `prepare` hooks
+run during `diff`). See [`SECURITY.md`](../SECURITY.md).
 
 ## Which projects a command targets
 
@@ -308,7 +342,7 @@ from a fork is refused outright (see "Pull requests from forks").
 
 So a read-level collaborator can ask for a plan but cannot cause one by
 pushing. That asymmetry is deliberate: someone reviewing a change needs to
-be able to ask what it would do, and a plan changes nothing.
+be able to ask what it would do, and a plan changes no infrastructure.
 
 ### This is not configurable, on purpose
 

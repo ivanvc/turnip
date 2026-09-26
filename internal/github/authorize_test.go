@@ -83,6 +83,10 @@ func (f *fakeGitHubClient) MinimizeComment(ctx context.Context, nodeID string) e
 	panic("not used by Authorizer")
 }
 
+func (f *fakeGitHubClient) ListReviews(ctx context.Context, owner, repo string, prNumber int) ([]Review, error) {
+	panic("not used by Authorizer")
+}
+
 var _ GitHubClient = (*fakeGitHubClient)(nil)
 
 func TestAuthorizer_IsCollaborator(t *testing.T) {

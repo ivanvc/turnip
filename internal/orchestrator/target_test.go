@@ -101,7 +101,7 @@ func TestResolveTargets_ToolFiltering(t *testing.T) {
 	// "*" rather than a bare trigger: this test is about tool filtering,
 	// and "every configured Project" is what a bare command used to mean
 	// and what "*" means now. The bare default has its own tests.
-	targets, rejected, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
+	targets, rejected, _, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
 		&github.TriggerCommand{Tool: "helmfile", Operation: "diff", Projects: []string{"*"}})
 	require.NoError(t, err)
 	assert.Empty(t, rejected)
@@ -119,7 +119,7 @@ func TestResolveTargets_DestroyIsNotAHelmfileOperation(t *testing.T) {
 	cfg := testConfig()
 	authorizer := github.NewAuthorizer(&fakeAuthClient{permission: "write"})
 
-	targets, rejected, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
+	targets, rejected, _, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
 		&github.TriggerCommand{Tool: "helmfile", Operation: "destroy", Projects: []string{"*"}})
 
 	require.NoError(t, err)
@@ -135,7 +135,7 @@ func TestResolveTargets_TurnipTargetsEveryTool(t *testing.T) {
 	cfg := testConfig()
 	authorizer := github.NewAuthorizer(&fakeAuthClient{permission: "write"})
 
-	targets, rejected, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
+	targets, rejected, _, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
 		&github.TriggerCommand{Tool: "turnip", Operation: "diff", Projects: []string{"*"}})
 	require.NoError(t, err)
 	// "diff" is only recognized by helmfile — pulumi's candidates are
@@ -150,7 +150,7 @@ func TestResolveTargets_NamedProjectNarrows(t *testing.T) {
 	cfg := testConfig()
 	authorizer := github.NewAuthorizer(&fakeAuthClient{permission: "write"})
 
-	targets, _, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
+	targets, _, _, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
 		&github.TriggerCommand{Tool: "turnip", Operation: "diff", Projects: []string{"helm-a"}})
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
@@ -161,7 +161,7 @@ func TestResolveTargets_UnmatchedNameErrors(t *testing.T) {
 	cfg := testConfig()
 	authorizer := github.NewAuthorizer(&fakeAuthClient{permission: "write"})
 
-	_, _, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
+	_, _, _, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
 		&github.TriggerCommand{Tool: "turnip", Operation: "diff", Projects: []string{"does-not-exist"}})
 	require.Error(t, err)
 	var unmatched *UnmatchedProjectError
@@ -174,7 +174,7 @@ func TestResolveTargets_UnrecognizedOperationIsRejectedNotWholeCommand(t *testin
 	cfg := testConfig()
 	authorizer := github.NewAuthorizer(&fakeAuthClient{permission: "write"})
 
-	targets, rejected, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
+	targets, rejected, _, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
 		&github.TriggerCommand{Tool: "helmfile", Operation: "bogus", Projects: []string{"*"}})
 	require.NoError(t, err)
 	assert.Empty(t, targets)
@@ -185,7 +185,7 @@ func TestResolveTargets_NonPlanOperationRequiresWritePermission(t *testing.T) {
 	cfg := testConfig()
 	authorizer := github.NewAuthorizer(&fakeAuthClient{permission: "read"})
 
-	targets, rejected, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
+	targets, rejected, _, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
 		&github.TriggerCommand{Tool: "helmfile", Operation: "apply", Projects: []string{"helm-a"}})
 	require.NoError(t, err)
 	assert.Empty(t, targets)
@@ -197,7 +197,7 @@ func TestResolveTargets_PlanOperationDoesNotRequireWritePermission(t *testing.T)
 	cfg := testConfig()
 	authorizer := github.NewAuthorizer(&fakeAuthClient{permission: "read"})
 
-	targets, rejected, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
+	targets, rejected, _, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
 		&github.TriggerCommand{Tool: "helmfile", Operation: "diff", Projects: []string{"helm-a"}})
 	require.NoError(t, err)
 	assert.Empty(t, rejected)
@@ -208,7 +208,7 @@ func TestResolveTargets_ExtraArgsPassedThrough(t *testing.T) {
 	cfg := testConfig()
 	authorizer := github.NewAuthorizer(&fakeAuthClient{permission: "write"})
 
-	targets, _, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
+	targets, _, _, _, err := testSelection(cfg, authorizer).resolve(context.Background(),
 		&github.TriggerCommand{Tool: "helmfile", Operation: "diff", Projects: []string{"helm-a"}, ExtraArgs: []string{"--foo"}})
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
@@ -351,7 +351,7 @@ func TestResolveTargets_TriggerTable(t *testing.T) {
 				},
 			}
 
-			targets, rejected, notices, err := sel.resolve(context.Background(),
+			targets, rejected, notices, _, err := sel.resolve(context.Background(),
 				&github.TriggerCommand{Tool: tt.tool, Operation: tt.operation, Projects: tt.projects})
 
 			if tt.wantErrIs != nil {
@@ -379,7 +379,7 @@ func TestResolveTargets_TriggerTable(t *testing.T) {
 func TestResolveTargets_StarReachesPathShapedNames(t *testing.T) {
 	sel := testSelection(selectorConfig(), github.NewAuthorizer(&fakeAuthClient{permission: "write"}))
 
-	targets, _, _, err := sel.resolve(context.Background(),
+	targets, _, _, _, err := sel.resolve(context.Background(),
 		&github.TriggerCommand{Tool: "helmfile", Operation: "diff", Projects: []string{"*"}})
 
 	require.NoError(t, err)

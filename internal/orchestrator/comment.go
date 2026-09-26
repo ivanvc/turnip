@@ -147,6 +147,16 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 		locks:       o.locks,
 		modifiedSet: memoModifiedFiles(client, owner, repoName, pr.Number),
 	}
+	if len(o.mutationRequirements) > 0 {
+		sel.unmetRequirements = memoMutationRequirements(&mutationRequirementCheck{
+			client:     client,
+			authorizer: authorizer,
+			owner:      owner,
+			repo:       repoName,
+			pr:         pr,
+			sleep:      o.requirementSleep,
+		}, o.mutationRequirements)
+	}
 	// targetGroups preserves per-TriggerCommand grouping: each command's
 	// Targets must finish executing (Requirement 6's Lock semantics)
 	// before the next command's begin, so a "diff" followed by "apply" on
@@ -173,11 +183,14 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 			continue
 		}
 
-		targets, rejected, notices, err := sel.resolve(ctx, cmd)
+		targets, rejected, notices, refusal, err := sel.resolve(ctx, cmd)
 		// Notices are collected before the error check: an empty selection
 		// still has something worth saying, and a truncated file listing is
 		// most relevant precisely when nothing matched.
 		selectionNotices = append(selectionNotices, notices...)
+		if refusal != "" {
+			replies = append(replies, refusal)
+		}
 		if err != nil {
 			var unmatched *UnmatchedProjectError
 			if errors.As(err, &unmatched) {
@@ -263,6 +276,28 @@ func memoModifiedFiles(client github.GitHubClient, owner, repo string, prNumber 
 			files, err = client.GetModifiedFiles(ctx, owner, repo, prNumber)
 		}
 		return files, err
+	}
+}
+
+// memoMutationRequirements returns a lookup that evaluates the
+// Requirement_Set at most once per event. The answer cannot differ
+// between the Projects of a command, or between the commands of one
+// comment, so a second apply command reuses the first's (Requirement
+// 6.4, met more strictly than asked).
+//
+// Mutex-free for the same reason as memoModifiedFiles: commands are
+// resolved one after another.
+func memoMutationRequirements(check *mutationRequirementCheck, requirements []string) func(context.Context) []unmetRequirement {
+	var (
+		unmet  []unmetRequirement
+		called bool
+	)
+	return func(ctx context.Context) []unmetRequirement {
+		if !called {
+			called = true
+			unmet = check.evaluate(ctx, requirements)
+		}
+		return unmet
 	}
 }
 

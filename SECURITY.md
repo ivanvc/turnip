@@ -16,6 +16,26 @@ already trust with what the Runner can reach, and decide that reach by
 which cluster and which credentials you give the Runner
 (`docs/configuration.md`, "What that grant means").
 
+## Review before apply is off by default
+
+Out of the box, turnip lets anyone with write access apply a pull request
+that holds a plan, including their own. It asks nothing about the pull
+request's review: **without the `approved` requirement, one collaborator
+can plan and apply their own pull request, with no one else having
+approved it**, and the change reaches infrastructure before it could be
+merged under branch protection.
+
+Setting **`TURNIP_MUTATION_REQUIREMENTS=approved`** on the Server
+prevents it: a mutating command (an apply, a sync, or any other operation
+that is not a plan) then needs
+an approving review from an account other than the author with write
+access to the repository. Add branch protection's "Dismiss stale pull
+request approvals when new commits are pushed" to make that approval
+cover the commit being applied rather than an earlier one. A repository
+cannot set or relax this from `turnip.yaml`. The details, and the
+`mergeable` requirement beside it, are in `docs/configuration.md`
+("Mutation requirements").
+
 ## Opt-ins that grant capability by design
 
 Each of these is off by default, and each is a deliberate widening of what
@@ -36,7 +56,10 @@ Each opt-in's own documentation is in `docs/configuration.md`.
   the operator has not enabled it, or an image running that no built-in
   alias or `TURNIP_ALLOWED_IMAGES` Entry allows; turnip running on a pull
   request from a fork; an operation triggered by someone the collaborator
-  check should have refused.
+  check should have refused; an operation other than a plan running on a
+  pull request that does not meet a requirement in
+  `TURNIP_MUTATION_REQUIREMENTS`, or a repository's own configuration
+  changing what that setting requires.
 - **A default that grants more than documented**: a Server with no opt-ins
   enabled letting a pull request choose anything this document or
   `docs/configuration.md` says it cannot.

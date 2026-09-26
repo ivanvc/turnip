@@ -109,6 +109,50 @@ func TestConfigFromEnv_AllowedOverridesUnknownPathIsAnError(t *testing.T) {
 	assert.Contains(t, err.Error(), overrideServiceAccount, "and what was probably meant")
 }
 
+func TestConfigFromEnv_MutationRequirements(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"unset requires nothing", "", nil},
+		{"blank fields require nothing", " , ,", nil},
+		{"approved", MutationRequirementApproved, []string{MutationRequirementApproved}},
+		{"mergeable", MutationRequirementMergeable, []string{MutationRequirementMergeable}},
+		{"both", "approved,mergeable", []string{MutationRequirementApproved, MutationRequirementMergeable}},
+		{"whitespace trimmed", "  mergeable , approved  ", []string{MutationRequirementMergeable, MutationRequirementApproved}},
+		{"duplicates collapsed", "approved, approved,mergeable,approved", []string{MutationRequirementApproved, MutationRequirementMergeable}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_MUTATION_REQUIREMENTS": tc.raw}), NewPluginRegistry())
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.MutationRequirements)
+		})
+	}
+}
+
+// An unrecognized name would require nothing while looking like it
+// required something, so the Server refuses to start.
+func TestConfigFromEnv_MutationRequirementsUnknownNameIsAnError(t *testing.T) {
+	_, err := ConfigFromEnv(envMap(map[string]string{
+		"TURNIP_MUTATION_REQUIREMENTS": "approved, undiverged",
+	}), NewPluginRegistry())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "TURNIP_MUTATION_REQUIREMENTS")
+	assert.Contains(t, err.Error(), `"undiverged"`, "the error names what was written")
+	assert.Contains(t, err.Error(), "approved, mergeable", "and lists the recognized names")
+}
+
+// The Requirement_Set is operator-side only: a repository must never be
+// permitted to set it through TURNIP_ALLOWED_OVERRIDES.
+func TestConfigFromEnv_MutationRequirementsIsNotAnOverridePath(t *testing.T) {
+	assert.Equal(t, []string{overrideCloneSubmodules, overrideServiceAccount}, knownOverridePaths)
+	_, err := ConfigFromEnv(envMap(map[string]string{
+		"TURNIP_ALLOWED_OVERRIDES": "mutationRequirements",
+	}), NewPluginRegistry())
+	require.Error(t, err)
+}
+
 func TestConfigFromEnv_MissingRunnerImage(t *testing.T) {
 	_, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_IMAGE": ""}), NewPluginRegistry())
 	require.Error(t, err)

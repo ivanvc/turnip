@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -91,6 +92,12 @@ type selection struct {
 	// most once per event (see memoModifiedFiles). Only a bare plan reads
 	// it, so a trigger that names its Projects never pays for the call.
 	modifiedSet func(context.Context) ([]string, error)
+
+	// unmetRequirements returns the Mutation_Requirements the pull request
+	// does not satisfy, evaluating at most once per event (see
+	// memoMutationRequirements). Nil when the Requirement_Set is empty, which
+	// gates nothing and asks GitHub nothing.
+	unmetRequirements func(context.Context) []unmetRequirement
 }
 
 // gitHubMaxChangedFiles is the most files GitHub's pull-request files
@@ -107,20 +114,23 @@ const gitHubMaxChangedFiles = 3000
 // produced along the way, and a whole-command error when the command
 // itself can't be resolved to any candidate at all (an unmatched named
 // Project).
-func (s *selection) resolve(ctx context.Context, cmd *github.TriggerCommand) (targets []Target, rejected []github.ProjectResult, notices []string, wholeCommandErr error) {
+//
+// refusal is the one reply the command gets when the Requirement_Set
+// withheld its Mutating_Operation Targets (Slice 34); empty otherwise.
+func (s *selection) resolve(ctx context.Context, cmd *github.TriggerCommand) (targets []Target, rejected []github.ProjectResult, notices []string, refusal string, wholeCommandErr error) {
 	candidates := toolCandidates(s.cfg, cmd.Tool)
 
 	if len(cmd.Projects) > 0 {
 		names, patterns, all := splitSelectors(cmd.Projects)
 		switch {
 		case all && (len(names) > 0 || len(patterns) > 0):
-			return nil, nil, nil, &MixedSelectorError{Others: append(names, patterns...)}
+			return nil, nil, nil, "", &MixedSelectorError{Others: append(names, patterns...)}
 		case all:
 			// Every candidate, which is what candidates already holds.
 		default:
 			narrowed, unmatched, err := narrowBySelectors(candidates, names, patterns)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, "", err
 			}
 			candidates = narrowed
 			for _, pattern := range unmatched {
@@ -131,7 +141,7 @@ func (s *selection) resolve(ctx context.Context, cmd *github.TriggerCommand) (ta
 		narrowed, bareNotices, err := s.bareDefaults(ctx, cmd, candidates)
 		notices = append(notices, bareNotices...)
 		if err != nil {
-			return nil, nil, notices, err
+			return nil, nil, notices, "", err
 		}
 		candidates = narrowed
 	}
@@ -172,7 +182,55 @@ func (s *selection) resolve(ctx context.Context, cmd *github.TriggerCommand) (ta
 		})
 	}
 
-	return targets, rejected, notices, nil
+	targets, refusal = s.gateMutating(ctx, cmd, targets)
+	return targets, rejected, notices, refusal, nil
+}
+
+// gateMutating applies the Requirement_Set to a command's Targets, after
+// the write-permission check so that a trigger which was never going to
+// run costs no API call. Only Mutating_Operation Targets are withheld:
+// operation names are tool-native, so under /turnip one name could be a
+// plan for one tool and mutating for another, and a plan is never gated
+// (Requirement 6.2). The whole command gets one reply (Requirement 5.3).
+func (s *selection) gateMutating(ctx context.Context, cmd *github.TriggerCommand, targets []Target) ([]Target, string) {
+	if s.unmetRequirements == nil || !slices.ContainsFunc(targets, s.mutating) {
+		return targets, ""
+	}
+	unmet := s.unmetRequirements(ctx)
+	if len(unmet) == 0 {
+		return targets, ""
+	}
+
+	names := make([]string, 0, len(unmet))
+	for _, u := range unmet {
+		names = append(names, u.Name)
+	}
+	// INFO, like the closed pull request's refusal: a colleague asking
+	// too early, not someone trying to run their code.
+	slog.InfoContext(ctx, "refusing mutating operation with unmet mutation requirements",
+		"owner", s.owner,
+		"repo", s.repo,
+		"pr_number", s.prNumber,
+		"actor", s.author,
+		"operation", cmd.Operation,
+		"unmet", names,
+	)
+	return slices.DeleteFunc(targets, s.mutating), mutationRequirementsReply(commandText(cmd), unmet)
+}
+
+// mutating reports whether t runs something other than its tool's plan
+// Operation. Every Target resolve builds has a Plugin.
+func (s *selection) mutating(t Target) bool {
+	p, ok := s.plugins[t.Project.Tool]
+	return !ok || t.Operation != p.GetPlanOperation()
+}
+
+// commandText renders a command as a person would have written it, for
+// quoting it back in a reply. Extra arguments are left out: they say how
+// to run, not what was asked to run.
+func commandText(cmd *github.TriggerCommand) string {
+	parts := append([]string{"/" + cmd.Tool, cmd.Operation}, cmd.Projects...)
+	return strings.Join(parts, " ")
 }
 
 // bareDefaults narrows candidates for a trigger that named no selector:

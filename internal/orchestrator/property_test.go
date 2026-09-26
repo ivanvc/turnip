@@ -162,7 +162,7 @@ func TestProperty_BarePlanEqualsAutoplanSelection(t *testing.T) {
 		sel.prNumber = 42
 		sel.modifiedSet = func(context.Context) ([]string, error) { return files, nil }
 
-		targets, _, _, err := sel.resolve(context.Background(),
+		targets, _, _, _, err := sel.resolve(context.Background(),
 			&github.TriggerCommand{Tool: "helmfile", Operation: "diff"})
 
 		want := config.MatchProjects(projects, files)

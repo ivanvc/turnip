@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -51,6 +52,52 @@ type Config struct {
 	// TURNIP_ALLOWED_IMAGES (images.go). config.Parse resolves each
 	// Project's uses: against it.
 	Catalog config.Catalog
+	// MutationRequirements is the Requirement_Set, from
+	// TURNIP_MUTATION_REQUIREMENTS: the conditions a pull request must meet
+	// before turnip runs a Mutating_Operation on it. Each entry is one of
+	// knownMutationRequirements, in the order first written, without
+	// duplicates. Unset or blank leaves it empty, which requires nothing.
+	// It is deliberately operator-side only and never an override path: a
+	// pull request supplies turnip.yaml, so it must not be able to relax
+	// the conditions it is itself held to.
+	MutationRequirements []string
+}
+
+// The recognized Mutation_Requirement names for TURNIP_MUTATION_REQUIREMENTS.
+const (
+	// MutationRequirementApproved requires an approval from someone other
+	// than the pull request's author.
+	MutationRequirementApproved = "approved"
+	// MutationRequirementMergeable requires the pull request to be mergeable.
+	MutationRequirementMergeable = "mergeable"
+)
+
+// knownMutationRequirements is sorted so error messages list them stably.
+var knownMutationRequirements = []string{MutationRequirementApproved, MutationRequirementMergeable}
+
+// parseMutationRequirements reads the comma-separated list, trimming
+// whitespace, skipping empty fields and collapsing duplicates. An
+// unrecognized name is an error rather than a no-op, for the same reason
+// parseAllowedOverrides rejects an unknown path: an operator who misspells
+// a requirement asked for a control and would otherwise receive none.
+func parseMutationRequirements(raw string) ([]string, error) {
+	var reqs []string
+	for _, field := range strings.Split(raw, ",") {
+		name := strings.TrimSpace(field)
+		if name == "" {
+			continue
+		}
+		if !slices.Contains(knownMutationRequirements, name) {
+			return nil, fmt.Errorf(
+				"unknown mutation requirement %q; recognized requirements are %s",
+				name, strings.Join(knownMutationRequirements, ", "),
+			)
+		}
+		if !slices.Contains(reqs, name) {
+			reqs = append(reqs, name)
+		}
+	}
+	return reqs, nil
 }
 
 // MissingEnvVarsError names every required environment variable that was
@@ -148,6 +195,12 @@ func ConfigFromEnv(env func(string) string, plugins PluginRegistry) (Config, err
 		return Config{}, fmt.Errorf("orchestrator: parsing TURNIP_CLONE_SUBMODULES: %w", err)
 	}
 	cfg.CloneSubmodules = cloneSubmodules
+
+	mutationRequirements, err := parseMutationRequirements(env("TURNIP_MUTATION_REQUIREMENTS"))
+	if err != nil {
+		return Config{}, fmt.Errorf("orchestrator: parsing TURNIP_MUTATION_REQUIREMENTS: %w", err)
+	}
+	cfg.MutationRequirements = mutationRequirements
 
 	catalog, err := parseAllowedImages(env("TURNIP_ALLOWED_IMAGES"), plugins)
 	if err != nil {

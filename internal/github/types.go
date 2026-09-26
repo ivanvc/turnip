@@ -67,6 +67,15 @@ type PullRequest struct {
 	// acts on its own, never what it can be asked to do" structural
 	// rather than a rule to remember.
 	Draft bool
+
+	// Mergeable is GitHub's conflict-only answer: true when the head
+	// merges into the base without conflict, false when it does not. Nil
+	// while GitHub has not computed it yet, which it does in the
+	// background after a push, so nil means "not yet known", never
+	// "mergeable". It is mapped from the mergeable field and never from
+	// mergeable_state, which also folds in checks and branch protection.
+	// Populated only by GetPullRequest; nil on every webhook event.
+	Mergeable *bool
 }
 
 // IsForeign reports whether this pull request's code comes from a

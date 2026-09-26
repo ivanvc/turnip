@@ -18,6 +18,7 @@ type GitHubClient interface {
 	GetFile(ctx context.Context, owner, repo, path, ref string) ([]byte, error)
 	GetModifiedFiles(ctx context.Context, owner, repo string, prNumber int) ([]string, error)
 	GetPullRequest(ctx context.Context, owner, repo string, prNumber int) (*PullRequest, error)
+	ListReviews(ctx context.Context, owner, repo string, prNumber int) ([]Review, error)
 	CreateCheckRun(ctx context.Context, owner, repo string, opts CheckRunOptions) (int64, error)
 	UpdateCheckRun(ctx context.Context, owner, repo string, checkRunID int64, opts CheckRunOptions) error
 	PostComment(ctx context.Context, owner, repo string, prNumber int, body string) (*PostedComment, error)
@@ -167,7 +168,43 @@ func (c *Client) GetPullRequest(ctx context.Context, owner, repo string, prNumbe
 		// path, for the same reason. GetMerged is not read: a merged pull
 		// request already reports "closed".
 		Open: pr.GetState() == "open",
+		// The conflict-only field. mergeable_state is deliberately not
+		// read: it folds in checks and branch protection, which are not
+		// what this field answers.
+		Mergeable: pr.Mergeable,
 	}, nil
+}
+
+// Review is one submitted review on a pull request, reduced to what an
+// mutation requirement reads.
+type Review struct {
+	// Author is the login of the account that submitted the review.
+	Author string
+	// State is GitHub's review state: APPROVED, CHANGES_REQUESTED,
+	// COMMENTED, DISMISSED or PENDING.
+	State string
+}
+
+// ListReviews returns every review on the pull request, reading every
+// page, oldest first as GitHub returns them. Order is load-bearing: a
+// reader decides each account's standing by its latest review.
+func (c *Client) ListReviews(ctx context.Context, owner, repo string, prNumber int) ([]Review, error) {
+	var reviews []Review
+	opts := &gh.ListOptions{PerPage: 100}
+	for {
+		page, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, prNumber, opts)
+		if err != nil {
+			return nil, fmt.Errorf("github: listing reviews for %s/%s#%d: %w", owner, repo, prNumber, err)
+		}
+		for _, r := range page {
+			reviews = append(reviews, Review{Author: r.GetUser().GetLogin(), State: r.GetState()})
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return reviews, nil
 }
 
 func (c *Client) CreateCheckRun(ctx context.Context, owner, repo string, opts CheckRunOptions) (int64, error) {

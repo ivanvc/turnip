@@ -1,4 +1,4 @@
-# Requirements: What a Pull Request Must Satisfy Before an Apply (Slice 34)
+# Requirements: What a Pull Request Must Satisfy Before a Mutating Operation (Slice 34)
 
 ## Introduction
 
@@ -10,27 +10,24 @@ mergeable — a single collaborator can plan and apply their own pull
 request with no second pair of eyes.
 
 For most repositories that is the opposite of why a review process exists.
-Atlantis has the control and it is worth porting.
+Other GitOps IaC tools have the control and it is worth porting.
 
-**What Atlantis does**, researched 2026-09-21 against
-`runatlantis.io/docs/command-requirements`: three requirements, settable
-per command — `approved` ("approved by at least one person other than the
-author"), `mergeable` ("prevents applies unless a pull request is able to
-be merged"), and `undiverged` (merge checkout strategy only: "prevents
-applies if there are any changes on the base branch since the most recent
-plan"). All three are **opt-in**; none is on by default. A repository's own
-`atlantis.yaml` cannot set them unless the server-side configuration names
-them in `allowed_overrides`.
+**What other GitOps IaC tools do** (researched 2026-09-21): three
+requirements, settable per command. `approved`: approved by at least one
+person other than the author. `mergeable`: the pull request is able to be
+merged. `undiverged`: no changes on the base branch since the most recent
+plan. All three are **opt-in**; none is on by default. A repository's own
+configuration cannot set them unless the server-side configuration permits
+it.
 
-**One trap is already known and must be designed around.** Atlantis ships
-`--gh-allow-mergeable-bypass-apply` — "enable ability to use `mergeable`
-mode with required apply status check" — because GitHub's `mergeable_state`
-folds in required status checks. turnip posts
-`turnip/<project>/<operation>` check runs, and those are precisely what an
-operator marks required under branch protection. Asking whether the pull
-request is `clean` therefore asks a question whose answer includes turnip's
-own: the pull request cannot be `clean` until an apply runs, and the apply
-will not run until it is `clean`.
+**One trap is already known and must be designed around.** GitHub's
+`mergeable_state` folds in required status checks, and the tools that use
+it ship a switch to bypass that. turnip's `turnip` check (Slice 37) is the
+one an operator marks required under branch protection, and by design it
+cannot pass until every plan this pull request made is applied. Asking
+whether the pull request is `clean` therefore asks a question whose answer
+includes turnip's own: the pull request cannot be `clean` until an apply
+runs, and the apply will not run until it is `clean`.
 
 ## Glossary
 
@@ -38,9 +35,9 @@ Terms additional to the global spec's glossary:
 
 - **Mutating_Operation**: any Operation a Plugin exposes that is not its
   plan Operation. Defined by exclusion, as in Slice 20.
-- **Apply_Requirement**: a condition a pull request must satisfy before
+- **Mutation_Requirement**: a condition a pull request must satisfy before
   turnip will run a Mutating_Operation on it.
-- **Requirement_Set**: the Apply_Requirements an operator has enabled.
+- **Requirement_Set**: the Mutation_Requirements an operator has enabled.
   Empty by default.
 
 ## Requirements
@@ -101,15 +98,44 @@ key is unlike its neighbors.*
    least one approving review on the pull request
 2. THE approval SHALL be from an account other than the pull request's
    author
-3. A review that was approving and has since been dismissed or superseded
-   by a later non-approving review from the same account SHALL NOT count
+3. THE approval SHALL be from an account with write permission on the
+   repository, as a commenter needs to trigger an Operation
+4. A review that was approving and has since been dismissed or superseded
+   by a later `CHANGES_REQUESTED` review from the same account SHALL NOT
+   count (a `COMMENTED` review does not supersede it, as in GitHub's own
+   review decision)
 
 *Rationale for 3.2: an approval a change's own author supplied is not a
-second pair of eyes, and Atlantis draws the same line. turnip already
+second pair of eyes, and other GitOps IaC tools draw the same line. turnip already
 records the author on `PullRequest` (Slice 15), so the comparison needs no
 new field.*
 
-*Rationale for 3.3: GitHub keeps a review history rather than a single
+*Rationale for 3.3: GitHub accepts an approving review from anyone who
+can read the repository, which on a public repository is anyone; it marks
+such a review non-binding, but the review list still reports it as
+`APPROVED`. Without this criterion a stranger, or the author's second
+account, satisfies the gate. Write permission is the line turnip already
+draws for triggering an Operation, and it is what "someone who could have
+merged this signed off" means in practice. Deferring to GitHub's own
+review decision was considered and rejected: it is empty unless branch
+protection requires reviews, which would make this gate depend on a
+setting turnip neither reads nor controls.*
+
+5. AN approval SHALL count whichever commit it was given on, for as long
+   as GitHub reports it as approving
+
+*Rationale for 3.5: whether an approval survives a new push is the
+repository's own policy, set by branch protection's "Dismiss stale pull
+request approvals when new commits are pushed". With it on, GitHub marks
+the old approval dismissed and 3.4 excludes it; with it off, the approval
+stands, and GitHub would let the pull request merge on it too. Following
+GitHub means turnip applies exactly when the repository's review rules
+would let the change merge: it cannot be used to get around them, and it
+does not impose a stricter rule the repository chose not to enable.
+Counting only approvals on the head commit was considered and rejected
+for that reason; a repository that wants it has the setting.*
+
+*Rationale for 3.4: GitHub keeps a review history rather than a single
 verdict per reviewer, so the latest state per account is the question, not
 whether an approval ever existed.*
 
@@ -121,8 +147,11 @@ whether an approval ever existed.*
    that GitHub reports the pull request as mergeable
 2. THE Server SHALL use the conflict-only signal, NOT a state that
    incorporates required status checks
-3. WHERE GitHub has not yet computed mergeability, THE Server SHALL refuse
-   the Operation and say that the answer is not yet available, rather than
+3. WHERE GitHub has not yet computed mergeability, THE Server SHALL read
+   it again for a bounded time, well within GitHub's webhook delivery
+   timeout
+4. WHERE it is still not computed after that, THE Server SHALL refuse the
+   Operation and say that the answer is not yet available, rather than
    treating unknown as either satisfied or failed
 
 *Rationale for 4.2: this is what avoids the deadlock described in the
@@ -132,12 +161,17 @@ conflict" and `approved` means "someone signed off"; the two compose, and
 neither asks GitHub a question whose answer depends on turnip's own check
 runs.*
 
-*Rationale for 4.3: GitHub computes mergeability asynchronously, so the
-field is null on a freshly opened or freshly pushed pull request. Treating
-null as satisfied would make the requirement silently skippable by acting
-quickly; treating it as failed would report a conflict that may not exist.
-Neither is true, and the honest answer is to say so and let the author
-retry.*
+*Rationale for 4.3 and 4.4: GitHub computes mergeability asynchronously,
+so the field is null on a freshly opened or freshly pushed pull request,
+and reading the pull request is what starts the computation, which
+usually finishes within a second or two. Refusing at once would turn
+away the likeliest case, an apply right after a push, for an answer about
+to arrive; a short, bounded wait covers it with no action from the
+author. The bound keeps the wait inside the webhook delivery the gate
+runs in. Treating null as satisfied would make the requirement silently
+skippable by acting quickly; treating it as failed would report a
+conflict that may not exist. Neither is true, and the honest answer is to
+say so and let the author retry.*
 
 ### Requirement 5: A refused Operation says which requirement it failed
 
@@ -151,7 +185,15 @@ retry.*
 3. THE reply SHALL be one per Trigger Command, not one per Project
 4. THE Server SHALL record the refusal in its log
 
-*Rationale: as with Slice 32's closed-pull-request refusal, the requester
+5. THE refusal SHALL create no Project_Check and SHALL NOT change the
+   Pull_Request_Record, as for every refused Mutating_Operation (Slice 36,
+   Requirement 7.1)
+
+*Rationale for 5.5: the `turnip` check already blocks the merge while a
+plan awaits its apply, which is exactly the state a refused apply leaves.
+A red check would say the change is broken when it is only unapproved.*
+
+*Rationale for 5.1–5.4: as with Slice 32's closed-pull-request refusal, the requester
 is a colleague rather than an attacker, so silence would read as turnip
 being broken. Naming every unmet requirement at once follows from the same
 courtesy — discovering them one round trip at a time is its own annoyance.*
@@ -173,15 +215,15 @@ regression worth guarding against.*
 
 *Rationale for 6.2: a plan is how someone finds out what a change would
 do, and requiring approval before it would make review impossible —
-nobody can approve what they cannot see. Atlantis separates
-`plan_requirements` from `apply_requirements` for this reason; this slice
-implements only the latter.*
+nobody can approve what they cannot see. Other GitOps IaC tools keep
+plan requirements apart from apply requirements for this reason; this
+slice implements only the latter.*
 
 *Rationale for 6.3: releasing a Lock is how someone recovers from a pull
 request that cannot satisfy the requirements, so gating it would strand
 exactly the cases the gate creates. It also needs no special case:
-`comment.go:159` handles `unlock` before Target resolution, and it is never
-a Plugin Operation.*
+`HandleIssueComment` handles `unlock` before Target resolution, and it is
+never a Plugin Operation.*
 
 *Rationale for 6.4: both requirements need a per-pull-request API call.
 Evaluating per Project would repeat it once for every Project a fleet-shaped
@@ -198,6 +240,16 @@ repository selects, to answer a question that cannot differ between them.*
 3. THE documentation SHALL state that `mergeable` concerns merge conflicts
    and not status checks, so that an operator does not expect it to
    enforce branch protection
+4. THE documentation SHALL state that `approved` follows GitHub's review
+   state: an approval given before a later push still counts unless
+   branch protection dismisses stale approvals, and that enabling that
+   setting is how a repository requires approval of the commit being
+   applied
+5. THE documentation SHALL state that an approval counts only from an
+   account with write permission, other than the author
+6. `SECURITY.md` SHALL state that without `approved`, one collaborator can
+   plan and apply their own pull request, and name the setting that
+   prevents it
 
 ## Out of Scope
 
@@ -206,8 +258,8 @@ repository selects, to answer a question that cannot differ between them.*
   approximation of the plan-freshness check the roadmap's Backlog records
   as accepted-and-declined, so picking it up should revisit that entry
   rather than arrive independently.
-- **Requirements on the plan.** Atlantis's `plan_requirements` exists, and
-  Requirement 6.2 explains why this slice does not implement it.
+- **Requirements on the plan.** Other GitOps IaC tools offer them;
+  Requirement 6.2 explains why this slice does not implement them.
 - **Per-repository requirements.** One Requirement_Set applies to every
   repository this Server serves. Expressing it per repository needs the
   Backlog's per-repository server configuration, which is deliberately not
@@ -215,5 +267,5 @@ repository selects, to answer a question that cannot differ between them.*
 - **Enforcing branch protection.** turnip reports what GitHub tells it; it
   does not evaluate protection rules, and Requirement 4.2 keeps it out of
   that business on purpose.
-- **Auto-merge after a successful apply.** Atlantis has it; it is a
-  different feature and nothing here depends on it.
+- **Auto-merge after a successful apply.** A different feature, and
+  nothing here depends on it.

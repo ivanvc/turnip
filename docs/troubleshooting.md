@@ -280,6 +280,57 @@ the operation running.
   read). Ask a maintainer to grant write access, or ask them to run the
   command themselves.
 
+## Mutation requirements not met
+
+**Symptom**: a mutating command (an apply, a sync, or any operation other
+than a plan) does nothing, and turnip replies instead:
+
+```text
+`/helmfile apply` was not run. This pull request must first:
+- be approved by someone with write access other than its author
+- have no merge conflicts (GitHub reports one)
+```
+
+The Server's operator set `TURNIP_MUTATION_REQUIREMENTS` (see "Mutation
+requirements" in `docs/configuration.md`). The reply lists every
+requirement that is not met, so fixing all of them and commenting the
+same command again is enough. Nothing ran: no lock changed, no Runner
+started and no check run was touched, and the plan you already have is
+still there to apply. A plan in the same comment still runs; only the
+mutating commands are held back.
+
+- **be approved by someone with write access other than its author**: no
+  one who counts has an approval standing on the pull request. Ask a
+  reviewer with write access to approve it, then comment again. If there
+  is an approval and this still appears, it doesn't count because it is
+  your own, because the reviewer has only read or triage access, because
+  the same reviewer later requested changes, or because it was dismissed,
+  which branch protection does to every approval on each new push when
+  "Dismiss stale pull request approvals when new commits are pushed" is
+  on. Get a fresh approval on the current commit.
+- **have no merge conflicts (GitHub reports one)**: the branch conflicts
+  with its base. Resolve the conflict the usual way (merge or rebase the
+  base branch and push); the push plans again, and you apply that plan.
+  This is about conflicts only; failing status checks never cause it.
+- **have no merge conflicts (GitHub has not finished checking; try again
+  in a moment)**: GitHub computes mergeability in the background, usually
+  within seconds of a push, and still had no answer after turnip waited a
+  few seconds for it. Comment the same command again shortly.
+- **either line followed by "(turnip could not check this; try again)"**:
+  turnip couldn't ask GitHub (listing reviews, checking an approver's
+  permission, or reading the pull request failed), and it refuses rather
+  than assume the requirement holds. Comment again. If it keeps
+  happening, the Server's logs carry the GitHub error, as with the
+  entries under "GitHub API errors".
+
+Each refusal is also logged at INFO, with the unmet requirement names
+under `unmet`:
+
+```
+INFO refusing mutating operation with unmet mutation requirements
+  owner=... repo=... pr_number=... actor=... operation=apply unmet=[approved mergeable]
+```
+
 ## Fork pull requests are refused
 
 **Symptom**: a pull request opened from a fork gets no check run, no

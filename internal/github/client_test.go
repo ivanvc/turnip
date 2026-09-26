@@ -408,6 +408,80 @@ func TestClient_GetPullRequest_CarriesOpenState(t *testing.T) {
 	}
 }
 
+// Mergeable is the conflict-only field: true and false carry through,
+// and absent (GitHub still computing) stays nil rather than reading as
+// either answer. mergeable_state is present in every body and must not
+// leak into the result.
+func TestClient_GetPullRequest_CarriesMergeable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body map[string]any
+		want *bool
+	}{
+		{"mergeable", map[string]any{"number": 9, "mergeable": true, "mergeable_state": "blocked"}, gh.Ptr(true)},
+		{"conflict", map[string]any{"number": 9, "mergeable": false, "mergeable_state": "clean"}, gh.Ptr(false)},
+		{"not yet computed", map[string]any{"number": 9, "mergeable_state": "clean"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, mux := newTestClient(t)
+			body := tc.body
+			body["head"] = map[string]any{"sha": "def456", "ref": "patch"}
+			body["base"] = map[string]string{"ref": "main"}
+
+			mux.HandleFunc("/repos/owner/repo/pulls/9", func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(t, w, body)
+			})
+
+			got, err := client.GetPullRequest(t.Context(), "owner", "repo", 9)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got.Mergeable)
+		})
+	}
+}
+
+func TestClient_ListReviews_PaginatesOldestFirst(t *testing.T) {
+	client, mux := newTestClient(t)
+
+	mux.HandleFunc("/repos/owner/repo/pulls/42/reviews", func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		switch page {
+		case "", "1":
+			w.Header().Set("Link", `<https://api.github.com/resource?page=2>; rel="next"`)
+			writeJSON(t, w, []map[string]any{
+				{"user": map[string]string{"login": "alice"}, "state": "CHANGES_REQUESTED"},
+				{"user": map[string]string{"login": "bob"}, "state": "COMMENTED"},
+			})
+		case "2":
+			writeJSON(t, w, []map[string]any{
+				{"user": map[string]string{"login": "alice"}, "state": "APPROVED"},
+			})
+		default:
+			assert.Failf(t, "unexpected page", "page = %q", page)
+		}
+	})
+
+	got, err := client.ListReviews(t.Context(), "owner", "repo", 42)
+	require.NoError(t, err)
+	assert.Equal(t, []Review{
+		{Author: "alice", State: "CHANGES_REQUESTED"},
+		{Author: "bob", State: "COMMENTED"},
+		{Author: "alice", State: "APPROVED"},
+	}, got)
+}
+
+func TestClient_ListReviews_Error(t *testing.T) {
+	client, mux := newTestClient(t)
+
+	mux.HandleFunc("/repos/owner/repo/pulls/42/reviews", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeJSON(t, w, map[string]string{"message": "boom"})
+	})
+
+	_, err := client.ListReviews(t.Context(), "owner", "repo", 42)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "listing reviews for owner/repo#42")
+}
+
 // isAppJWT reports whether an Authorization header carries a JWT signed
 // as the App, rather than an opaque installation token.
 func isAppJWT(header string) bool {

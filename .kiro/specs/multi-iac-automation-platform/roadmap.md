@@ -42,7 +42,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 31 | Runner Pod Placement: Node Selectors and Tolerations | `runner-pod-placement` | Not Started | Slices 5, 13 |
 | 32 | Refuse a Closed Pull Request, Plan a Reopened One | `closed-pull-requests` | Complete | Slices 4, 6 |
 | 33 | Show What Ran and With What Scope | `execution-provenance` | Complete | Slices 2, 17, 20 |
-| 34 | What a Pull Request Must Satisfy Before an Apply | `apply-requirements` | Not Started | Slices 4, 6, 20 |
+| 34 | What a Pull Request Must Satisfy Before a Mutating Operation | `apply-requirements` | Complete | Slices 4, 6, 20 |
 | 35 | What the Checks List Says | `check-run-titles` | Complete | Slices 6, 33, 37 |
 | 36 | A Blocked Operation Blocks the Merge, Visibly | `check-run-refusals` | Complete | Slices 6, 32, 35, 37 |
 | 37 | One Check Branch Protection Can Require | `aggregate-check-run` | Complete | Slices 6, 17 |
@@ -2248,7 +2248,7 @@ today because `resolveVersion` always returns a concrete version. The
 entry on a Project directory escaping the workspace shares this slice's
 path-stripping helper but is a validation change, not a display one.
 
-### Slice 34: What a Pull Request Must Satisfy Before an Apply (`apply-requirements`)
+### Slice 34: What a Pull Request Must Satisfy Before a Mutating Operation (`apply-requirements`)
 
 **Goal**: Let an operator require that a pull request has been approved,
 and can actually be merged, before turnip will change anything.
@@ -2260,18 +2260,15 @@ pull request could even be merged. A single collaborator can plan and
 apply their own pull request with no second pair of eyes, which for most
 repositories is the opposite of why they run a review process.
 
-**What Atlantis has** (researched 2026-09-21,
-`runatlantis.io/docs/command-requirements`): three requirements, per
-command — `approved` ("approved by at least one person other than the
-author"), `mergeable` ("prevents applies unless a pull request is able to
-be merged"), and `undiverged` (merge checkout strategy only: "prevents
-applies if there are any changes on the base branch since the most recent
-plan"). All are **opt-in**; none is default. A repository's own
-`atlantis.yaml` cannot set them unless the server-side config lists them
-in `allowed_overrides`.
+**What other GitOps IaC tools have** (researched 2026-09-21): three
+requirements, per command. `approved`: approved by at least one person
+other than the author. `mergeable`: the pull request is able to be merged.
+`undiverged`: no changes on the base branch since the most recent plan.
+All are **opt-in**; none is default. A repository's own configuration
+cannot set them unless the server-side configuration permits it.
 
-**Delivers**: `TURNIP_APPLY_REQUIREMENTS`, comma-separated, defaulting to
-empty — which is today's behavior and Atlantis's default. `approved` and
+**Delivers**: `TURNIP_MUTATION_REQUIREMENTS`, comma-separated, defaulting to
+empty, which is today's behavior and the default elsewhere. `approved` and
 `mergeable` are in scope; `undiverged` is not, because it needs a base
 commit the Lock does not record.
 
@@ -2285,11 +2282,10 @@ an operator who adds it to the list has silently disabled the control for
 anyone who can edit that file, and nothing in the mechanism hints that
 this key is unlike its neighbors. `knownOverridePaths` stays at two.
 
-**Avoids Atlantis's deadlock by construction.** Do not use GitHub's
+**Avoids a known deadlock by construction.** Do not use GitHub's
 `mergeable_state` (`clean`/`blocked`/`behind`/`unstable`): it folds in
-required status checks, which is why Atlantis ships
-`--gh-allow-mergeable-bypass-apply` — "enable ability to use `mergeable`
-mode with required apply status check". If turnip's own `turnip` check
+required status checks, which is why the tools that use it ship a switch
+to bypass it. If turnip's own `turnip` check
 (Slice 37) is required by branch protection — and by design it cannot pass
 until every plan is applied — the pull request cannot be `clean` until an
 apply runs and the apply will not run until it is `clean`.

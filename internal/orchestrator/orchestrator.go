@@ -74,8 +74,16 @@ type Orchestrator struct {
 	// Config.CloneSubmodules; submodules.go turns it plus a Target's
 	// repository-scoped clone block into the mode the Job's clone uses.
 	cloneSubmodules string
-	startTimeout    time.Duration
-	sweepInterval   time.Duration
+	// mutationRequirements is the Requirement_Set from
+	// Config.MutationRequirements. Empty asks GitHub nothing and gates
+	// nothing (mutationrequirements.go).
+	mutationRequirements []string
+	// requirementSleep waits between mergeability reads; nil waits for
+	// real. It exists so a test does not spend the bounded wait.
+	requirementSleep func(ctx context.Context, d time.Duration) error
+
+	startTimeout  time.Duration
+	sweepInterval time.Duration
 }
 
 // New constructs an Orchestrator. runnerServerAddr is the address a
@@ -95,6 +103,7 @@ func New(
 	runnerServiceAccount string,
 	allowedOverrides map[string]bool,
 	cloneSubmodules string,
+	mutationRequirements []string,
 ) *Orchestrator {
 	return &Orchestrator{
 		installationClient:           func(id int64) github.GitHubClient { return appAuth.InstallationClient(id) },
@@ -111,6 +120,7 @@ func New(
 		runnerServiceAccount: runnerServiceAccount,
 		allowedOverrides:     allowedOverrides,
 		cloneSubmodules:      cloneSubmodules,
+		mutationRequirements: mutationRequirements,
 
 		startTimeout:  defaultStartTimeout,
 		sweepInterval: defaultSweepInterval,

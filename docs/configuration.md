@@ -39,7 +39,7 @@ projects:
 | `projects[].name` | no | defaults to `directory`; must be unique across the file once defaulted |
 | `projects[].directory` | **yes** | the tool's working directory, relative to the repo root |
 | `projects[].uses` | **yes** | what to run: `<tool>@<tag>`, or a fully qualified `<image>@<tag>` the operator allows; see below |
-| `projects[].whenModified` | no | a list of glob patterns (full `**` support, [doublestar](https://github.com/bmatcuk/doublestar) syntax), matched against the paths GitHub reports as changed; a PR whose changed files match none of a project's patterns never triggers it. Matching is textual and **does not follow symlinks**: git records a change under the file's real path, so a project reached through a symlinked directory must also list the link target (e.g. both `env/prod/**` and `shared/modules/**`) |
+| `projects[].whenModified` | no | a list of glob patterns (full `**` support, [doublestar](https://github.com/bmatcuk/doublestar) syntax), matched against the paths GitHub reports as changed; a PR whose changed files match none of a project's patterns never triggers it. **Omitted, the project is never planned automatically**, nor by a command that names no project; it runs only when a command names it (`/helmfile diff web`) or asks for every project (`*`). Matching is textual and **does not follow symlinks**: git records a change under the file's real path, so a project reached through a symlinked directory must also list the link target (e.g. both `env/prod/**` and `shared/modules/**`) |
 | `projects[].with` | no | how to call it: configuration the tool itself reads; see below |
 | `projects[].runner` | no | where it runs: settings for the Runner Pod; see below |
 
@@ -645,6 +645,7 @@ than one restart-and-discover-the-next-one at a time.
 | `TURNIP_CLONE_SUBMODULES` | no (default `top-level`) | how far the clone initializes submodules: `none`, `top-level`, or `recursive`. Applies to every repository this Server clones, unless one overrides it with `clone.submodules` *and* that path is permitted below. Defaults on, unlike `actions/checkout`: turnip clones specifically to run IaC that may reference submodule paths, so defaulting off would make every repository with a submodule fail confusingly before anything worked. An unrecognized value is a startup error |
 | `TURNIP_ALLOWED_OVERRIDES` | no (default: permits nothing) | comma-separated list of the fields a repository's own config file may set. The paths accepted today are `runner.serviceAccount` and `clone.submodules`. The default matches what turnip has always done: a repository cannot choose the identity its Runner assumes, since this file is read from the PR's own head commit. An unrecognized path is a startup error rather than a silently ineffective setting. Note that `uses` is *not* an override: turnip has no Server-side tool to fall back to, so what a project runs is always the repository's to say, within the images `TURNIP_ALLOWED_IMAGES` allows. Each path is an opt-in whose cost [`SECURITY.md`](../SECURITY.md) states |
 | `TURNIP_ALLOWED_IMAGES` | no (default: only the built-in aliases) | comma-separated `tool:image@glob` entries, each allowing a fully qualified image, for one tool, with the tag-specs its glob matches; see "Running your own image". For example `helmfile:ghcr.io/org/helmfile-aws@*` (any tag or digest), `helmfile:ghcr.io/org/helmfile-aws@latest` (exactly `latest`), or `helmfile:ghcr.io/helmfile/helmfile@latest` (the vendor's own `latest`, written in full in `uses:`). A glob is not a version range: `@1.*.*` cannot match `1.16` or `latest`. An entry naming a tool with no Plugin, an unqualified image, or an image with a tag of its own, and an image listed for two tools, are startup errors naming every offending entry. Each allowed image is code the operator vouches for, running with the Runner's credentials; see [`SECURITY.md`](../SECURITY.md) |
+| `TURNIP_MUTATION_REQUIREMENTS` | no (default: requires nothing) | comma-separated conditions a pull request must meet before turnip runs a mutating command (any operation that is not the tool's plan, such as helmfile's `apply` or `sync`): `approved`, `mergeable`, or both. Whitespace is trimmed and a repeated name counts once. Operator-side only: a repository cannot set or relax it. An unrecognized name is a startup error that lists the recognized ones. See "Mutation requirements" below |
 
 In `deploy/base`, the two credential-shaped values
 (`TURNIP_GITHUB_WEBHOOK_SECRET`, `TURNIP_GITHUB_PRIVATE_KEY`) come from a
@@ -660,6 +661,92 @@ configure directly.
 
 **No GitHub credential is among them.** See
 [`docs/deployment.md`](deployment.md#how-a-runner-gets-its-github-credential).
+
+### Mutation requirements
+
+A **mutating command** is any operation a tool offers other than its
+plan: helmfile's `apply` and `sync`, but not its `diff` (see "Plan
+commands and mutating commands" in `docs/usage.md`).
+
+By default, turnip admits a mutating command on two facts: the commenter has write
+access to the repository, and the project holds a plan from this pull
+request. It asks nothing about the pull request itself. Nobody need have
+approved the change, so one collaborator can plan and apply their own pull
+request with no second pair of eyes.
+
+`TURNIP_MUTATION_REQUIREMENTS` closes that gap. It names conditions the
+pull request must meet before turnip runs any mutating command,
+helmfile's `sync` as much as its `apply`. Both are **off by default**; an operator enables one by naming it:
+
+| Name | Met when |
+|---|---|
+| `approved` | an account other than the pull request's author, with write access to the repository, has an approving review that GitHub still reports as approving |
+| `mergeable` | GitHub reports the pull request has no merge conflict with its base branch |
+
+To require both, which is what most repositories that review changes
+want:
+
+```sh
+TURNIP_MUTATION_REQUIREMENTS=approved,mergeable
+```
+
+A misspelled name stops the Server from starting, and the error lists
+the recognized names. Accepting it would gate nothing while looking like
+it gated something.
+
+**What is never gated.** A plan runs whatever the requirements say: it is
+how a reviewer sees what the change would do, and nobody can approve what
+they cannot see. `/turnip unlock` is not gated either, since releasing a
+lock is how someone recovers from a pull request that cannot meet them.
+
+**A repository cannot set or relax them.** They are read only from the
+Server's environment, never from `turnip.yaml`, and they are not a path
+`TURNIP_ALLOWED_OVERRIDES` accepts. The reason is that the pull request
+supplies `turnip.yaml`: a requirement exists to constrain the pull
+request, so letting the pull request choose it would let the change being
+reviewed switch off its own review. One setting applies to every
+repository this Server serves.
+
+**`mergeable` is about merge conflicts, not status checks.** turnip reads
+GitHub's conflict-only answer, not the merge state that folds in required
+status checks and reviews. It does not enforce branch protection: a pull
+request whose required checks are failing, or whose required reviews are
+missing, still satisfies `mergeable` if it merges cleanly. This is
+deliberate. The `turnip` check you mark required cannot pass until every
+plan is applied, so a requirement that waited for required checks would
+wait for the apply it is gating. Use `approved` for review; branch
+protection still decides the merge. GitHub computes mergeability in the
+background after a push, so when it has no answer yet turnip reads the
+pull request again, up to 3 times a second apart, before replying that
+the answer is not available yet.
+
+**`approved` follows GitHub's review state.** Each reviewer's standing is
+their latest approving, changes-requested or dismissed review; a plain
+comment review leaves it as it was. So an approval followed by a request
+for changes from the same reviewer does not count, and neither does a
+dismissed one. The approval must come from an account **other than the
+author** (an author approving their own change is not a second pair of
+eyes) and one **with write access** to the repository. GitHub accepts an
+approving review from anyone who can read the repository, which on a
+public repository is anyone, so without that line a stranger, or the
+author's second account, would satisfy the requirement.
+
+**An approval given before a later push still counts**, unless branch
+protection dismisses it. turnip does not look at which commit a review
+was given on. Whether a new push voids an approval is the repository's
+own policy, set by branch protection's **"Dismiss stale pull request
+approvals when new commits are pushed"**. With it on, GitHub dismisses the
+old approval on every push and turnip no longer counts it; with it off,
+the approval stands, as it would for GitHub's own merge button. Enabling
+that setting is how a repository requires approval of the commit being
+applied. turnip then applies exactly when the repository's review rules
+would let the change merge, no earlier and no stricter.
+
+When a requirement is not met, turnip replies once per command, naming
+every unmet requirement, and runs nothing: no lock changes, no Runner Job
+starts, and no check run is created or updated. What each line of that
+reply means, and what to do about it, is in `docs/troubleshooting.md`
+under "Mutation requirements not met".
 
 ## Setting up the GitHub App
 
