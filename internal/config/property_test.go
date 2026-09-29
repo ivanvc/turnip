@@ -48,19 +48,7 @@ func genProject(t *rapid.T) Project {
 			1, 3,
 		).Draw(t, "with"),
 
-		// Env names carry a fixed prefix so a draw can never land on a
-		// reserved name ("PATH", or anything under TURNIP_) and fail
-		// validation for a reason this property isn't about. Drawn
-		// non-empty because Env is omitempty: an empty map marshals to
-		// nothing and parses back as nil, which would be a flaw in the
-		// fixture rather than in the round-trip under test.
-		Runner: RunnerSpec{
-			Env: rapid.MapOfN(
-				rapid.StringMatching("E"+identifierPattern),
-				rapid.StringMatching(identifierPattern),
-				1, 3,
-			).Draw(t, "env"),
-		},
+		Runner: genRunner(t, "project runner"),
 
 		// Tool, Image and ToolVersion are resolved by Parse, so a
 		// generated fixture must carry what Parse would have produced for
@@ -70,6 +58,38 @@ func genProject(t *rapid.T) Project {
 		Image:       image,
 		ToolVersion: version,
 	}
+}
+
+// sharedEnvNames are env names a top-level and a Project block may both
+// draw, so that the round-trip sees a Project overriding an inherited
+// variable and not only disjoint maps.
+var sharedEnvNames = []string{"EA", "EB", "EC"}
+
+// genRunner draws one runner: block, at either level. Each field is drawn
+// absent or set, since the merge's behavior differs between the two.
+//
+// Env names carry a fixed prefix so a draw can never land on a reserved
+// name ("PATH", or anything under TURNIP_) and fail validation for a
+// reason this property isn't about. A drawn Env is nil or non-empty,
+// never empty: Env is omitempty, so an empty map marshals to nothing and
+// parses back as nil, which would be a flaw in the fixture rather than in
+// the round-trip under test.
+func genRunner(t *rapid.T, label string) RunnerSpec {
+	var r RunnerSpec
+	if rapid.Bool().Draw(t, label+" sets serviceAccount") {
+		r.ServiceAccount = genIdentifier(t, label+" serviceAccount")
+	}
+	if rapid.Bool().Draw(t, label+" sets env") {
+		r.Env = rapid.MapOfN(
+			rapid.OneOf(
+				rapid.SampledFrom(sharedEnvNames),
+				rapid.StringMatching("E"+identifierPattern),
+			),
+			rapid.StringMatching(identifierPattern),
+			1, 3,
+		).Draw(t, label+" env")
+	}
+	return r
 }
 
 // genProjects draws 1-4 Projects with disambiguated names, so generated
@@ -91,7 +111,11 @@ func TestProperty_ConfigurationRoundTrip(t *testing.T) {
 		// No version is drawn: exactly one schema version is legal, so
 		// there is nothing to vary. What this property exercises is the
 		// projects round-tripping through YAML.
-		original := &Config{SchemaVersion: SupportedSchemaVersion, Projects: genProjects(t)}
+		original := &Config{
+			SchemaVersion: SupportedSchemaVersion,
+			Projects:      genProjects(t),
+			Runner:        genRunner(t, "top-level runner"),
+		}
 
 		data, err := yaml.Marshal(original)
 		require.NoError(t, err)
@@ -99,7 +123,18 @@ func TestProperty_ConfigurationRoundTrip(t *testing.T) {
 		got, err := Parse(data, testCatalog)
 		require.NoError(t, err)
 
-		require.Equal(t, original, got)
+		// Parse hands back each Project's Effective_Runner, so the
+		// expectation is the merge of what was generated rather than the
+		// Project as generated. The top-level block stays as written.
+		want := *original
+		want.Projects = slices.Clone(original.Projects)
+		for i := range want.Projects {
+			p := &want.Projects[i]
+			p.ServiceAccountSource = serviceAccountSource(original.Runner, p.Runner)
+			p.Runner = mergeRunner(original.Runner, p.Runner)
+		}
+
+		require.Equal(t, &want, got)
 	})
 }
 

@@ -20,6 +20,9 @@ fixed workspace path described under "Where the Runner puts things".
 
 ```yaml
 schemaVersion: v1alpha3
+runner:                  # optional; settings every project starts from
+  env:
+    AWS_REGION: us-west-2
 projects:
   - name: web            # optional; defaults to `directory` if omitted
     directory: infra/web
@@ -30,18 +33,19 @@ projects:
       environment: staging
     runner:
       env:
-        AWS_PROFILE: web-deployer
+        AWS_PROFILE: web-deployer   # added to AWS_REGION, not replacing it
 ```
 
 | Field | Required | Notes |
 |---|---|---|
 | `schemaVersion` (top-level) | **yes** | the version of this file's schema; must be `v1alpha3`; see below |
+| `runner` (top-level) | no | Runner settings every project starts from, with the same fields as `projects[].runner`; a project's own block is merged over it; see below |
 | `projects[].name` | no | defaults to `directory`; must be unique across the file once defaulted |
 | `projects[].directory` | **yes** | the tool's working directory, relative to the repo root |
 | `projects[].uses` | **yes** | what to run: `<tool>@<tag>`, or a fully qualified `<image>@<tag>` the operator allows; see below |
 | `projects[].whenModified` | no | a list of glob patterns (full `**` support, [doublestar](https://github.com/bmatcuk/doublestar) syntax), matched against the paths GitHub reports as changed; a PR whose changed files match none of a project's patterns never triggers it. **Omitted, the project is never planned automatically**, nor by a command that names no project; it runs only when a command names it (`/helmfile diff web`) or asks for every project (`*`). Matching is textual and **does not follow symlinks**: git records a change under the file's real path, so a project reached through a symlinked directory must also list the link target (e.g. both `env/prod/**` and `shared/modules/**`) |
 | `projects[].with` | no | how to call it: configuration the tool itself reads; see below |
-| `projects[].runner` | no | where it runs: settings for the Runner Pod; see below |
+| `projects[].runner` | no | where it runs: settings for the Runner Pod, merged over the top-level `runner`; see below |
 
 Every violation across the whole file is reported together (a typo in
 project 3 doesn't hide a missing `directory` in project 1), so you'll see
@@ -316,8 +320,100 @@ Settings that shape the Runner Pod rather than the tool inside it:
   present in the environment the tool runs in, which makes this the place
   for anything the tool's own ecosystem reads.
 
-Two kinds of `env` name are rejected, with every offending name in the
-file reported together rather than one per attempt:
+#### Shared settings: the top-level `runner:` block
+
+A `runner:` block at the top level, beside `clone:` and `projects:`,
+holds settings every Project starts from, so each Project states only
+what differs. It accepts exactly the fields a Project's `runner:` does,
+with the same meaning, and every Runner setting turnip adds later will
+be accepted at both levels.
+
+```yaml
+schemaVersion: v1alpha3
+
+runner:
+  serviceAccount: turnip-deployer
+  env:
+    AWS_REGION: us-west-2
+
+projects:
+  - directory: infra/web
+    uses: helmfile@v1.7.4
+  - directory: infra/api
+    uses: helmfile@v1.7.4
+    runner:
+      serviceAccount: api-deployer   # replaces turnip-deployer
+      env:
+        AWS_PROFILE: api             # added beside AWS_REGION
+```
+
+Each field has its own rule for combining the two levels:
+
+| Field | Rule | What the Project runs with |
+|---|---|---|
+| `serviceAccount` | replaced | the Project's own if it sets one, else the top level's, else the Server's `TURNIP_RUNNER_SERVICE_ACCOUNT` |
+| `env` | merged per variable | every top-level variable, plus every Project variable; where both set the same variable, the Project's value wins |
+
+A Project that writes its own `env:` keeps every top-level variable it
+does not name. That is the difference from sharing the block with a YAML
+anchor, where a Project writing `env:` without `<<: *env` silently
+replaces the whole map.
+
+**A Project cannot remove a shared variable, only override it.** Setting
+it to an empty value (`X: ""`, or `X:` with nothing after it) overrides
+it with the empty string, which is what the tool then sees; the variable
+is still set. There is no syntax to unset one, deliberately.
+
+**The top level is for what every Project uses.** A setting only some
+Projects share does not belong there, since the others could not drop it.
+Share it among those Projects with a YAML anchor instead, which the
+parser expands before it checks the file:
+
+```yaml
+projects:
+  - directory: infra/web
+    uses: helmfile@v1.7.4
+    runner: &eu
+      env:
+        AWS_REGION: eu-west-1
+  - directory: infra/api
+    uses: helmfile@v1.7.4
+    runner: *eu
+```
+
+**A relative path in a shared `env` value resolves in each Project's own
+directory.** The tool runs in its Project's `directory`, so
+`KUBECONFIG: kubeconfig` at the top level names `infra/web/kubeconfig`
+for one Project and `infra/api/kubeconfig` for the next. A path meant to
+name one file for every Project has to be absolute; the fixed workspace
+path `/turnip/src` (see "Where the Runner puts things") is the
+repository root in every Runner, so `/turnip/src/.turnip/kubeconfig`
+means the same file wherever it is inherited.
+
+**The `runner.serviceAccount` gate applies at either level.** The whole
+file comes from the pull request, so a top-level `serviceAccount` is as
+much the pull request's choice as a Project's, and moving the line to the
+top of the file does not get past the gate. Without the override
+permitted, a top-level `serviceAccount` refuses every Project that
+inherits it. The check's Title is `runner.serviceAccount is not
+permitted` either way; its summary and the PR comment say where the value
+came from, so the author knows which block to edit:
+
+```
+Project "web" inherits runner.serviceAccount "turnip-deployer" from the top-level runner: block, which this turnip deployment does not permit. ...
+```
+
+where a Project's own value reads `Project "web" requested
+runner.serviceAccount "turnip-deployer", ...`. `env` is ungated at both
+levels.
+
+#### Reserved `env` names
+
+Two kinds of `env` name are rejected, at either level, with every
+offending name in the file reported together rather than one per attempt.
+A name in the top-level block is reported once, against the file
+(`turnip.yaml: runner.env["PATH"]`), not once per Project that inherits
+it:
 
 - **anything beginning with `TURNIP_`**: the Runner reads its own
   configuration out of that namespace, so a Project setting one would be
@@ -356,8 +452,8 @@ Inside the cluster turnip runs in there is nothing to configure: the
 Runner Pod carries a projected ServiceAccount token, and helm's client
 finds it the way any in-cluster client does. No kubeconfig, no cloud
 credentials, no `aws eks update-kubeconfig`. *Which* ServiceAccount comes
-from `TURNIP_RUNNER_SERVICE_ACCOUNT`, or from a Project's
-`runner.serviceAccount` where the operator permits that override.
+from `TURNIP_RUNNER_SERVICE_ACCOUNT`, or from `runner.serviceAccount`
+(top-level or a Project's) where the operator permits that override.
 
 Targeting any **other** cluster needs a kubeconfig. turnip does not
 generate one, and doesn't need to; see the next section.
@@ -377,15 +473,16 @@ Pod Identity agent injects `AWS_CONTAINER_CREDENTIALS_FULL_URI` and
 `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, and the AWS CLI's default
 credential chain uses them. The target cluster grants that role access
 through an access entry. Select the ServiceAccount with
-`TURNIP_RUNNER_SERVICE_ACCOUNT`, or with `runner.serviceAccount` where the
-override is permitted.
+`TURNIP_RUNNER_SERVICE_ACCOUNT`, or with `runner.serviceAccount` (once at
+the top level, or per Project) where the override is permitted.
 
-**Generating the kubeconfig**, once, on your own machine, with any
-credentials allowed to call `eks:DescribeCluster`:
+**Generating the kubeconfig**, once, on your own machine, from the
+repository root, with any credentials allowed to call
+`eks:DescribeCluster`:
 
 ```sh
 aws eks update-kubeconfig --name <cluster> --region <region> \
-  --kubeconfig ./kubeconfig --alias <cluster>
+  --kubeconfig .turnip/kubeconfig --alias <cluster>
 ```
 
 Repeat for each cluster; each run adds a context to the same file.
@@ -411,18 +508,38 @@ Remove that `env` block: the Runner Pod has no profiles, and `get-token`
 would fail looking for one. The rest of the file (endpoints, CA
 certificates, the `exec` stanza) contains no secrets.
 
-**Pointing a Project at it**, with `runner.env`, and choosing the context
-in helmfile (`kubeContext`, under `helmDefaults` or per release):
+Commit it as `.turnip/kubeconfig`, beside turnip's own `config.yaml`.
+
+**Pointing every Project at it**, once, in the top-level `runner.env`,
+and choosing the context in helmfile (`kubeContext`, under
+`helmDefaults` or per release):
 
 ```yaml
-    runner:
-      env:
-        KUBECONFIG: kubeconfig   # relative to the Project's directory
+schemaVersion: v1alpha3
+
+runner:
+  env:
+    KUBECONFIG: /turnip/src/.turnip/kubeconfig
+
+projects:
+  - directory: infra/web
+    uses: ghcr.io/org/helmfile-aws@v1.7.4
+  - directory: infra/api
+    uses: ghcr.io/org/helmfile-aws@v1.7.4
 ```
 
-The tool runs in the Project's directory, so a relative path resolves
-there. Confirm it with the first plan: helm, which helmfile runs per
-release, has to resolve it the same way.
+The path has to be absolute. Every Project inherits this value, and the
+tool runs in each Project's own directory, so a relative `KUBECONFIG`
+would name a different file, most likely a missing one, in each.
+`/turnip/src` is the repository root in every Runner (see "Where the
+Runner puts things"), so this path names the committed file from any
+Project, and helm, which helmfile runs per release, reads the same one.
+
+Setting it once also closes a quiet failure. A Project that is missing
+`KUBECONFIG` does not fail: with no kubeconfig, helm and helmfile fall
+back to in-cluster configuration, and plan and apply against **the
+cluster turnip itself runs in**. Set at the top level, a Project cannot
+lose it by omission, and one that writes its own `env:` keeps it.
 
 **When a role *is* assumed.** Only if a cluster must be reached as a role
 other than the Pod's, typically a cluster in another AWS account whose

@@ -57,3 +57,74 @@ func TestResolveServiceAccount_RequestHonoredWhenAllowed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "turnip-runner-project", got)
 }
+
+// The refusal names the block the value came from, so the author edits the
+// block that set it rather than searching the Project for a setting that
+// is somewhere else. The fix is the same either way.
+func TestServiceAccountNotPermitted_MessageNamesSource(t *testing.T) {
+	const fix = ", which this turnip deployment does not permit. " +
+		"Add \"runner.serviceAccount\" to TURNIP_ALLOWED_OVERRIDES on the Server to let turnip.yaml choose its own ServiceAccount."
+
+	cases := map[string]struct {
+		source config.ServiceAccountSource
+		want   string
+	}{
+		"project": {
+			source: config.ServiceAccountSourceProject,
+			want:   `Project "web" requested runner.serviceAccount "deployer"` + fix,
+		},
+		"top level": {
+			source: config.ServiceAccountSourceTopLevel,
+			want:   `Project "web" inherits runner.serviceAccount "deployer" from the top-level runner: block` + fix,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := projectWithServiceAccount("deployer")
+			p.ServiceAccountSource = tc.source
+
+			_, err := resolveServiceAccount(p, "turnip-runner", allowServiceAccount(false))
+			require.Error(t, err)
+
+			var notPermitted *ServiceAccountNotPermittedError
+			require.ErrorAs(t, err, &notPermitted)
+			assert.Equal(t, tc.source, notPermitted.Source, "the error carries the source the Project recorded")
+			assert.Equal(t, tc.want, err.Error())
+		})
+	}
+}
+
+// Wherever the value came from, the refusal is a Configuration_Refusal for
+// runner.serviceAccount, so the Project_Check Title does not change with
+// the source; only the message (the summary and the comment) does.
+func TestServiceAccountNotPermitted_ConfigurationRefusalForEitherSource(t *testing.T) {
+	for _, source := range []config.ServiceAccountSource{
+		config.ServiceAccountSourceProject,
+		config.ServiceAccountSourceTopLevel,
+	} {
+		t.Run(string(source), func(t *testing.T) {
+			p := projectWithServiceAccount("deployer")
+			p.ServiceAccountSource = source
+
+			_, err := resolveServiceAccount(p, "turnip-runner", allowServiceAccount(false))
+			require.Error(t, err)
+
+			r := overrideRefusal(err)
+			assert.Equal(t, refusalConfiguration, r.kind)
+			assert.Equal(t, overrideServiceAccount, r.setting)
+			assert.Equal(t, "runner.serviceAccount is not permitted", notPermittedTitle(r.setting))
+			assert.Equal(t, err.Error(), r.reason)
+		})
+	}
+}
+
+// A value inherited from the top level is honored exactly like the
+// Project's own once the override is permitted.
+func TestResolveServiceAccount_InheritedHonoredWhenAllowed(t *testing.T) {
+	p := projectWithServiceAccount("deployer")
+	p.ServiceAccountSource = config.ServiceAccountSourceTopLevel
+
+	got, err := resolveServiceAccount(p, "turnip-runner", allowServiceAccount(true))
+	require.NoError(t, err)
+	assert.Equal(t, "deployer", got)
+}

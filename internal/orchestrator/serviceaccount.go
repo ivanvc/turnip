@@ -6,24 +6,39 @@ import (
 	"github.com/ivanvc/turnip/internal/config"
 )
 
-// ServiceAccountNotPermittedError reports a Project that requested a
-// ServiceAccount while the Server has that override disabled.
+// ServiceAccountNotPermittedError reports a Project whose Effective_Runner
+// takes a ServiceAccount from turnip.yaml while the Server has that
+// override disabled. Source says which block set it, so the message can
+// send the author to the block they have to edit, which need not be the
+// Project's own.
 type ServiceAccountNotPermittedError struct {
 	Project        string
 	ServiceAccount string
+	Source         config.ServiceAccountSource
 }
 
 func (e *ServiceAccountNotPermittedError) Error() string {
+	var what string
+	if e.Source == config.ServiceAccountSourceTopLevel {
+		what = fmt.Sprintf("Project %q inherits runner.serviceAccount %q from the top-level runner: block",
+			e.Project, e.ServiceAccount)
+	} else {
+		what = fmt.Sprintf("Project %q requested runner.serviceAccount %q", e.Project, e.ServiceAccount)
+	}
 	return fmt.Sprintf(
-		"Project %q requested runner.serviceAccount %q, which this turnip deployment does not permit. "+
+		"%s, which this turnip deployment does not permit. "+
 			"Add %q to TURNIP_ALLOWED_OVERRIDES on the Server to let turnip.yaml choose its own ServiceAccount.",
-		e.Project, e.ServiceAccount, overrideServiceAccount,
+		what, overrideServiceAccount,
 	)
 }
 
 // resolveServiceAccount decides which ServiceAccount a Project's Runner
-// Job Pod runs as: the Project's own `runner.serviceAccount` when the
-// Server permits that override, otherwise the Server-wide default.
+// Job Pod runs as: the `runner.serviceAccount` of the Project's
+// Effective_Runner (its own, or inherited from the top-level block) when
+// the Server permits that override, otherwise the Server-wide default. The
+// Project's Runner is already the Effective_Runner (config.Parse merges
+// the top-level block in), so a value inherited from the top level is
+// gated exactly like one the Project sets itself.
 //
 // The override is gated because turnip.yaml is read from the *pull
 // request's own head commit* (configfetch.go), and a plan needs only
@@ -42,7 +57,11 @@ func resolveServiceAccount(project config.Project, defaultServiceAccount string,
 		return defaultServiceAccount, nil
 	}
 	if !allowed[overrideServiceAccount] {
-		return "", &ServiceAccountNotPermittedError{Project: project.Name, ServiceAccount: requested}
+		return "", &ServiceAccountNotPermittedError{
+			Project:        project.Name,
+			ServiceAccount: requested,
+			Source:         project.ServiceAccountSource,
+		}
 	}
 	return requested, nil
 }

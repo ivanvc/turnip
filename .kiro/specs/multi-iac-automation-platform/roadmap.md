@@ -47,13 +47,14 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 36 | A Blocked Operation Blocks the Merge, Visibly | `check-run-refusals` | Complete | Slices 6, 32, 35, 37 |
 | 37 | One Check Branch Protection Can Require | `aggregate-check-run` | Complete | Slices 6, 17 |
 | 38 | Encrypting the Runner-to-Server Channel | `runner-server-tls` | Not Started | Slice 25 |
-| 39 | Runner Pod Resources | `runner-resources` | Not Started | Slices 5, 13 |
+| 39 | Runner Pod Resources | `runner-resources` | Not Started | Slices 5, 13, 43 |
 | 40 | Bounding How Long a Runner Runs | `runner-timeouts` | Not Started | Slices 5, 6 |
 | 41 | Runner Pods Run Without Disruption | `runner-disruption` | Not Started | Slices 5, 39, 40 |
-| 42 | The Workspace on a Per-Runner Volume | `runner-workspace-volume` | Not Started | Slices 12, 39 |
-| 43 | Runner Settings Shared Across Projects | `runner-defaults` | Not Started | Slices 13, 16 |
+| 42 | The Workspace on a Per-Runner Volume | `runner-workspace-volume` | Not Started | Slices 12, 39, 43 |
+| 43 | Runner Settings Shared Across Projects | `runner-defaults` | Complete | Slices 13, 16 |
 | 44 | Running a Tool Image the Operator Approves | `tool-images` | Complete | Slices 14, 20, 45 |
 | 45 | One Place to Add a Tool | `plugin-registry` | Complete | Slices 2, 14 |
+| 46 | Kustomize Plugin | `plugin-kustomize` | Not Started | Slices 2, 14, 44, 45 |
 
 ## Slice Details
 
@@ -2099,11 +2100,12 @@ characters on the simpler field.
 - **Affinity** — Backlog, by scope decision. Node, pod and anti-pod
   affinity with required and preferred forms is a large permanent surface,
   and a selector plus tolerations covers the motivating case.
-- **Per-Project overrides.** Decision 2 records the gating rule this would
-  need; applying it is a later slice, and interacts with the Backlog's
-  top-level `runner:` block, where list-valued fields raise a merge
-  question (append or replace) that neither `serviceAccount` nor `env`
-  answers.
+- **A `turnip.yaml` form.** Decision 2 records the gating rule it would
+  need. When it comes, it is `runner.nodeSelector` and
+  `runner.tolerations`, at the top level and on a Project alike (Slice
+  43's rule), each with its merge rule stated in Slice 43's table: a
+  list like `tolerations` must choose between replacing and appending,
+  which neither `serviceAccount` nor `env` answers.
 - **Pod labels and annotations** — the Azure Workload Identity entry.
 
 ---
@@ -2659,7 +2661,7 @@ writable layers and their logs together.
 | Layer | Form | Role |
 |---|---|---|
 | Server environment | one quantity per resource, e.g. `TURNIP_RUNNER_CPU`, `TURNIP_RUNNER_MEMORY`, `TURNIP_RUNNER_EPHEMERAL_STORAGE` | the operator's default for every Runner |
-| `turnip.yaml` | `runner.resources: {cpu: …, memory: …, ephemeralStorage: …}` on a Project | a Project that needs more (a large state refresh, many providers) or less |
+| `turnip.yaml` | `runner.resources: {cpu: …, memory: …, ephemeralStorage: …}`, at the top level or on a Project (Slice 43) | a repository, or one Project, that needs more (a large state refresh, many providers) or less |
 
 One value per resource, not a request and a limit: the premise is that
 they are equal, and two fields invite setting them apart.
@@ -2700,8 +2702,10 @@ defaults.
 **Relation to other entries**: Slice 41 relies on this slice for
 node-pressure eviction. Slice 42 moves the workspace off the node's disk
 when an operator opts in, after which the ephemeral-storage value only
-has to cover the containers' own use. The Backlog's top-level `runner:` block would
-need to say whether `resources` merges per field or replaces as a whole.
+has to cover the containers' own use. Slice 43 settles where the field
+lives; this slice states its row in Slice 43's merge table (per
+resource, so a Project raising memory keeps the shared CPU, or replaced
+as a whole).
 
 ### Slice 40: Bounding How Long a Runner Runs (`runner-timeouts`)
 
@@ -2792,10 +2796,11 @@ now reaches the case it could not before.
   without a deadline Slice 41's PDB can block drains indefinitely.
   Recommendation: generous defaults (the deadline in hours), documented
   as safety bounds rather than sizing choices. For the owner to decide.
-- **Per-Project override.** A Project whose Helm releases legitimately
-  wait longer than the Server's value needs more. Ungated by Slice 31's
-  rule (it grants nothing), but it lets a pull request lengthen how long
-  it can hold a node.
+- **A `turnip.yaml` override.** A Project whose Helm releases
+  legitimately wait longer than the Server's value needs more. If
+  offered, it is a `runner:` field at both levels (Slice 43's rule).
+  Ungated by Slice 31's rule (it grants nothing), but it lets a pull
+  request lengthen how long it can hold a node.
 - **Warn before stopping?** A line in the output at, say, half the limit
   ("no output for N minutes") would make a slow-but-alive run legible in
   the live view (Slice 26) before it is stopped.
@@ -2930,7 +2935,7 @@ to clean up and nothing that grows across runs.
 |---|---|---|
 | Server environment | `TURNIP_RUNNER_WORKSPACE_STORAGE_CLASS` | set: the workspace is an ephemeral volume of that class; unset: `emptyDir`, as today |
 | Server environment | `TURNIP_RUNNER_WORKSPACE_SIZE` | the claim's size, required when a storage class is set — a Server that has one without the other refuses to start |
-| `turnip.yaml` | a repository-level workspace size | a repository whose clone and providers need more (or less) than the Server's value |
+| `turnip.yaml` | a `runner:` workspace size, at the top level or on a Project (Slice 43) | a repository, or one Project, whose clone and providers need more (or less) than the Server's value |
 
 No default size in code or kustomize, for Slice 39's reason: the right
 number depends on the repository.
@@ -2974,10 +2979,9 @@ is rejected, not deferred:
 
 **Open questions for the slice's requirements:**
 
-- **Repository or Project?** The workspace holds the whole clone, which
-  argues for a repository-level size; a Project with unusually many
-  providers argues for per-Project. Interacts with the Backlog's
-  top-level `runner:` block.
+- **Repository or Project?** Settled by Slice 43's rule: both, as a
+  `runner:` field. The whole clone argues for setting it at the top
+  level; a Project with unusually many providers overrides it.
 - **Gated?** The same question as Slice 39's resources: a size grants
   cost, not access.
 - **Does the start timeout need to know?** If provisioning routinely takes
@@ -3011,6 +3015,16 @@ levels; the `runner.serviceAccount` gate applied wherever the value is
 written, with the refusal naming which block set it; and a test that
 fails if a Runner field is added without a stated merge rule, since
 Slices 31 and 39 both add one.
+
+**The rule for every later Runner setting** (decided 2026-09-26): any
+Runner setting `turnip.yaml` accepts is a field of `runner:`, available
+at the top level and on a Project alike, merged by the rules table this
+slice adds. A later slice (31's placement, 39's resources, 40's
+timeouts, 42's workspace size) adds the field, states its merge rule and
+its gate, and inherits the rest; it does not invent a Project-only or
+repository-only form. The top level is for what every Project uses:
+there is no way to remove an inherited value, and Projects that share a
+setting only among themselves use a YAML anchor.
 
 Promoted from the Backlog entry "A top-level `runner:` block, merged into
 each Project's", which carries the original analysis.
@@ -3068,6 +3082,65 @@ is used verbatim as the image tag, with no `v` handling, so helmfile is
 
 **Precedes Slice 44**, which then only changes what a Plugin declares
 about its image.
+
+---
+
+### Slice 46: Kustomize Plugin (`plugin-kustomize`)
+
+**Goal**: Run Kustomize overlays the way Helmfile releases already run:
+planned on the pull request, applied by comment.
+
+**Why now** (2026-09-26): it sits next to Helmfile rather than beside
+Terraform. It targets a Kubernetes cluster, the Runner already reaches
+one with its ServiceAccount or a kubeconfig, and a repository that
+deploys with Helmfile often keeps plain manifests beside it. Slice 45
+made adding a tool one Plugin plus its registration, so this is the
+first slice to test that claim with a tool that is not Helmfile.
+
+**The tool is really kubectl.** Kustomize alone only renders manifests
+(`kustomize build`); applying them is kubectl's job, which embeds
+Kustomize (`kubectl apply -k`). The likely shape:
+
+| turnip | Command | Notes |
+|---|---|---|
+| plan | `kubectl diff -k <directory>` | a server-side diff against the live cluster, which is what a reviewer wants; exits 1 when there are differences, which the Plugin must read as success with changes, not failure |
+| apply | `kubectl apply -k <directory>` | re-renders the same commit the plan rendered |
+
+`kubectl apply --dry-run=server -k` (tried by hand first) lists what
+would be applied, object by object, but not what would change in each;
+`kubectl diff` shows both, so it is the better plan.
+
+**Questions for the requirements**:
+
+- **Name and operations.** The Tool_Name and trigger word (`kustomize`
+  or `kubectl`) and the native operation names (`diff`/`apply`, as
+  kubectl calls them).
+- **Image.** Which vendor image the Alias names (`registry.k8s.io/kubectl`
+  or the standalone `registry.k8s.io/kustomize/kustomize`, to verify),
+  and its tag globs. kubectl embeds its own Kustomize version, which can
+  lag the standalone release.
+- **Provisioning.** kubectl is one static binary, so copy-out may fit,
+  unlike Helmfile.
+- **`helmCharts:` overlays.** Standalone Kustomize can render a Helm
+  chart from `kustomization.yaml` (`kustomize build --enable-helm`, which
+  runs `helm`). `kubectl apply -k` offers no such flag (whether
+  `kubectl kustomize` does is to verify), so an overlay using
+  `helmCharts:` does not render through kubectl at all. Supporting it
+  means standalone `kustomize build` piped to kubectl; otherwise it is
+  out of scope and documented as such.
+- **Deletions.** `kubectl apply` does not delete an object removed from
+  the overlay unless pruning is used, and kubectl's pruning is still
+  evolving (`--prune` with an allowlist, or ApplySets). Either the first
+  version documents that removals are not applied, or it picks one
+  pruning mode; this decides whether a plan can honestly report
+  "destroy".
+- **Change summary.** How `kubectl diff` output maps to add, change and
+  destroy for the comment and check titles.
+- **Server-side apply** (`--server-side`) or client-side, and field
+  manager naming.
+
+**Out of scope**: `kubectl` operations beyond diff and apply, and any
+Kubernetes access model beyond the Runner's existing one.
 
 ---
 

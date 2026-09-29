@@ -23,6 +23,13 @@ type Config struct {
 	// Projects rather than inside one. Two Projects disagreeing about how
 	// the single shared clone was made would have no coherent resolution.
 	Clone CloneSpec `yaml:"clone,omitempty"`
+
+	// Runner is the Repository_Runner: settings every Project's Runner
+	// starts from. Parse merges it into each Project's own Runner (see
+	// runner.go), so nothing downstream reads it; it is kept here as
+	// written. It is the same RunnerSpec a Project carries, so the two
+	// levels accept the same fields with the same meaning by construction.
+	Runner RunnerSpec `yaml:"runner,omitempty"`
 }
 
 // CloneSpec is the subset of a repository's configuration that shapes the
@@ -61,8 +68,15 @@ type Project struct {
 	With map[string]string `yaml:"with,omitempty"`
 
 	// Runner carries settings that shape the Runner Pod rather than the
-	// tool it runs.
+	// tool it runs. Parse replaces what the file wrote here with the
+	// Effective_Runner, this Project's own block merged over the top-level
+	// one, so every reader sees the settings the Runner actually runs with.
 	Runner RunnerSpec `yaml:"runner,omitempty"`
+
+	// ServiceAccountSource records which block of turnip.yaml set
+	// Runner.ServiceAccount, for a refusal to name it. Set by Parse's
+	// merge and bound to no YAML key.
+	ServiceAccountSource ServiceAccountSource `yaml:"-"`
 
 	WhenModified []string `yaml:"whenModified"`
 
@@ -78,11 +92,15 @@ type Project struct {
 }
 
 // RunnerSpec is the subset of a Project that configures the Kubernetes
-// Pod rather than the IaC tool running inside it.
+// Pod rather than the IaC tool running inside it. It appears at two
+// levels, the top-level `runner:` and each Project's, and every field
+// needs a merge rule in runnerMergeRules (runner.go); a test fails for a
+// field without one.
 type RunnerSpec struct {
 	// ServiceAccount is the Kubernetes ServiceAccount the Runner Pod runs
-	// as — the identity cloud providers map to an IAM role. Whether a
-	// Project may set it at all is an operator's decision; see
+	// as — the identity cloud providers map to an IAM role. Whether
+	// turnip.yaml may set it at all, at either level, is an operator's
+	// decision; see
 	// internal/orchestrator's allowed-overrides handling.
 	ServiceAccount string `yaml:"serviceAccount,omitempty"`
 

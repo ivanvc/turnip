@@ -62,6 +62,10 @@ func Parse(data []byte, catalog Catalog) (*Config, error) {
 		return nil, err
 	}
 
+	// Last, so that validation saw each level as written and every
+	// reader of the returned Config sees only the Effective_Runner.
+	applyRunnerDefaults(&c)
+
 	return &c, nil
 }
 

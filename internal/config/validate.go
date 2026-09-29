@@ -112,25 +112,12 @@ func validate(c *Config, catalog Catalog) error {
 			}
 		}
 
-		// Sorted so that a file with several offending names reports them
-		// in a stable order rather than Go's randomized map order.
-		for _, name := range slices.Sorted(maps.Keys(p.Runner.Env)) {
-			switch {
-			case strings.HasPrefix(name, reservedEnvPrefix):
-				errs = append(errs, &ValidationError{
-					ProjectRef: ref,
-					Field:      fmt.Sprintf("runner.env[%q]", name),
-					Message:    fmt.Sprintf("names beginning with %q are reserved", reservedEnvPrefix),
-				})
-			case name == "PATH":
-				errs = append(errs, &ValidationError{
-					ProjectRef: ref,
-					Field:      fmt.Sprintf("runner.env[%q]", name),
-					Message:    "PATH is reserved; the tools directory is prepended to it at startup",
-				})
-			}
-		}
+		errs = append(errs, validateRunnerEnv(p.Runner.Env, ref)...)
 	}
+
+	// The top-level runner: block is checked by the same rules, once,
+	// against the file rather than against every Project that inherits it.
+	errs = append(errs, validateRunnerEnv(c.Runner.Env, configFileRef)...)
 
 	// clone: belongs to the file rather than to any one Project, so its
 	// problems are reported against the file itself. An empty value is
@@ -150,6 +137,32 @@ func validate(c *Config, catalog Catalog) error {
 
 	if len(errs) == 0 {
 		return nil
+	}
+	return errs
+}
+
+// validateRunnerEnv checks the variable names of one runner: block's env,
+// reporting each violation against ref, the block's owner: a Project, or
+// the file for the top-level block.
+func validateRunnerEnv(env map[string]string, ref string) ValidationErrors {
+	var errs ValidationErrors
+	// Sorted so that a block with several offending names reports them in
+	// a stable order rather than Go's randomized map order.
+	for _, name := range slices.Sorted(maps.Keys(env)) {
+		switch {
+		case strings.HasPrefix(name, reservedEnvPrefix):
+			errs = append(errs, &ValidationError{
+				ProjectRef: ref,
+				Field:      fmt.Sprintf("runner.env[%q]", name),
+				Message:    fmt.Sprintf("names beginning with %q are reserved", reservedEnvPrefix),
+			})
+		case name == "PATH":
+			errs = append(errs, &ValidationError{
+				ProjectRef: ref,
+				Field:      fmt.Sprintf("runner.env[%q]", name),
+				Message:    "PATH is reserved; the tools directory is prepended to it at startup",
+			})
+		}
 	}
 	return errs
 }
