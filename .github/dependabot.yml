@@ -30,6 +30,36 @@ updates:
     cooldown:
       default-days: 3
 
+  # Not a built image: pins the lychee version `make docs-check`
+  # downloads (see build/tools/lychee/Dockerfile).
+  - package-ecosystem: "docker"
+    directory: "/build/tools/lychee"
+    target-branch: "main"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 3
+
+  # Not a built image: pins the golangci-lint version `make lint`
+  # downloads (see build/tools/golangci-lint/Dockerfile).
+  - package-ecosystem: "docker"
+    directory: "/build/tools/golangci-lint"
+    target-branch: "main"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 3
+
+  # Development tools run with `go tool -modfile=tools/go.mod`, kept out
+  # of turnip's own go.mod.
+  - package-ecosystem: "gomod"
+    directory: "/tools"
+    target-branch: "main"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 3
+
   - package-ecosystem: "github-actions"
     directory: "/"
     target-branch: "main"

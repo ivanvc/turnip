@@ -1,11 +1,14 @@
 # Deploying turnip
 
-The manifests themselves live under [`deploy/`](../deploy/) as a
+> **For operators**: deploying and configuring the Server. End users: see
+> [`turnip.yaml`](../using/turnip-yaml.md).
+
+The manifests themselves live under [`deploy/`](../../deploy/) as a
 Kustomize base plus environment-specific overlays. This guide covers
 installing a real, versioned release; `deploy/overlays/kind/` (referenced
-later, under "Local development") is a separate, local-testing-only
-example, not something to copy as a starting point for a real
-deployment.
+in [Local development](../development/README.md#local-development)) is a
+separate, local-testing-only example, not something to copy as a
+starting point for a real deployment.
 
 ## Prerequisites
 
@@ -24,38 +27,55 @@ deployment.
    indistinguishable from a token that never carried one. turnip refuses
    such a stream rather than relaxing the check, so on a cluster below
    v1.32 no operation will ever report its result.
-2. **Redis or Valkey**: turnip's own manifests deliberately don't include
-   one (`deploy/base/kustomization.yaml` ships no `TURNIP_REDIS_ADDR`
-   default at all): the Server is stateless, and its only state lives in
-   whichever Redis/Valkey instance you point it at. Bring your own
-   (managed or self-hosted), but check the constraint below before
-   picking one: **`TURNIP_REDIS_ADDR` is a plain `host:port`, nothing
-   else**. The Server connects with `redis.Options{Addr:
-   cfg.RedisAddr}` (`cmd/server/main.go`): no password/AUTH field, no
-   TLS. It has to be an unauthenticated, non-TLS-only Redis/Valkey
-   reachable from the cluster: a bare in-cluster `Deployment`+`Service`
-   works (e.g. `TURNIP_REDIS_ADDR=redis.redis-ns.svc.cluster.local:6379`
-   for a Service named `redis` in namespace `redis-ns`); a managed
-   instance (ElastiCache, Memorystore, etc.) works only if you disable
-   its AUTH/in-transit-encryption requirement, or put an unauthenticated
-   proxy in front of it. Pointing this at an AUTH- or TLS-required
-   endpoint as-is will fail to connect.
+2. **Redis or Valkey, with persistence enabled**: turnip's own manifests
+   deliberately don't include one (`deploy/base/kustomization.yaml` ships
+   no `TURNIP_REDIS_ADDR` default at all): the Server is stateless, and
+   its only state, every Lock and every recorded plan, lives in whichever
+   Redis/Valkey instance you point it at. Bring your own (managed or
+   self-hosted), but check two things before picking one:
+
+   - **It must persist its data.** Redis without persistence loses
+     everything it holds on a restart: every Lock a pull request holds,
+     and every plan turnip has recorded for it, gone at once. A pull
+     request that held a four-day-old plan has to plan again before it
+     can apply, with nothing in the pull request itself hinting that
+     happened. Turn on append-only file persistence or periodic
+     snapshots, on a volume that survives the Redis Pod being recreated
+     (not the Pod's own ephemeral storage); a managed service such as
+     Amazon ElastiCache gives you this as a configuration option rather
+     than something you set up yourself. Either way, the point is the
+     same: **losing Redis's data is indistinguishable, from the pull
+     request's side, from turnip forgetting every plan and lock it ever
+     held**, so persistence is not an optimization, it's what keeps
+     "planned" meaning something between now and when someone applies.
+   - **`TURNIP_REDIS_ADDR` is a plain `host:port`, nothing else**. The
+     Server connects with `redis.Options{Addr: cfg.RedisAddr}`
+     (`cmd/server/main.go`): no password/AUTH field, no TLS. It has to be
+     an unauthenticated, non-TLS-only Redis/Valkey reachable from the
+     cluster: a bare in-cluster `Deployment`+`Service` works (e.g.
+     `TURNIP_REDIS_ADDR=redis.redis-ns.svc.cluster.local:6379` for a
+     Service named `redis` in namespace `redis-ns`); a managed instance
+     (ElastiCache, Memorystore, etc.) works only if you disable its
+     AUTH/in-transit-encryption requirement, or put an unauthenticated
+     proxy in front of it. Pointing this at an AUTH- or TLS-required
+     endpoint as-is will fail to connect.
 3. **Public HTTPS ingress for the webhook path**: turnip ships no
    Ingress, Gateway API resource, or LoadBalancer Service (`deploy/base`
    has only a plain `ClusterIP` one, `deploy/base/service.yaml`). GitHub
-   needs to reach the Server's `/` path over HTTPS, so you need your own
+   needs to reach the Server's `/github/webhook` path over HTTPS (the root
+   path returns 404), so you need your own
    Ingress/Gateway/LoadBalancer (whatever your cluster already uses)
    routing a real, publicly-resolvable hostname to the `turnip-server`
    Service's HTTP port (`8080` by default), plus DNS and a TLS
    certificate for that hostname. See
-   [`docs/configuration.md`](configuration.md#setting-up-the-github-app)'s
-   Webhook URL section for the exact shape this feeds into
-   (`https://<your-hostname>/github/webhook`).
+   [The GitHub App](github-app.md#webhook)'s Webhook URL section for the
+   exact shape this feeds into (`https://<your-hostname>/github/webhook`).
+   Route `/healthz` too if you want the public check in
+   [Verify your deployment](#verify-your-deployment) to work.
 4. **A GitHub App**, installed on whichever repositories should trigger
    turnip. You'll need its App ID, its private key (PEM), and a webhook
-   secret you choose yourself. See
-   [`docs/configuration.md`](configuration.md#setting-up-the-github-app)
-   for the exact permissions, webhook events, and how to generate the key.
+   secret you choose yourself. See [The GitHub App](github-app.md) for
+   the exact permissions, webhook events, and how to generate the key.
 
 ## Installing turnip
 
@@ -78,9 +98,11 @@ resources:
   - github.com/ivanvc/turnip//deploy/base?ref=vX.Y.Z
 ```
 
-**Step 2**: set your Server's own image tag to match, and the two
-ConfigMap values that have no sane shared default. Every environment's
-Redis and GitHub App are different, so the base ships neither:
+**Step 2**: set your Server's own image tag to match, and three
+ConfigMap values: the two that have no sane shared default (every
+environment's Redis and GitHub App are different, so the base ships
+neither), and the Runner image, which the base presets to `:latest` and
+you pin to the same release tag as the Server:
 
 ```yaml
 images:
@@ -96,14 +118,35 @@ configMapGenerator:
       - TURNIP_RUNNER_IMAGE=ghcr.io/ivanvc/turnip-runner:vX.Y.Z
 ```
 
-Every other setting is optional and listed in `docs/configuration.md`'s
-"The Server's own configuration". Two of them are opt-ins the base leaves
-deliberately unset, and each widens what a pull request can choose:
-`TURNIP_ALLOWED_OVERRIDES` (letting `turnip.yaml` pick the Runner's
-ServiceAccount or its submodule depth) and `TURNIP_ALLOWED_IMAGES`
+Every other setting either comes preset by `deploy/base` or is optional;
+[Server settings](server-settings.md) lists them all. Two of the optional ones are opt-ins the base
+leaves deliberately unset, and each widens what a pull request can
+choose: `TURNIP_ALLOWED_OVERRIDES` (letting `turnip.yaml` pick the
+Runner's ServiceAccount or its submodule depth) and `TURNIP_ALLOWED_IMAGES`
 (letting `uses:` name a tool image other than the built-in aliases, such
 as one with a cloud CLI added). Add them to the same `literals:` only
-after reading what each costs in [`SECURITY.md`](../SECURITY.md).
+after reading what each costs in [`SECURITY.md`](../../SECURITY.md).
+
+**Choosing a namespace.** `deploy/base` sets no namespace of its own, and
+assumes `default`: it presets `TURNIP_K8S_NAMESPACE=default` (where
+Runner Jobs are created, which must be the namespace the Server's Role is
+in), and its TokenReview ClusterRoleBinding names the Server's
+ServiceAccount in `default`. To install anywhere else, set `namespace:`
+in your `kustomization.yaml`, which Kustomize applies to every resource
+and to that binding's subject, and set `TURNIP_K8S_NAMESPACE` to the same
+value in the `literals:` above: Kustomize does not rewrite a ConfigMap
+value.
+
+```yaml
+namespace: turnip
+
+configMapGenerator:
+  - name: turnip-server-config
+    behavior: merge
+    literals:
+      # ...the values from step 2, plus:
+      - TURNIP_K8S_NAMESPACE=turnip
+```
 
 **Step 3**: generate the GitHub App credentials Secret from local files:
 `files:`, not `literals:`, for both, so the actual secret material never
@@ -162,11 +205,18 @@ Order doesn't matter between the three commands above: the Pod won't
 come up `Ready` until all of it is in place, and it'll retry on its own
 until then.
 
+The single file assumes the `default` namespace, as `deploy/base` does
+(see "Choosing a namespace" under
+[With Kustomize](#with-kustomize-recommended)), so apply
+it and run the commands above with `-n default`, or use the Kustomize
+path to install anywhere else.
+
 ## Verify your deployment
 
 The Server exposes `/healthz` (always 200 once the process is up) and
 `/readyz` (200 only when it can currently reach Redis). Port-forward and
-check both:
+check both (add `-n <namespace>` to every `kubectl` command here if you
+installed outside your current namespace):
 
 ```sh
 kubectl port-forward svc/turnip-server 8080:8080 &
@@ -177,17 +227,32 @@ curl -i localhost:8080/readyz    # expect: HTTP/1.1 200 OK once Redis is reachab
 A `503` from `/readyz` with a `200` from `/healthz` means the process is
 up but can't currently reach Redis. Check `TURNIP_REDIS_ADDR` and that
 your Redis is actually reachable from the cluster. If neither endpoint
-responds at all, check `kubectl get pods`/`kubectl logs` for the Server
-Pod; a missing `turnip-github-app` Secret (above) fails at startup with
-a clear "missing required environment variable(s)" message.
+responds at all, check the Server Pod:
+
+- **A missing `turnip-github-app` Secret** (step 3 above): the container
+  is never created, so there is nothing in `kubectl logs`. The Pod shows
+  `CreateContainerConfigError`; `kubectl describe pod` (or
+  `kubectl get events`) names the missing Secret.
+- **A missing `TURNIP_REDIS_ADDR` or `TURNIP_GITHUB_APP_ID`**: the
+  process starts and exits at once, and the Pod goes into
+  `CrashLoopBackOff`. `kubectl logs` shows "missing required environment
+  variable(s): ..." naming every one that is unset.
 
 The port-forward check above only proves the Pod itself works; it says
 nothing about the public ingress from Prerequisites #3. Confirm that
 separately, from outside the cluster: `curl -i https://<your-hostname>/healthz`
 should also return `200`. Once it does, go set the GitHub App's Webhook
 URL to `https://<your-hostname>/github/webhook` and check **Active**
-(`docs/configuration.md`'s Webhook section); that's the last piece
-needed for GitHub to actually start delivering events.
+([The GitHub App](github-app.md#webhook)'s Webhook section); that's the
+last piece needed for GitHub to actually start delivering events.
+
+Then confirm a delivery arrived. The App's **Advanced** tab lists recent
+deliveries with the response each got: GitHub's `ping`, if it sent one
+when the webhook was set up, and otherwise the event from opening or
+pushing to a pull request in the repository. Each should show `200`. A
+`401` means the webhook secret the App sends does not match
+`TURNIP_GITHUB_WEBHOOK_SECRET`; a `404` means the URL's path is not
+`/github/webhook`.
 
 ### Upgrading an installation created before the webhook moved
 
@@ -230,42 +295,12 @@ one cannot live in a namespaced Role. turnip ships its own narrow
 which also carries `subjectaccessreviews`; turnip asks the cluster *who
 is this*, never *may they do X*.
 
-## How a Runner gets its GitHub credential
-
-**Nothing to configure. It is listed so you know what is and isn't there.**
-
-A Runner Pod carries no GitHub credential. Its spec has no token in any
-container, so reading the Pod (or the etcd behind it) yields nothing
-worth having. When git needs a credential it asks turnip's own binary,
-running as a git credential helper, which fetches one from the Server over
-the authenticated gRPC channel at that moment and hands it to git on a
-pipe. It is never written to a file, never put in a URL, and never passed
-as a command-line argument, so a failed clone leaves nothing behind in the
-workspace either.
-
-**What the credential can do.** It is scoped to the repositories that
-clone will actually fetch (the pull request's own repository, plus any
-submodule repositories declared in `.gitmodules` that live in the same
-account), with `contents: read` and nothing else. A leaked credential is
-worth one repository's source, not your whole installation.
-
-One exception, and it is deliberate: with
-`TURNIP_CLONE_SUBMODULES=recursive`, a submodule's own submodules are not
-declared anywhere turnip can read before cloning them, so the repository
-scope is left at the installation's full breadth. Permissions are still
-narrowed to `contents: read`. Narrowing must never be the reason a clone
-that worked yesterday stops working, so this widens rather than guesses.
-
-**What it does not protect against.** Not someone with cluster-admin, who
-can read anything. And not the tool your repository chooses to run: that
-executes with the workspace mounted, by design, and turnip has no way to
-know what it does with it.
-
 ## Runner-to-Server traffic is not encrypted
 
 Runners report their logs and results to the Server over gRPC, and that
 channel is **plaintext** today. Encryption is tracked separately and is
-not part of the authentication described above.
+not part of the authentication described in
+[Runner access](runner-access.md#how-a-runner-gets-its-github-credential).
 
 What that does and doesn't mean:
 
@@ -308,28 +343,10 @@ configure:
 kubectl scale deployment/turnip-server --replicas=3
 ```
 
-## Local development
-
-`deploy/overlays/kind/` is a complete, runnable example for a local
-[kind](https://kind.sigs.k8s.io/) cluster, useful for trying turnip out
-or working on it, not for a real deployment (it pins a locally-built
-`dev` image tag and a placeholder GitHub App ID). From a clone of this
-repository:
-
-```sh
-kubectl create secret generic turnip-github-app \
-  --from-literal=webhook-secret=<your-webhook-secret> \
-  --from-file=private-key=<path-to-your-app-private-key.pem>
-
-# A Redis/Valkey the overlay can reach as "redis:6379" (test/load/redis.yaml
-# is a minimal example), or edit the overlay's TURNIP_REDIS_ADDR.
-
-kubectl apply -k deploy/overlays/kind
-```
-
 ## Next
 
 Once the Server is up and `/readyz` is green, add a `turnip.yaml` to a
 repository the GitHub App is installed on; see
-[`docs/configuration.md`](configuration.md) for its schema, and
-[`docs/usage.md`](usage.md) for what happens once a PR opens.
+[`turnip.yaml`](../using/turnip-yaml.md) for its schema, and
+[Pull requests](../using/pull-requests.md) for what happens once a PR
+opens.

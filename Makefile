@@ -1,4 +1,4 @@
-.PHONY: build docker-build docker-push test test-load test-kind lint fmt proto-gen clean
+.PHONY: build docker-build docker-push test docs-check test-load test-kind lint manifests-check fmt proto-gen clean
 
 BIN_DIR := bin
 SERVER_BIN := $(BIN_DIR)/server
@@ -27,8 +27,71 @@ docker-push: docker-build
 	docker push $(DOCKER_REGISTRY):server-$(TAG)
 	docker push $(DOCKER_REGISTRY):runner-$(TAG)
 
-test:
+test: docs-check
 	go test -race ./...
+
+# Tools that are not Go modules of their own are downloaded into
+# $(BIN_DIR) on first use, as their release binaries, and verified against
+# the release's published checksums. Each one's version is the image tag
+# in build/tools/<tool>/Dockerfile, a file never built that exists only
+# so Dependabot opens a pull request for each new release. The binary's
+# name carries its version, so a bumped tag downloads the new one (and
+# removes the old). Nothing is installed outside this repository.
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+ARCH_ARM := $(filter arm64 aarch64,$(UNAME_M))
+
+# docs-check verifies every relative link and #anchor in the repository's
+# Markdown resolves, with lychee (https://github.com/lycheeverse/lychee),
+# offline: external links are not fetched. It reads only the files git
+# tracks, so untracked scratch directories are never checked, and skips
+# .kiro/ (specs cite paths as history, not as links to follow).
+LYCHEE_VERSION := $(shell sed -n 's|^FROM docker.io/lycheeverse/lychee:||p' build/tools/lychee/Dockerfile)
+LYCHEE := $(BIN_DIR)/lychee-$(LYCHEE_VERSION)
+ifeq ($(UNAME_S),Darwin)
+  LYCHEE_TARGET := $(if $(ARCH_ARM),aarch64,x86_64)-apple-darwin
+else
+  LYCHEE_TARGET := $(if $(ARCH_ARM),aarch64,x86_64)-unknown-linux-gnu
+endif
+LYCHEE_URL := https://github.com/lycheeverse/lychee/releases/download/lychee-v$(LYCHEE_VERSION)/lychee-$(LYCHEE_TARGET).tar.gz
+
+$(LYCHEE):
+	@mkdir -p $(BIN_DIR)
+	@tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	curl -sSfL -o "$$tmp/lychee-$(LYCHEE_TARGET).tar.gz" "$(LYCHEE_URL)" && \
+	curl -sSfL -o "$$tmp/sha256" "$(LYCHEE_URL).sha256" && \
+	(cd "$$tmp" && $(SHA256_CHECK) sha256) && \
+	tar -xzf "$$tmp/lychee-$(LYCHEE_TARGET).tar.gz" -C "$$tmp" && \
+	rm -f $(BIN_DIR)/lychee-* && \
+	mv "$$tmp/lychee-$(LYCHEE_TARGET)/lychee" $@ && \
+	echo "downloaded lychee $(LYCHEE_VERSION) ($(LYCHEE_TARGET)) to $@"
+
+docs-check: $(LYCHEE)
+	$(LYCHEE) --offline --include-fragments --no-progress $$(git ls-files '*.md' ':!:.kiro/**')
+
+# lint runs golangci-lint from its release binary, which its maintainers
+# recommend over building it from source.
+GOLANGCI_LINT_VERSION := $(shell sed -n 's|^FROM docker.io/golangci/golangci-lint:v||p' build/tools/golangci-lint/Dockerfile)
+GOLANGCI_LINT := $(BIN_DIR)/golangci-lint-$(GOLANGCI_LINT_VERSION)
+GOLANGCI_LINT_TARGET := $(if $(filter Darwin,$(UNAME_S)),darwin,linux)-$(if $(ARCH_ARM),arm64,amd64)
+GOLANGCI_LINT_BASE := https://github.com/golangci/golangci-lint/releases/download/v$(GOLANGCI_LINT_VERSION)
+GOLANGCI_LINT_ARCHIVE := golangci-lint-$(GOLANGCI_LINT_VERSION)-$(GOLANGCI_LINT_TARGET)
+
+$(GOLANGCI_LINT):
+	@mkdir -p $(BIN_DIR)
+	@tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	curl -sSfL -o "$$tmp/$(GOLANGCI_LINT_ARCHIVE).tar.gz" "$(GOLANGCI_LINT_BASE)/$(GOLANGCI_LINT_ARCHIVE).tar.gz" && \
+	curl -sSfL "$(GOLANGCI_LINT_BASE)/golangci-lint-$(GOLANGCI_LINT_VERSION)-checksums.txt" \
+		| grep " $(GOLANGCI_LINT_ARCHIVE).tar.gz$$" > "$$tmp/sha256" && \
+	(cd "$$tmp" && $(SHA256_CHECK) sha256) && \
+	tar -xzf "$$tmp/$(GOLANGCI_LINT_ARCHIVE).tar.gz" -C "$$tmp" && \
+	rm -f $(BIN_DIR)/golangci-lint-* && \
+	mv "$$tmp/$(GOLANGCI_LINT_ARCHIVE)/golangci-lint" $@ && \
+	echo "downloaded golangci-lint $(GOLANGCI_LINT_VERSION) ($(GOLANGCI_LINT_TARGET)) to $@"
+
+# SHA256_CHECK verifies a sha256sum-format file: sha256sum on Linux,
+# shasum on macOS.
+SHA256_CHECK := $$(command -v sha256sum >/dev/null && echo "sha256sum -c --quiet" || echo "shasum -a 256 -c --quiet")
 
 # test-load runs the ha-validation Load Test (Requirement 1.4): 100
 # concurrent webhook events against a real Redis. Needs
@@ -68,8 +131,14 @@ test-kind:
 	kubectl wait --for=condition=available deployment/turnip-server --timeout=120s; \
 	go test -tags kind -race ./test/load/... -timeout 180s
 
-lint:
-	golangci-lint run ./...
+lint: $(GOLANGCI_LINT)
+	$(GOLANGCI_LINT) run ./...
+
+# manifests-check validates deploy/'s rendered kind overlay with
+# kubeconform, run from tools/go.mod (a module of its own, so the tools
+# never touch turnip's go.mod). Needs kubectl on PATH.
+manifests-check:
+	kubectl kustomize deploy/overlays/kind | go tool -modfile=tools/go.mod kubeconform -strict -summary
 
 fmt:
 	gofmt -w .

@@ -29,27 +29,31 @@ import (
 )
 
 func main() {
-	level := logging.ParseLevel(os.Getenv("TURNIP_LOG_LEVEL"))
-	slog.SetDefault(logging.New(os.Stderr, level))
-
 	// One registry for the whole Server: the Catalog TURNIP_ALLOWED_IMAGES
 	// is checked against at start and the Plugins that run its Projects
 	// must be the same ones.
 	plugins := orchestrator.NewPluginRegistry()
 	cfg, err := orchestrator.ConfigFromEnv(os.Getenv, plugins)
 	if err != nil {
+		// TURNIP_LOG_LEVEL is read as part of Config, so a Config load
+		// error leaves no level to set the logger up with; fall back to
+		// slog.LevelInfo for this one message, the same default
+		// logging.ParseLevel itself uses for an empty or unrecognized
+		// value.
+		slog.SetDefault(logging.New(os.Stderr, slog.LevelInfo))
 		slog.Error("loading config", "error", err)
 		os.Exit(1)
 	}
+	slog.SetDefault(logging.New(os.Stderr, cfg.LogLevel))
 
-	if err := run(cfg, plugins, level); err != nil {
+	if err := run(cfg, plugins); err != nil {
 		slog.Error("running server", "error", err)
 		os.Exit(1)
 	}
 	slog.Info("server stopped")
 }
 
-func run(cfg orchestrator.Config, plugins orchestrator.PluginRegistry, level slog.Level) error {
+func run(cfg orchestrator.Config, plugins orchestrator.PluginRegistry) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -106,7 +110,7 @@ func run(cfg orchestrator.Config, plugins orchestrator.PluginRegistry, level slo
 		"http_addr", cfg.HTTPAddr,
 		"grpc_addr", grpcListener.Addr().String(),
 		"namespace", cfg.KubernetesNamespace,
-		"log_level", level.String(),
+		"log_level", cfg.LogLevel.String(),
 	)
 
 	return runConcurrently(ctx,

@@ -12,9 +12,10 @@ kind: Kustomization
 # TURNIP_GITHUB_APP_ID have no sane cross-environment default (base's own
 # comment explains why), so the rendered manifest ships without them —
 # `kubectl apply -f` this and then `kubectl set env deployment/turnip-server
-# TURNIP_REDIS_ADDR=... TURNIP_GITHUB_APP_ID=...` (see docs/deployment.md's
-# "Quick install" section). Most operators are better served by
-# docs/deployment.md's primary "With Kustomize" section instead — a
+# TURNIP_REDIS_ADDR=... TURNIP_GITHUB_APP_ID=...` (see
+# docs/operating/deployment.md's "Quick install" section). Most operators
+# are better served by docs/operating/deployment.md's primary "With
+# Kustomize" section instead — a
 # remote-base reference plus a configMapGenerator/secretGenerator of their
 # own, generating everything (including the credentials Secret) in one
 # `kubectl apply -k .` with no imperative follow-up commands at all.

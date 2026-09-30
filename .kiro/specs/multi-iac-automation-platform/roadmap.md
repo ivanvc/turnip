@@ -56,6 +56,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 45 | One Place to Add a Tool | `plugin-registry` | Complete | Slices 2, 14 |
 | 46 | Kustomize Plugin | `plugin-kustomize` | Not Started | Slices 2, 14, 44, 45 |
 | 47 | What a Mutating Command Changed | `mutation-change-summary` | Complete | Slices 2, 35 |
+| 48 | Documentation a New User Can Follow | `docs-onboarding` | Complete | Slice 47 |
 
 ## Slice Details
 
@@ -3179,6 +3180,27 @@ read from Helmfile v1.6.0 on; an older version's output renders
 "succeeded". Each Plugin says, per run from its transcript, whether its
 mutating command's counts mean anything (Terraform and Pulumi: never, per
 Slice 7); one that does not renders "succeeded", never "no changes".
+
+---
+
+### Slice 48: Documentation a New User Can Follow (`docs-onboarding`)
+
+**Goal**: Documentation organized by who reads it, with one entry page,
+a getting-started guide for end users and one for operators, and
+references checked against the code.
+
+**Why now** (2026-09-30): every slice adds to five pages organized by
+the order they were written in; `configuration.md` serves end users and
+operators at once. Reorganizing costs more with each slice, so it
+follows Slice 47 immediately. Slice 47's `docs/plugins/helmfile.md`,
+split into "Using" and "Running", is the pattern.
+
+**Delivers**: `docs/README.md` sending each audience to its start;
+directories per audience plus `plugins/`; the two getting-started
+guides; a `turnip.yaml` reference and a Server settings reference, each
+checked against the code by a test; a link check in the tests; a map of
+every moved section; `CLAUDE.md` saying where each audience's docs live;
+and the Redis persistence requirement the operator docs never stated.
 
 ---
 

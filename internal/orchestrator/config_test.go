@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -67,6 +68,32 @@ func TestConfigFromEnv_RunnerImageRoundTrip(t *testing.T) {
 	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_IMAGE": "ghcr.io/ivanvc/turnip-runner:v1.2.3"}), NewPluginRegistry())
 	require.NoError(t, err)
 	assert.Equal(t, "ghcr.io/ivanvc/turnip-runner:v1.2.3", cfg.RunnerImage)
+}
+
+func TestConfigFromEnv_LogLevelRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want slog.Level
+	}{
+		{"debug", "debug", slog.LevelDebug},
+		{"mixed case", "WARN", slog.LevelWarn},
+		{"error", "error", slog.LevelError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_LOG_LEVEL": tc.raw}), NewPluginRegistry())
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.LogLevel)
+		})
+	}
+}
+
+// Unset must keep behaving exactly as turnip did before the setting
+// moved here: logging.ParseLevel's own default for an empty value.
+func TestConfigFromEnv_LogLevelDefaultsToInfo(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(nil), NewPluginRegistry())
+	require.NoError(t, err)
+	assert.Equal(t, slog.LevelInfo, cfg.LogLevel)
 }
 
 func TestConfigFromEnv_RunnerServiceAccountRoundTrip(t *testing.T) {

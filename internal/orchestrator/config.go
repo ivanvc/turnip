@@ -2,12 +2,14 @@ package orchestrator
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/ivanvc/turnip/internal/config"
+	"github.com/ivanvc/turnip/internal/logging"
 )
 
 // Config carries the Server's own startup configuration, read from
@@ -61,6 +63,12 @@ type Config struct {
 	// pull request supplies turnip.yaml, so it must not be able to relax
 	// the conditions it is itself held to.
 	MutationRequirements []string
+	// LogLevel is the Server's log level, from TURNIP_LOG_LEVEL
+	// ("debug"|"info"|"warn"|"error", case-insensitive), parsed by
+	// internal/logging.ParseLevel. Unset or unrecognized defaults to
+	// slog.LevelInfo rather than erroring (ParseLevel's own contract), so
+	// this field is never itself a source of a Config load error.
+	LogLevel slog.Level
 }
 
 // The recognized Mutation_Requirement names for TURNIP_MUTATION_REQUIREMENTS.
@@ -128,6 +136,7 @@ func ConfigFromEnv(env func(string) string, plugins PluginRegistry) (Config, err
 		RunnerImage:         env("TURNIP_RUNNER_IMAGE"),
 
 		RunnerServiceAccount: env("TURNIP_RUNNER_SERVICE_ACCOUNT"),
+		LogLevel:             logging.ParseLevel(env("TURNIP_LOG_LEVEL")),
 	}
 
 	var missing []string

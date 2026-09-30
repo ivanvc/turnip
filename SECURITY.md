@@ -34,8 +34,8 @@ access to the repository. Add branch protection's "Dismiss stale pull
 request approvals when new commits are pushed" to make that approval
 cover the commit being applied rather than an earlier one. A repository
 cannot set or relax this from `turnip.yaml`. The details, and the
-`mergeable` requirement beside it, are in `docs/configuration.md`
-("Mutation requirements").
+`mergeable` requirement beside it, are in
+[`docs/operating/server-settings.md`](docs/operating/server-settings.md#mutation-requirements).
 
 ## Opt-ins that grant capability by design
 
@@ -49,7 +49,11 @@ cost below, accepted by the operator.
 | `clone.submodules` | `TURNIP_ALLOWED_OVERRIDES` includes `clone.submodules` | not permitted: the clone follows the Server's `TURNIP_CLONE_SUBMODULES` | A pull request can make the clone fetch submodules recursively and at full depth. The gate is about cost more than safety: submodules are fetched with the GitHub App's installation credential, so they reach only repositories the App is already installed on. |
 | Custom tool images | `TURNIP_ALLOWED_IMAGES` lists `tool:image@glob` Entries | empty: only the built-in aliases (each tool's vendor image, full versions or digests) run | Each allowed image is **code the operator vouches for**, running with the Runner's credentials, for any pull request that names it with a tag the glob matches. A floating tag (`@latest`, `@1.*`) is safe between plan and apply, since the apply runs the digest the plan's Pod ran, but the plan runs whatever the tag means when it pulls: whoever can push that tag can run code in the next plan. |
 
-Each opt-in's own documentation is in `docs/configuration.md`.
+Each opt-in's own documentation is in
+[`docs/operating/server-settings.md`](docs/operating/server-settings.md#allowed-overrides)
+(the first two) and
+[`docs/operating/runner-access.md`](docs/operating/runner-access.md#running-a-custom-image)
+(custom tool images).
 
 ## What turnip does consider a vulnerability
 
@@ -63,7 +67,8 @@ Each opt-in's own documentation is in `docs/configuration.md`.
   changing what that setting requires.
 - **A default that grants more than documented**: a Server with no opt-ins
   enabled letting a pull request choose anything this document or
-  `docs/configuration.md` says it cannot.
+  [`docs/operating/server-settings.md`](docs/operating/server-settings.md)
+  says it cannot.
 - **A leak reachable with no opt-in**: a credential, token or secret held
   by the Server or the Runner reaching a pull request comment, a check
   run, a log line, or anyone outside the cluster, on a Server with none of

@@ -1,7 +1,60 @@
 # Developing turnip
 
+> **For developers**: people building turnip itself. Writing `turnip.yaml`
+> or running a Server? See [the documentation entry page](../README.md).
+
 Notes for contributors. Build, test and lint commands, and the
-spec-driven workflow under `.kiro/specs/`, are in [`CLAUDE.md`](../CLAUDE.md).
+spec-driven workflow under `.kiro/specs/`, are in
+[`CLAUDE.md`](../../CLAUDE.md).
+
+## Architecture
+
+```mermaid
+graph TB
+    GH[GitHub] -->|Webhooks| Server
+    Server -->|gRPC| Runner1[Runner Pod - Terraform]
+    Server -->|gRPC| Runner2[Runner Pod - Pulumi]
+    Server -->|gRPC| Runner3[Runner Pod - Helmfile]
+    Server <-->|Lock/State| Redis[(Redis/Valkey)]
+    Server <-->|API Calls| GH
+    K8s[Kubernetes API] -->|Create/Delete| Runner1
+    K8s -->|Create/Delete| Runner2
+    K8s -->|Create/Delete| Runner3
+    Server -->|Create Jobs| K8s
+
+    subgraph ServerProcess[Server Process]
+        Server
+        WebhookHandler[Webhook Handler]
+        CommentParser[Comment Parser]
+        ProjectMatcher[Project Matcher]
+        LockManager[Lock Manager]
+        GitHubClient[GitHub Client]
+    end
+
+    subgraph RunnerPod[Runner Pod]
+        Runner1
+        TerraformPlugin[Terraform Plugin]
+        PulumiPlugin[Pulumi Plugin]
+        HelmfilePlugin[Helmfile Plugin]
+    end
+```
+
+- **Server** (`cmd/server`): a stateless HTTP/gRPC service. Receives GitHub
+  webhooks, parses `turnip.yaml`, matches modified files against each
+  project's `whenModified` globs, acquires a Redis lock before planning,
+  creates a Kubernetes Job per triggered Operation, and posts a
+  consolidated PR comment and check run once every Job reports back. All
+  state lives in Redis, not in-process: any number of Server replicas can
+  run behind one Service with no coordination between them (see
+  [`docs/operating/deployment.md`](../operating/deployment.md)'s "Scaling
+  up" section).
+- **Runner** (`cmd/runner`): one ephemeral Kubernetes Job per Operation.
+  Clones the repository at the PR's commit, runs the matched tool
+  (Terraform/Pulumi/Helmfile) via a shared Plugin interface, and streams
+  logs and a final result back to the Server over gRPC.
+
+turnip's own manifests live under [`deploy/`](../../deploy/);
+`deploy/overlays/kind/` is a complete, concrete worked example.
 
 ## Adding a tool
 
@@ -9,7 +62,7 @@ Everything turnip knows about a tool lives in that tool's Plugin, and the
 Plugins turnip ships are listed in one place. Adding a tool is three steps,
 all inside `internal/plugin`, and a documentation page; nothing else in
 the code names a tool.
-[`internal/plugin/helmfile.go`](../internal/plugin/helmfile.go) is the
+[`internal/plugin/helmfile.go`](../../internal/plugin/helmfile.go) is the
 worked example.
 
 ### 1. Write the Plugin
@@ -57,8 +110,8 @@ If neither fits, the new strategy belongs in `internal/provisioning` and
 ### 3. Register it
 
 Add the constructor to the list in
-[`internal/plugin/registry.go`](../internal/plugin/registry.go). That one
-line is what makes the tool exist everywhere:
+[`internal/plugin/registry.go`](../../internal/plugin/registry.go). That
+one line is what makes the tool exist everywhere:
 
 - `turnip.yaml` validation accepts it in `uses:` (and a tool with no
   Plugin is a validation error listing the registered ones);
@@ -75,7 +128,7 @@ a Lock is held and a check is running.
 ### 4. Document it
 
 A new plugin ships a `docs/plugins/<tool>.md` page, the one place for
-everything specific to that tool; [`plugins/helmfile.md`](plugins/helmfile.md)
+everything specific to that tool; [`plugins/helmfile.md`](../plugins/helmfile.md)
 is the model. The page opens with a two-line note saying which section is
 for whom, and has two audience sections:
 
@@ -96,15 +149,69 @@ stream it parses, what output formats it recognizes, why it chose its
 provisioning strategy) goes in a section of this file, as "The Helmfile
 plugin" below does.
 
-Then link the page from [`configuration.md`](configuration.md)'s "Tool
-support" table and from the "Plugins" list in the
-[`README`](../README.md), and update that table's row.
+Then link the page from [`plugins/README.md`](../plugins/README.md)'s
+tool table, and update that table's row.
+
+## How a tool reaches the Runner
+
+Two strategies, chosen per tool by turnip rather than configured (a
+custom image always runs the second):
+
+- **copy-out**: an initContainer copies the tool's binary out of the
+  vendor's image onto a shared volume, and turnip's own image runs it.
+  Correct for a tool that is a single self-contained binary.
+- **run-in-image**: the vendor's image *is* the container that runs, with
+  turnip's runner binary handed to it. The tool gets its own image's
+  `PATH`, environment and `HOME`, so its helper binaries and plugins are
+  simply present.
+
+Each tool's page says which strategy it uses and why (Helmfile
+[runs in its image](../plugins/helmfile.md#what-a-custom-helmfile-image-must-provide)).
+
+The practical consequence: **for a run-in-image tool, its plugins and
+helpers come from the image.** Needing one the vendor's image doesn't
+bundle means building an image that has it and having the operator allow
+it (see
+[Running a custom image](../operating/runner-access.md#running-a-custom-image)), not
+configuring turnip.
+
+## Local development
+
+`deploy/overlays/kind/` is a complete, runnable example for a local
+[kind](https://kind.sigs.k8s.io/) cluster, useful for trying turnip out
+or working on it, not for a real deployment (it pins a locally-built
+`dev` image tag and a placeholder GitHub App ID). From a clone of this
+repository:
+
+```sh
+kubectl create secret generic turnip-github-app \
+  --from-literal=webhook-secret=<your-webhook-secret> \
+  --from-file=private-key=<path-to-your-app-private-key.pem>
+
+# A Redis/Valkey the overlay can reach as "redis:6379" (test/load/redis.yaml
+# is a minimal example), or edit the overlay's TURNIP_REDIS_ADDR.
+
+kubectl apply -k deploy/overlays/kind
+```
+
+### Checking the documentation
+
+`make test` runs `make docs-check` first: [lychee](https://github.com/lycheeverse/lychee),
+offline, confirms every relative link and `#anchor` in the tracked
+Markdown resolves, the way GitHub renders them. The Makefile downloads
+lychee at the version pinned in `build/tools/lychee/Dockerfile` (never
+built; it exists so Dependabot opens a pull request for each new
+release) into `bin/` on first use and checks it against the release's published checksum, so there is
+nothing to install. Two Go tests keep the
+References complete: a `turnip.yaml` field or a Server setting with no
+row in [`turnip-yaml.md`](../using/turnip-yaml.md) or
+[`server-settings.md`](../operating/server-settings.md) fails the build.
 
 ## The Helmfile plugin
 
-How [`internal/plugin/helmfile.go`](../internal/plugin/helmfile.go) and
+How [`internal/plugin/helmfile.go`](../../internal/plugin/helmfile.go) and
 `helmfile_parse.go` work inside. What this means for users and operators
-is in [`plugins/helmfile.md`](plugins/helmfile.md).
+is in [`plugins/helmfile.md`](../plugins/helmfile.md).
 
 **Provisioning: run-in-image.** Helmfile is a runtime, not a binary: it
 shells out to `helm`, `helmfile diff` needs the helm-diff plugin,

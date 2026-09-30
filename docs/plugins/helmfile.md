@@ -5,9 +5,11 @@
 
 Everything Helmfile-specific about turnip is on this page. The general
 mechanics (`turnip.yaml`, trigger comments, locks, the `turnip` check) are
-in [`configuration.md`](../configuration.md) and [`usage.md`](../usage.md),
-and how the plugin works inside is in
-[`development.md`](../development.md#the-helmfile-plugin).
+in [`using/turnip-yaml.md`](../using/turnip-yaml.md),
+[`using/commands.md`](../using/commands.md) and
+[`using/pull-requests.md`](../using/pull-requests.md), and how the plugin
+works inside is in
+[`development/README.md`](../development/README.md#the-helmfile-plugin).
 
 ## Using Helmfile
 
@@ -35,7 +37,7 @@ request, and the only one that takes extra arguments. `apply` and `sync`
 are mutating commands: they need write access and a plan from this pull
 request, may be held back by the operator's mutation requirements, and
 replay the scope the `diff` recorded. See "Plan commands and mutating
-commands" in [`usage.md`](../usage.md#plan-commands-and-mutating-commands).
+commands" in [`using/commands.md`](../using/commands.md#plan-commands-and-mutating-commands).
 
 turnip runs Helmfile as
 `helmfile [--environment <environment>] <operation> [arguments...]`, in
@@ -51,12 +53,12 @@ therefore a tool that *can act without changes*, and two things follow:
   clean.** For a tool that cannot act without changes, a plan with nothing
   to apply releases the lock; for Helmfile it holds it, so `sync` stays
   available. See "What releases a lock" in
-  [`usage.md`](../usage.md#what-releases-a-lock).
+  [`using/pull-requests.md`](../using/pull-requests.md#what-releases-a-lock).
 - **A Helmfile project always needs its apply or sync to satisfy the
   `turnip` check.** A plan that finds nothing to apply otherwise counts as
   done, but not for Helmfile, whose `sync` acts even when the diff is
   empty. See "Requiring turnip before merge" in
-  [`usage.md`](../usage.md#requiring-turnip-before-merge).
+  [`using/pull-requests.md`](../using/pull-requests.md#requiring-turnip-before-merge).
 
 #### Removing a release
 
@@ -84,7 +86,7 @@ it is `helmfile@v1.7.4`, not `helmfile@1.7.4`. `helmfile@latest`,
 error names the tags the alias does allow. How tags and digests are
 checked, and why an apply runs the digest its plan ran, is under
 "`uses`: what to run" in
-[`configuration.md`](../configuration.md#uses-what-to-run).
+[`using/turnip-yaml.md`](../using/turnip-yaml.md#uses-what-to-run).
 
 Any other image (the vendor's under another tag, or one built from it)
 is written in full, `uses: ghcr.io/org/helmfile-aws@v1.7.4`, and runs only
@@ -179,7 +181,7 @@ tool runs in each Project's own directory, so a relative `KUBECONFIG`
 would name a different file, most likely a missing one, in each.
 `/turnip/src` is the repository root in every Runner (see "Where the
 Runner puts things" in
-[`configuration.md`](../configuration.md#where-the-runner-puts-things)),
+[`using/turnip-yaml.md`](../using/turnip-yaml.md#where-the-runner-puts-things)),
 so this path names the committed file from any Project, and helm, which
 helmfile runs per release, reads the same one.
 
@@ -268,7 +270,7 @@ Helmfile runs in each Project's `directory`, so a relative path in
 Project. A `KUBECONFIG` set in the top-level `runner:` block has to be
 absolute, under `/turnip/src`, to name one file for every Project. See
 "Shared settings: the top-level `runner:` block" in
-[`configuration.md`](../configuration.md#shared-settings-the-top-level-runner-block)
+[`using/turnip-yaml.md`](../using/turnip-yaml.md#shared-settings-the-top-level-runner-block)
 and [the repository side of the EKS recipe](#targeting-an-eks-cluster-the-repository-side).
 
 #### A missing `KUBECONFIG` targets turnip's own cluster
@@ -292,7 +294,7 @@ Remove a release with `installed: false` and apply; see
 ### Troubleshooting
 
 Entries that are Helmfile-specific. Everything else is in
-[`troubleshooting.md`](../troubleshooting.md).
+[`using/troubleshooting.md`](../using/troubleshooting.md).
 
 - **A tag the `helmfile` alias does not allow** (`helmfile@latest`,
   `helmfile@v1.7`, `helmfile@1.7.4` missing its `v`): the validation error
@@ -302,13 +304,13 @@ Entries that are Helmfile-specific. Everything else is in
 - **`helmfile exited 1`** (or another code): Helmfile itself ran and
   failed. The reason is in its output, in the check's details; turnip does
   not interpret it. See "Reading a failed check's title" in
-  [`troubleshooting.md`](../troubleshooting.md#reading-a-failed-checks-title).
+  [`using/troubleshooting.md`](../using/troubleshooting.md#reading-a-failed-checks-title).
 - **`helmfile could not be started`**: the `helmfile` binary was missing
   from the image (a custom image without it on its `PATH`), or the
   operation isn't one of `diff`, `apply` and `sync`. The details carry the
   error, including when the project's working directory could not be
   entered. See "Plugin execution errors" in
-  [`troubleshooting.md`](../troubleshooting.md#plugin-execution-errors).
+  [`using/troubleshooting.md`](../using/troubleshooting.md#plugin-execution-errors).
 - **`exec: "helm": executable file not found in $PATH`, or Helmfile
   reporting it can't find a helm plugin**: the image lacks something
   Helmfile shells out to. Ask the operator to check it against
@@ -349,14 +351,14 @@ helm plugin) runs when you allow it with a `helmfile:` entry in
 `TURNIP_ALLOWED_IMAGES`, for example
 `helmfile:ghcr.io/org/helmfile-aws@v*.*.*`. The entry syntax, what
 allowing an image costs, and pulling from a private registry are in
-"Running your own image" in
-[`configuration.md`](../configuration.md#running-your-own-image).
+"Running a custom image" in
+[`operating/runner-access.md`](../operating/runner-access.md#running-a-custom-image).
 
 #### What a custom Helmfile image must provide
 
 turnip runs Helmfile *inside* its image (run-in-image, see "How a tool
 reaches the Runner" in
-[`configuration.md`](../configuration.md#how-a-tool-reaches-the-runner)),
+[`development/README.md`](../development/README.md#how-a-tool-reaches-the-runner)),
 with turnip's runner binary handed to it, rather than copying one binary
 out. Helmfile needs that: it shells out to `helm`, and helm finds its
 plugins through an environment its image sets. So Helmfile's plugins and
@@ -379,7 +381,7 @@ is a turnip bug worth reporting.
 
 turnip ships no ServiceAccount and no RBAC for the Runner (see "What the
 Runner's ServiceAccount needs" in
-[`configuration.md`](../configuration.md#what-the-runners-serviceaccount-needs)).
+[`operating/runner-access.md`](../operating/runner-access.md#what-the-runners-serviceaccount-needs)).
 This section is what a Helmfile Runner needs.
 
 #### Inside the cluster turnip runs in
@@ -441,8 +443,8 @@ TURNIP_ALLOWED_IMAGES=helmfile:ghcr.io/org/helmfile-aws@v*.*.*
 The repository then names it in `uses:` in place of the alias. If the
 image lives in ECR in the cluster's own account, the nodes can usually
 pull it with no further setup; otherwise see "Pulling from a private
-registry" under "Running your own image" in
-[`configuration.md`](../configuration.md#running-your-own-image).
+registry" under "Running a custom image" in
+[`operating/runner-access.md`](../operating/runner-access.md#pulling-from-a-private-registry).
 
 **Verifying access before the first plan** (optional; the first plan
 tells you too): start a throwaway Pod in the cluster turnip runs in, with
@@ -507,7 +509,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: turnip-runner
-    namespace: turnip-system
+    namespace: default   # the namespace Runner Jobs run in (TURNIP_K8S_NAMESPACE)
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -540,7 +542,7 @@ is sharper than it looks, and two things follow:
 - **Run turnip only on repositories whose contributors you already trust
   with the cluster.** turnip refuses to run anything on a pull request
   from a fork, on both trigger paths (see "Pull requests from forks" in
-  [`usage.md`](../usage.md#pull-requests-from-forks)), so this is about
+  [`using/pull-requests.md`](../using/pull-requests.md#pull-requests-from-forks)), so this is about
   the people who can push a branch to the repository itself. For them,
   opening a pull request is enough to run a hook with the Runner's
   credentials.
