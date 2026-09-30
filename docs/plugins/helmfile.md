@@ -1,0 +1,567 @@
+# Helmfile
+
+[Using Helmfile](#using-helmfile) is for people writing `turnip.yaml` and commenting on pull requests.
+[Running Helmfile](#running-helmfile) is for operators deploying and configuring the Server.
+
+Everything Helmfile-specific about turnip is on this page. The general
+mechanics (`turnip.yaml`, trigger comments, locks, the `turnip` check) are
+in [`configuration.md`](../configuration.md) and [`usage.md`](../usage.md),
+and how the plugin works inside is in
+[`development.md`](../development.md#the-helmfile-plugin).
+
+## Using Helmfile
+
+```yaml
+projects:
+  - directory: infra/web
+    uses: helmfile@v1.7.4
+    with:
+      environment: staging
+```
+
+Its trigger word is `/helmfile` (`/helmfile diff web`), beside `/turnip`,
+which considers projects of every tool.
+
+### Operations
+
+| Operation | Kind | What it does |
+|---|---|---|
+| `diff` | plan | `helmfile diff`: shows what each release would change, and changes nothing |
+| `apply` | mutating | `helmfile apply`: diffs again and upgrades only the releases that changed |
+| `sync` | mutating | `helmfile sync`: upgrades every release, whether or not it changed |
+
+`diff` is the plan command: the one turnip runs automatically on a pull
+request, and the only one that takes extra arguments. `apply` and `sync`
+are mutating commands: they need write access and a plan from this pull
+request, may be held back by the operator's mutation requirements, and
+replay the scope the `diff` recorded. See "Plan commands and mutating
+commands" in [`usage.md`](../usage.md#plan-commands-and-mutating-commands).
+
+turnip runs Helmfile as
+`helmfile [--environment <environment>] <operation> [arguments...]`, in
+the project's `directory`.
+
+#### `sync` acts even when the diff is empty
+
+`helmfile sync` upgrades every release regardless of the diff, so it can
+change infrastructure precisely when `diff` found nothing. Helmfile is
+therefore a tool that *can act without changes*, and two things follow:
+
+- **A Helmfile project keeps its lock even when its diff comes back
+  clean.** For a tool that cannot act without changes, a plan with nothing
+  to apply releases the lock; for Helmfile it holds it, so `sync` stays
+  available. See "What releases a lock" in
+  [`usage.md`](../usage.md#what-releases-a-lock).
+- **A Helmfile project always needs its apply or sync to satisfy the
+  `turnip` check.** A plan that finds nothing to apply otherwise counts as
+  done, but not for Helmfile, whose `sync` acts even when the diff is
+  empty. See "Requiring turnip before merge" in
+  [`usage.md`](../usage.md#requiring-turnip-before-merge).
+
+#### Removing a release
+
+There is no `destroy` for Helmfile. `helmfile destroy` has no dry-run and
+uninstalls everything its selector matches regardless of `installed:`, so
+no plan could show you what it would remove, and turnip only runs what a
+plan described.
+
+To remove a release, mark it `installed: false`. `diff` reports it as a
+pending removal and `apply` carries it out, reviewed like any other
+change.
+
+### The `helmfile` alias
+
+`uses: helmfile@<tag>` runs the vendor's image, `ghcr.io/helmfile/helmfile`,
+at that tag: `helmfile@v1.7.4` runs `ghcr.io/helmfile/helmfile:v1.7.4`.
+
+| Alias | Image | Allowed tag-specs |
+|---|---|---|
+| `helmfile` | `ghcr.io/helmfile/helmfile` | `v*.*.*`, `sha256:*` |
+
+The tag is used exactly as written, and Helmfile's tags carry a `v`, so
+it is `helmfile@v1.7.4`, not `helmfile@1.7.4`. `helmfile@latest`,
+`helmfile@v1.7` and `helmfile@1.7.4` are all validation errors, and the
+error names the tags the alias does allow. How tags and digests are
+checked, and why an apply runs the digest its plan ran, is under
+"`uses`: what to run" in
+[`configuration.md`](../configuration.md#uses-what-to-run).
+
+Any other image (the vendor's under another tag, or one built from it)
+is written in full, `uses: ghcr.io/org/helmfile-aws@v1.7.4`, and runs only
+if the Server's operator allows it; see
+[Running a custom Helmfile image](#running-a-custom-helmfile-image).
+
+### `with:`
+
+| Key | Meaning |
+|---|---|
+| `environment` | Helmfile's own `--environment` flag, passed before the operation (`helmfile --environment staging diff`) |
+
+Omitted, no `--environment` is passed and Helmfile uses its own default.
+Other keys under `with:` are accepted and ignored.
+
+### Reaching a cluster
+
+A project with no `KUBECONFIG` in its environment acts on **the cluster
+turnip runs in**, as whatever ServiceAccount the operator gave the Runner;
+there is nothing to configure. Any other cluster needs a kubeconfig,
+which you commit to the repository and point `KUBECONFIG` at through
+`runner.env`. turnip does not generate one, and doesn't need to.
+
+#### Targeting an EKS cluster: the repository side
+
+This is the half of the recipe that lives in the repository. The other
+half, the identity the Runner signs with and the image it runs, is the
+operator's: see
+[Targeting an EKS cluster: the operator side](#targeting-an-eks-cluster-the-operator-side).
+
+No step has to run before the tool. A kubeconfig produced by
+`aws eks update-kubeconfig` does not contain credentials: it tells the
+client to run `aws eks get-token` whenever it needs one. helm, helmfile
+and kubectl all run that command themselves, on demand. So the
+kubeconfig is generated **once**, committed to the repository, and the
+Runner only needs `aws` on its PATH and an AWS identity to sign with.
+
+**Generating the kubeconfig**, once, on your own machine, from the
+repository root, with any credentials allowed to call
+`eks:DescribeCluster`:
+
+```sh
+aws eks update-kubeconfig --name <cluster> --region <region> \
+  --kubeconfig .turnip/kubeconfig --alias <cluster>
+```
+
+Repeat for each cluster; each run adds a context to the same file.
+
+**Before committing it, check the `users` section.** If a profile was in
+use when you ran the command (`--profile`, or `AWS_PROFILE` set),
+`update-kubeconfig` records it:
+
+```yaml
+users:
+- name: <cluster>
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      command: aws
+      args: [--region, <region>, eks, get-token, --cluster-name, <cluster>, --output, json]
+      env:                      # remove this block
+      - name: AWS_PROFILE
+        value: <your-local-profile>
+```
+
+Remove that `env` block: the Runner Pod has no profiles, and `get-token`
+would fail looking for one. The rest of the file (endpoints, CA
+certificates, the `exec` stanza) contains no secrets.
+
+Commit it as `.turnip/kubeconfig`, beside turnip's own `config.yaml`.
+
+**Pointing every Project at it**, once, in the top-level `runner.env`,
+and choosing the context in helmfile (`kubeContext`, under
+`helmDefaults` or per release):
+
+```yaml
+schemaVersion: v1alpha3
+
+runner:
+  env:
+    KUBECONFIG: /turnip/src/.turnip/kubeconfig
+
+projects:
+  - directory: infra/web
+    uses: ghcr.io/org/helmfile-aws@v1.7.4
+  - directory: infra/api
+    uses: ghcr.io/org/helmfile-aws@v1.7.4
+```
+
+The path has to be absolute. Every Project inherits this value, and the
+tool runs in each Project's own directory, so a relative `KUBECONFIG`
+would name a different file, most likely a missing one, in each.
+`/turnip/src` is the repository root in every Runner (see "Where the
+Runner puts things" in
+[`configuration.md`](../configuration.md#where-the-runner-puts-things)),
+so this path names the committed file from any Project, and helm, which
+helmfile runs per release, reads the same one.
+
+Setting it once also closes a quiet failure. A Project that is missing
+`KUBECONFIG` does not fail: with no kubeconfig, helm and helmfile fall
+back to in-cluster configuration, and plan and apply against **the
+cluster turnip itself runs in**. Set at the top level, a Project cannot
+lose it by omission, and one that writes its own `env:` keeps it.
+
+**The `uses:` line** names an image with the AWS CLI in it, since the
+vendor's has none, in place of the alias:
+
+```yaml
+    uses: ghcr.io/org/helmfile-aws@v1.7.4
+```
+
+The operator builds that image and allows it; until they do, this line
+is a validation error naming `TURNIP_ALLOWED_IMAGES`.
+
+**When a role *is* assumed.** Only if a cluster must be reached as a role
+other than the Pod's, typically a cluster in another AWS account whose
+access entries don't accept the Pod's role. Add `--role-arn <arn>` to that
+user's `args`, and have the operator allow the Pod's role to assume it.
+
+Helm plugins authenticate separately, and to different things.
+`helm-secrets` decrypting through a cloud KMS, or a chart pulled from a
+private registry, needs *cloud* credentials rather than cluster ones.
+Those come from the Pod's identity (the operator's side) and from
+`runner.env` for whatever the plugin reads out of its environment.
+
+### Gotchas
+
+#### Change counts
+
+The counts on a check's title and in the PR comment (`+1 ~4 -2`) come
+from Helmfile's own output, read differently for the plan and for the
+mutating commands.
+
+**`diff` counts releases with a diff.** Every release whose diff shows
+something counts as changed (`~`), a pending removal included; a `diff`
+never reports `+` or `-`.
+
+**`apply` and `sync` count what Helmfile reports acting on**: the
+releases its closing summary names as updated, reinstalled or deleted,
+rather than anything recomputed from the plan. Updated and reinstalled
+releases count as changed (`~`), deleted ones as destroyed (`-`); failed
+releases are not counted. A helmfile with sub-helmfiles reports on each,
+and the counts are summed. An apply or sync that changed nothing shows
+`no changes`, exactly as a plan does.
+
+**`sync` counts every release it ran**, since it upgrades all of them
+whether or not they changed, not only the ones that did.
+
+**A release whose diff is "empty after suppression" still counts.** When
+Helmfile suppresses a diff's content (a Secret's, say), `diff` still
+prints a line for the release, so it counts as changed, and `apply`
+still upgrades it and reports it. It is counted once, in both.
+
+When the counts can't be read, the run renders as `succeeded`, with no
+counts, rather than as `no changes`. `succeeded` never means no changes.
+It happens when:
+
+- **the plan was passed `-q`, `--quiet` or `--log-level warn` (or
+  higher).** Helmfile prints its summary at its info log level, so these
+  silence it, and the apply or sync replays the plan's arguments.
+  `--debug` overrides them, as it does in Helmfile. Leave them off to get
+  counts.
+- **the image runs a Helmfile older than v1.6.0**, whose summary turnip
+  does not read. The operation still succeeds or fails normally. See
+  [Gotchas for operators](#gotchas-for-operators).
+
+If an apply or sync that changed something reads `no changes`, the image
+may be silencing Helmfile's summary through its environment; see
+[Gotchas for operators](#gotchas-for-operators).
+
+#### A plan is not read-only
+
+`diff` runs the helmfile's `prepare` and `cleanup` hooks, so a plan runs
+the pull request's code with the Runner's credentials before anyone
+reviews it. See [What that grant means](#what-that-grant-means).
+
+#### A relative `KUBECONFIG` resolves per project
+
+Helmfile runs in each Project's `directory`, so a relative path in
+`runner.env` (`KUBECONFIG: kubeconfig`) names a different file for each
+Project. A `KUBECONFIG` set in the top-level `runner:` block has to be
+absolute, under `/turnip/src`, to name one file for every Project. See
+"Shared settings: the top-level `runner:` block" in
+[`configuration.md`](../configuration.md#shared-settings-the-top-level-runner-block)
+and [the repository side of the EKS recipe](#targeting-an-eks-cluster-the-repository-side).
+
+#### A missing `KUBECONFIG` targets turnip's own cluster
+
+A Project with no `KUBECONFIG` does not fail: helm and helmfile fall back
+to in-cluster configuration and act on the cluster turnip runs in. Set it
+once at the top level; see
+[the repository side of the EKS recipe](#targeting-an-eks-cluster-the-repository-side).
+
+#### A clean diff keeps its lock
+
+A Helmfile project holds its lock, and needs its apply or sync for the
+`turnip` check, even when its diff is clean; see
+[`sync` acts even when the diff is empty](#sync-acts-even-when-the-diff-is-empty).
+
+#### There is no `destroy`
+
+Remove a release with `installed: false` and apply; see
+[Removing a release](#removing-a-release).
+
+### Troubleshooting
+
+Entries that are Helmfile-specific. Everything else is in
+[`troubleshooting.md`](../troubleshooting.md).
+
+- **A tag the `helmfile` alias does not allow** (`helmfile@latest`,
+  `helmfile@v1.7`, `helmfile@1.7.4` missing its `v`): the validation error
+  names the tags the alias allows: full versions `v*.*.*` and digests.
+  Write the full version the vendor publishes, e.g. `helmfile@v1.7.4`.
+  See [The `helmfile` alias](#the-helmfile-alias).
+- **`helmfile exited 1`** (or another code): Helmfile itself ran and
+  failed. The reason is in its output, in the check's details; turnip does
+  not interpret it. See "Reading a failed check's title" in
+  [`troubleshooting.md`](../troubleshooting.md#reading-a-failed-checks-title).
+- **`helmfile could not be started`**: the `helmfile` binary was missing
+  from the image (a custom image without it on its `PATH`), or the
+  operation isn't one of `diff`, `apply` and `sync`. The details carry the
+  error, including when the project's working directory could not be
+  entered. See "Plugin execution errors" in
+  [`troubleshooting.md`](../troubleshooting.md#plugin-execution-errors).
+- **`exec: "helm": executable file not found in $PATH`, or Helmfile
+  reporting it can't find a helm plugin**: the image lacks something
+  Helmfile shells out to. Ask the operator to check it against
+  [What a custom Helmfile image must provide](#what-a-custom-helmfile-image-must-provide).
+- **`secrets is forbidden: User "system:serviceaccount:..." cannot list
+  resource "secrets"`**: the Runner's ServiceAccount has no RBAC in the
+  namespace a release lives in. Helm keeps release state in a Secret in
+  that namespace, so even a read-only `diff` must list Secrets there. This
+  is the operator's to fix; see [What to grant it](#what-to-grant-it).
+- **An apply or sync shows `succeeded` instead of counts, or `no changes`
+  when something changed**: see [Change counts](#change-counts).
+- **A plan or apply acted on the cluster turnip runs in rather than the
+  one you meant**: the Project has no `KUBECONFIG`; see
+  [A missing `KUBECONFIG` targets turnip's own cluster](#a-missing-kubeconfig-targets-turnips-own-cluster).
+
+## Running Helmfile
+
+### The vendor image
+
+The `helmfile` alias runs the vendor's image, `ghcr.io/helmfile/helmfile`,
+at a full version (`v*.*.*`) or a digest, as the repository writes it. An
+operator cannot redefine the alias, so `helmfile@v1.7.4` means the same
+image on every turnip Server, and turnip keeps no list of supported
+versions: a new Helmfile release works the moment the vendor publishes
+it.
+
+The vendor's image under any other tag (its own `latest`, say) runs only
+written out in full in `uses:` and allowed with an entry such as
+`helmfile:ghcr.io/helmfile/helmfile@latest` in `TURNIP_ALLOWED_IMAGES`.
+
+The vendor's image bundles helm, sops and the standard helm plugins,
+which is everything turnip needs from it. It has no cloud CLI.
+
+### Running a custom Helmfile image
+
+An image built `FROM` the vendor's with something added (a cloud CLI, a
+helm plugin) runs when you allow it with a `helmfile:` entry in
+`TURNIP_ALLOWED_IMAGES`, for example
+`helmfile:ghcr.io/org/helmfile-aws@v*.*.*`. The entry syntax, what
+allowing an image costs, and pulling from a private registry are in
+"Running your own image" in
+[`configuration.md`](../configuration.md#running-your-own-image).
+
+#### What a custom Helmfile image must provide
+
+turnip runs Helmfile *inside* its image (run-in-image, see "How a tool
+reaches the Runner" in
+[`configuration.md`](../configuration.md#how-a-tool-reaches-the-runner)),
+with turnip's runner binary handed to it, rather than copying one binary
+out. Helmfile needs that: it shells out to `helm`, and helm finds its
+plugins through an environment its image sets. So Helmfile's plugins and
+helpers come from the image, and a custom image must have `helmfile` on
+its `PATH` and everything Helmfile shells out to:
+
+- `helm`;
+- the helm plugins its commands use: helm-diff for `diff`, and
+  helm-secrets if the repository's helmfiles decrypt anything;
+- `sops`, if they do.
+
+Needing one the vendor's image doesn't bundle means building an image
+that has it and allowing it, not configuring turnip. Building `FROM` the
+vendor's image keeps all of the above and adds only what you need; the
+[EKS recipe](#targeting-an-eks-cluster-the-operator-side) below does
+exactly this. A helper missing from a version the vendor's own image ships
+is a turnip bug worth reporting.
+
+### Authentication and cluster access
+
+turnip ships no ServiceAccount and no RBAC for the Runner (see "What the
+Runner's ServiceAccount needs" in
+[`configuration.md`](../configuration.md#what-the-runners-serviceaccount-needs)).
+This section is what a Helmfile Runner needs.
+
+#### Inside the cluster turnip runs in
+
+Inside the cluster turnip runs in there is nothing to configure: the
+Runner Pod carries a projected ServiceAccount token, and helm's client
+finds it the way any in-cluster client does. No kubeconfig, no cloud
+credentials, no `aws eks update-kubeconfig`. *Which* ServiceAccount comes
+from `TURNIP_RUNNER_SERVICE_ACCOUNT`, or from `runner.serviceAccount`
+(top-level or a Project's) where you permit that override.
+
+Targeting any **other** cluster needs a kubeconfig, which the repository
+commits; see
+[Targeting an EKS cluster: the repository side](#targeting-an-eks-cluster-the-repository-side).
+
+#### Targeting an EKS cluster: the operator side
+
+This is the half of the recipe that lives in the deployment: the
+identity the Runner signs with and the image it runs. The kubeconfig,
+the `runner:` block and the `uses:` line are the repository's; see
+[Targeting an EKS cluster: the repository side](#targeting-an-eks-cluster-the-repository-side).
+
+**The identity.** With EKS Pod Identity, the Runner Pod already *is* the
+IAM role associated with its ServiceAccount; nothing assumes a role. The
+Pod Identity agent injects `AWS_CONTAINER_CREDENTIALS_FULL_URI` and
+`AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, and the AWS CLI's default
+credential chain uses them. The target cluster grants that role access
+through an access entry. Select the ServiceAccount with
+`TURNIP_RUNNER_SERVICE_ACCOUNT`, or let the repository choose it with
+`runner.serviceAccount` (once at the top level, or per Project) where the
+override is permitted.
+
+**When a role *is* assumed.** Only if a cluster must be reached as a role
+other than the Pod's, typically a cluster in another AWS account whose
+access entries don't accept the Pod's role. The repository adds
+`--role-arn <arn>` to that user's `args` in its kubeconfig; allow the
+Pod's role to assume it.
+
+**The image** needs the AWS CLI next to the tool, and a version recent
+enough to read Pod Identity's token file; older versions behave as if no
+credentials existed. EKS's Pod Identity documentation lists the minimum
+versions. The vendor's helmfile image has no AWS CLI, so build one `FROM`
+it that adds the CLI and keeps everything else (helm, its plugins,
+`sops`):
+
+```dockerfile
+# The vendor's image is Alpine-based; Alpine's aws-cli package is v2.
+FROM ghcr.io/helmfile/helmfile:v1.7.4
+RUN apk add --no-cache aws-cli && aws --version
+```
+
+Push it under a tag that tracks the helmfile it was built from (here
+`ghcr.io/org/helmfile-aws:v1.7.4`), then allow it:
+
+```
+TURNIP_ALLOWED_IMAGES=helmfile:ghcr.io/org/helmfile-aws@v*.*.*
+```
+
+The repository then names it in `uses:` in place of the alias. If the
+image lives in ECR in the cluster's own account, the nodes can usually
+pull it with no further setup; otherwise see "Pulling from a private
+registry" under "Running your own image" in
+[`configuration.md`](../configuration.md#running-your-own-image).
+
+**Verifying access before the first plan** (optional; the first plan
+tells you too): start a throwaway Pod in the cluster turnip runs in, with
+the Runner's ServiceAccount and any image that has the AWS CLI and
+kubectl, copy the kubeconfig in, and run:
+
+```sh
+aws sts get-caller-identity                       # the Pod Identity role
+KUBECONFIG=./kubeconfig kubectl --context <cluster> get namespaces
+```
+
+If both succeed, the Runner can reach the cluster the same way.
+
+Helm plugins authenticate separately, and to different things.
+`helm-secrets` decrypting through a cloud KMS, or a chart pulled from a
+private registry, needs *cloud* credentials rather than cluster ones.
+Those come from the Pod's identity (EKS Pod Identity/IRSA, GCP Workload
+Identity, selected by that same ServiceAccount) and from `runner.env`
+for whatever the plugin reads out of its environment.
+
+#### What to grant it
+
+**In practice, administrative access to the cluster.** That is not a
+recommendation made lightly, so here is why the smaller grants do not
+hold.
+
+Helm keeps each release's state in a Secret in the release's namespace, so
+even a read-only `diff` must list Secrets there. That is the first failure
+most people meet:
+
+```
+Error: query: failed to query with labels: secrets is forbidden:
+User "system:serviceaccount:<namespace>:<name>" cannot list resource
+"secrets" in API group "" in the namespace "<release-namespace>"
+```
+
+Granting exactly that gets past exactly that error, and then the next one
+arrives: a chart's `lookup`, a CRD, a namespace, a cluster-scoped
+resource. **Enumerating minimal permissions for helmfile is a losing
+game**: a helmfile manages whatever its charts declare, so the permission
+set is the union of every kind any chart touches, and it moves whenever a
+chart does. `apply` needs create/update/delete across all of it, and a
+repository that installs CRDs or namespaces needs cluster-scoped rights to
+match.
+
+Neither built-in shortcut works. `view` excludes Secrets deliberately:
+*"reading the contents of Secrets enables access to ServiceAccount
+credentials in the namespace, which would allow API access as any
+ServiceAccount in the namespace (a form of privilege escalation)"*, so it
+cannot even diff. `edit` covers Secrets but not cluster-scoped resources
+or CRDs. **Granting only Secrets is not the fix either**: it clears the
+error above, and then the next one arrives for a CRD, a namespace, or
+whatever kind a chart's `lookup` consults.
+
+For a Runner that applies, bind `cluster-admin` and know that you did:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: turnip-runner
+subjects:
+  - kind: ServiceAccount
+    name: turnip-runner
+    namespace: turnip-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+```
+
+A Runner that only ever diffs can be narrower (Secrets plus read on what
+the charts consult, bound per namespace), but expect to revisit it as the
+charts change.
+
+#### What that grant means
+
+**A plan is not a read-only operation in the security sense.** helmfile's
+`prepare` and `cleanup` hooks run for *every* command, `diff` included;
+only `presync`/`postsync` are restricted to the mutating ones, which
+helmfile documents as the place for commands that may mutate cluster state
+"as it will not be run for read-only operations like `lint`, `diff` or
+`template`". A hook runs an arbitrary executable inside the Runner
+container, and that container holds the ServiceAccount token.
+
+Since a plan runs automatically when a pull request opens, a pull request
+that adds a `prepare` hook runs arbitrary code with the Runner's cluster
+credentials before anyone reviews it. If those credentials are
+`cluster-admin`, so is the pull request.
+
+That is the same trust boundary the committed IaC already sits on (a
+chart can redirect a resource as readily as a hook can run one), but it
+is sharper than it looks, and two things follow:
+
+- **Run turnip only on repositories whose contributors you already trust
+  with the cluster.** turnip refuses to run anything on a pull request
+  from a fork, on both trigger paths (see "Pull requests from forks" in
+  [`usage.md`](../usage.md#pull-requests-from-forks)), so this is about
+  the people who can push a branch to the repository itself. For them,
+  opening a pull request is enough to run a hook with the Runner's
+  credentials.
+- **Scope by cluster, not by rule set.** The practical blast radius is
+  decided when you choose which cluster turnip runs in and which
+  repository drives it, not by trimming permissions that will grow back
+  the next time a chart adds a resource kind.
+
+See also [`SECURITY.md`](../../SECURITY.md).
+
+### Gotchas for operators
+
+- **Counts after an `apply` or `sync` need Helmfile v1.6.0 or later.**
+  turnip reads what changed from the summary Helmfile prints when it
+  finishes, in the form v1.6.0 introduced. An older version still runs,
+  and the operation still succeeds or fails normally; it renders as
+  succeeded with no counts rather than as `no changes`. See
+  [Change counts](#change-counts).
+- **Don't set `HELMFILE_QUIET` or `HELMFILE_LOG_LEVEL`** in an image
+  turnip runs. Helmfile prints its summary at its info log level, and
+  turnip sees the command line, not the environment, so a level set this
+  way silences the summary without the `succeeded` fallback: the run then
+  reads `no changes`. The same holds for either variable set through a
+  repository's `runner.env`.

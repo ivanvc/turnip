@@ -11,6 +11,8 @@ func TestChangeText(t *testing.T) {
 	assert.Equal(t, "+1 ~4 -2", ChangeText(ChangeCounts{Add: 1, Change: 4, Destroy: 2}))
 	assert.Equal(t, "+0 ~1 -0", ChangeText(ChangeCounts{Change: 1}))
 	assert.Equal(t, "no changes", ChangeText(ChangeCounts{}))
+	assert.Equal(t, "succeeded", ChangeText(ChangeCounts{Unreported: true}),
+		"an unreported success is never rendered as no changes")
 }
 
 // A check run title is not HTML, so the plain form must not escape what

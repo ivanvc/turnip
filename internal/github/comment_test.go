@@ -225,6 +225,52 @@ func TestBuildConsolidatedComment_NoChangesSaysSoRatherThanZeros(t *testing.T) {
 	assert.NotContains(t, bodies[0], "+0 ~0 -0")
 }
 
+// Requirement 5.3: a Plugin that declares its counts unreported renders a
+// successful Mutating_Operation as "succeeded" in the summary line and the
+// verdict line, never as "no changes".
+func TestBuildConsolidatedComment_UnreportedRendersAsSucceeded(t *testing.T) {
+	bodies := BuildConsolidatedComment([]ProjectResult{
+		{ProjectName: "web", Operation: "apply", Success: true, Output: "applied",
+			Changes: ChangeCounts{Unreported: true}},
+	})
+	require.Len(t, bodies, 1)
+
+	assert.Contains(t, bodies[0], "<summary>✅ <code>web</code>: apply, succeeded</summary>")
+	assert.Contains(t, bodies[0], "**Succeeded in `web`.**")
+	assert.NotContains(t, bodies[0], "no changes")
+}
+
+// Requirement 5.3, multi-Project: a run mixing an unreported success with
+// a counted one states the total from the counted Project alone and notes
+// the unreported one separately, never folding it into "no changes".
+func TestBuildConsolidatedComment_UnreportedMixedWithCounted(t *testing.T) {
+	bodies := BuildConsolidatedComment([]ProjectResult{
+		{ProjectName: "web", Operation: "apply", Success: true, Output: "applied",
+			Changes: ChangeCounts{Change: 3}},
+		{ProjectName: "api", Operation: "apply", Success: true, Output: "applied",
+			Changes: ChangeCounts{Unreported: true}},
+	})
+	require.Len(t, bodies, 1)
+
+	assert.Contains(t, bodies[0], "**3 changes across 2 projects**: 1 succeeded.")
+	assert.Contains(t, bodies[0], "<summary>✅ <code>web</code>: apply, +0 ~3 -0</summary>")
+	assert.Contains(t, bodies[0], "<summary>✅ <code>api</code>: apply, succeeded</summary>")
+}
+
+// Requirement 3.1: a failed Mutating_Operation still renders as failed,
+// whatever its Plugin says about unreported counts.
+func TestBuildConsolidatedComment_FailedRendersFailedEvenWhenUnreported(t *testing.T) {
+	bodies := BuildConsolidatedComment([]ProjectResult{
+		{ProjectName: "web", Operation: "apply", Success: false, Output: "boom",
+			Changes: ChangeCounts{Unreported: true}},
+	})
+	require.Len(t, bodies, 1)
+
+	assert.Contains(t, bodies[0], "<summary>❌ <code>web</code>: apply, failed</summary>")
+	assert.Contains(t, bodies[0], "**`web` failed.**")
+	assert.NotContains(t, bodies[0], "succeeded")
+}
+
 // Requirement 2.4: a failure reports no usable counts, so none are shown —
 // presenting its zeroes would make a run that never completed look like
 // one that planned nothing.
@@ -313,6 +359,10 @@ func TestBuildVerdictLine(t *testing.T) {
 	failed := func(name string) ProjectResult {
 		return ProjectResult{ProjectName: name, Operation: "diff", Success: false}
 	}
+	unreported := func(name string) ProjectResult {
+		return ProjectResult{ProjectName: name, Operation: "apply", Success: true,
+			Changes: ChangeCounts{Unreported: true}}
+	}
 
 	for _, tc := range []struct {
 		name    string
@@ -338,6 +388,36 @@ func TestBuildVerdictLine(t *testing.T) {
 		{
 			"changes everywhere", []ProjectResult{changed("a", 2), changed("b", 3)},
 			"**5 changes across 2 projects.**",
+		},
+		{"one project unreported", []ProjectResult{unreported("infra")}, "**Succeeded in `infra`.**"},
+		{
+			"all unreported", []ProjectResult{unreported("a"), unreported("b")},
+			"**Succeeded across 2 projects.**",
+		},
+		{
+			"unreported mixed with counted changes",
+			[]ProjectResult{changed("a", 4), unreported("b")},
+			"**4 changes across 2 projects**: 1 succeeded.",
+		},
+		{
+			"unreported, counted and no changes",
+			[]ProjectResult{changed("a", 4), unreported("b"), clean("c")},
+			"**4 changes across 3 projects**: 1 with no changes, 1 succeeded.",
+		},
+		{
+			"unreported, counted, no changes and failed",
+			[]ProjectResult{changed("a", 4), unreported("b"), clean("c"), failed("d")},
+			"**4 changes across 4 projects**: 1 with no changes, 1 succeeded, 1 failed.",
+		},
+		{
+			"unreported mixed with no changes, no counted changes",
+			[]ProjectResult{unreported("a"), clean("b")},
+			"**Succeeded across 2 projects**: 1 with no changes.",
+		},
+		{
+			"unreported mixed with failed, no counted changes",
+			[]ProjectResult{unreported("a"), failed("b")},
+			"**Succeeded across 2 projects**: 1 failed.",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

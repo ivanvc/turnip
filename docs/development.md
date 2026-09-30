@@ -7,7 +7,8 @@ spec-driven workflow under `.kiro/specs/`, are in [`CLAUDE.md`](../CLAUDE.md).
 
 Everything turnip knows about a tool lives in that tool's Plugin, and the
 Plugins turnip ships are listed in one place. Adding a tool is three steps,
-all inside `internal/plugin`; nothing else in the tree names a tool.
+all inside `internal/plugin`, and a documentation page; nothing else in
+the code names a tool.
 [`internal/plugin/helmfile.go`](../internal/plugin/helmfile.go) is the
 worked example.
 
@@ -71,5 +72,81 @@ a `BinaryPath` exactly when the strategy is `CopyOut`. It exists so a
 half-declared Plugin fails in `go test` rather than in a Runner Job, after
 a Lock is held and a check is running.
 
-Finally, update [`configuration.md`](configuration.md)'s "Tool support"
-table.
+### 4. Document it
+
+A new plugin ships a `docs/plugins/<tool>.md` page, the one place for
+everything specific to that tool; [`plugins/helmfile.md`](plugins/helmfile.md)
+is the model. The page opens with a two-line note saying which section is
+for whom, and has two audience sections:
+
+- **Using `<tool>`**, for people writing `turnip.yaml` and commenting on
+  pull requests: its operations (which one is the plan, which are
+  mutating, and whether any acts without changes), the `uses:` alias and
+  the tags it allows, the `with:` keys, authentication from the
+  repository's side, what its counts mean (including how its mutating
+  commands report what they changed, and when they read `succeeded`),
+  its gotchas, and the troubleshooting a pull request author meets.
+- **Running `<tool>`**, for operators: the vendor image, how it is
+  provisioned and what a custom image must provide, the identity and
+  permissions the Runner needs and what that grant means, and the
+  operator's gotchas.
+
+The page describes behavior only. How the Plugin works inside (which
+stream it parses, what output formats it recognizes, why it chose its
+provisioning strategy) goes in a section of this file, as "The Helmfile
+plugin" below does.
+
+Then link the page from [`configuration.md`](configuration.md)'s "Tool
+support" table and from the "Plugins" list in the
+[`README`](../README.md), and update that table's row.
+
+## The Helmfile plugin
+
+How [`internal/plugin/helmfile.go`](../internal/plugin/helmfile.go) and
+`helmfile_parse.go` work inside. What this means for users and operators
+is in [`plugins/helmfile.md`](plugins/helmfile.md).
+
+**Provisioning: run-in-image.** Helmfile is a runtime, not a binary: it
+shells out to `helm`, `helmfile diff` needs the helm-diff plugin,
+helm-secrets needs `sops`, and helm finds its plugins through an
+environment its image sets. Copying one binary out produced exactly the
+failure you'd expect: `exec: "helm": executable file not found in $PATH`.
+
+**`ActsWithoutChanges` is true** because of `sync`, which runs
+`helm upgrade --install` for every release regardless of the diff.
+`apply` alone would answer false: it diffs first and syncs only the
+releases that changed.
+
+**Counting a `diff`** reads standard output only. Each
+`Comparing release=<name>, chart=<chart>` header followed by at least one
+non-blank line before the next header (or the end) is one changed
+release, reported as `Change`. Standard error carries Helmfile's progress
+and errors ("Building dependency", "Adding repo", a failed helm diff),
+which, interleaved, would read as the body of the preceding release.
+turnip's own `@@ turnip: … @@` annotation lines are skipped.
+
+**Counting an `apply` or `sync`** reads standard error only, where
+Helmfile prints its Release_Tables when it finishes; standard output
+carries diff bodies and manifest content that must not be read as one.
+A table is a `=`-framed banner (`=== Updated Releases ===`, as Helmfile
+prints from v1.6.0 on), a header row that is skipped, then one row per
+release until a blank line or the next banner. `Updated Releases` and
+`Reinstalled Releases` rows count as `Change`, `Deleted Releases` rows as
+`Destroy`; any other title (the failed tables) is skipped. Tables are
+summed, since Helmfile prints one set per sub-helmfile. ANSI color codes
+are stripped first.
+
+**When counts are not reported** (`MutationChangesReported` returns
+false, and the run renders `succeeded`), judged from the whole transcript:
+
+- one of the older upper-case banners (`UPDATED RELEASES:`,
+  `REINSTALLED RELEASES:`, `DELETED RELEASES:`, `FAILED RELEASES:`,
+  `FAILED TO DELETE RELEASES:`) appears, meaning a Helmfile before v1.6.0
+  whose tables are not parsed;
+- the command annotation's argv sets the log level above info: `-q`,
+  `--quiet`, or `--log-level` `warn`, `error`, `dpanic`, `panic` or
+  `fatal`, following Helmfile's precedence (`--debug` wins over `--quiet`,
+  which wins over `--log-level`; parsing stops at `--`).
+
+`HELMFILE_QUIET` and `HELMFILE_LOG_LEVEL` in the environment are not
+visible to this check, which is why the user docs say not to set them.

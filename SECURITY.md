@@ -14,7 +14,8 @@ branch to the repository itself, but it does not narrow what they can do
 once they have. Run turnip only on repositories whose contributors you
 already trust with what the Runner can reach, and decide that reach by
 which cluster and which credentials you give the Runner
-(`docs/configuration.md`, "What that grant means").
+(for Helmfile, "What that grant means" in
+[`docs/plugins/helmfile.md`](docs/plugins/helmfile.md#what-that-grant-means)).
 
 ## Review before apply is off by default
 

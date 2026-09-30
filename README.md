@@ -66,6 +66,13 @@ turnip's own manifests live under [`deploy/`](deploy/);
 | [`docs/troubleshooting.md`](docs/troubleshooting.md) | what a given symptom (a stuck lock, a failed check run, a timeout) means and what to do about it |
 | [`docs/development.md`](docs/development.md) | contributing: adding a tool (its Plugin, how it is provisioned, registering it) |
 
+### Plugins
+
+One page per tool, with everything specific to it: its operations, what
+`uses:` and `with:` accept, how it reaches a cluster, and its gotchas.
+
+- [Helmfile](docs/plugins/helmfile.md)
+
 ## Development
 
 See [`CLAUDE.md`](CLAUDE.md) for build/test/lint commands and the

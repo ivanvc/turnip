@@ -236,6 +236,169 @@ func TestHelmfilePlugin_ChangeCountIgnoresStderrAfterTheLastRelease(t *testing.T
 	assert.Equal(t, 1, result.ChangeSummary.Change, "api is unchanged; the stderr line is not its body")
 }
 
+// Execute reads apply's and sync's counts from stderr's Release_Tables,
+// never from stdout, and diff keeps counting from stdout as before
+// (design's Testing section, "Execute").
+func TestHelmfilePlugin_ExecuteReadsMutationCountsFromStderr(t *testing.T) {
+	stderrTable := table(fixedBanner("Updated Releases"), updatedHeader,
+		"web   default   example.com/web   1.2.3   1s")
+
+	for _, operation := range []string{"apply", "sync"} {
+		t.Run(operation, func(t *testing.T) {
+			var calls []recordedCall
+			p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{
+				stdoutLine("this line names Updated Releases but is stdout, not the table"),
+				stderrLine(fixedBanner("Updated Releases")),
+				stderrLine(updatedHeader),
+				stderrLine("web   default   example.com/web   1.2.3   1s"),
+			}, 0, nil)}
+
+			result, err := p.Execute(context.Background(), operation, ExecuteOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, ChangeSummary{Change: 1}, result.ChangeSummary)
+		})
+	}
+
+	t.Run("diff still counts from stdout", func(t *testing.T) {
+		var calls []recordedCall
+		p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{
+			stdoutLine("Comparing release=web, chart=charts/web"),
+			stdoutLine("web, Deployment (apps) has changed:"),
+			stderrLine(stderrTable),
+		}, 0, nil)}
+
+		result, err := p.Execute(context.Background(), "diff", ExecuteOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, ChangeSummary{Change: 1}, result.ChangeSummary, "diff's own stdout parse, unaffected by stderr")
+	})
+}
+
+// A release whose diff was "empty after suppression" on stdout is still
+// upgraded by apply, and appears in stderr's Updated table. It is counted
+// once, from the table, never again from stdout (Requirement 4.1).
+func TestHelmfilePlugin_ExecuteCountsSuppressedDiffReleaseOnce(t *testing.T) {
+	var calls []recordedCall
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{
+		stdoutLine("Comparing release=web, chart=example.com/web"),
+		stdoutLine("default, web, Deployment (apps) has changed:"),
+		stdoutLine("-  replicas: 1"),
+		stdoutLine("+  replicas: 2"),
+		stdoutLine("Comparing release=api, chart=example.com/api"),
+		stdoutLine("default, api, Secret (v1) has changed, but diff is empty after suppression."),
+		stderrLine("Upgrading release=web, chart=example.com/web"),
+		stderrLine("Upgrading release=api, chart=example.com/api"),
+		stderrLine(""),
+		stderrLine(fixedBanner("Updated Releases")),
+		stderrLine(updatedHeader),
+		stderrLine("web   default   example.com/web   1.2.3   2s"),
+		stderrLine("api   default   example.com/api   4.5.6   1s"),
+		stderrLine(""),
+	}, 0, nil)}
+
+	result, err := p.Execute(context.Background(), "apply", ExecuteOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, ChangeSummary{Change: 2}, result.ChangeSummary)
+}
+
+// A Release_Table's banner text landing in a stdout diff body (e.g. a
+// ConfigMap whose data happens to hold it) must never inflate an apply's
+// or sync's count: Execute reads stderr only for those operations.
+func TestHelmfilePlugin_ExecuteIgnoresTableTextOnStdout(t *testing.T) {
+	var calls []recordedCall
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{
+		stdoutLine(fixedBanner("Updated Releases")),
+		stdoutLine(updatedHeader),
+		stdoutLine("web   default   example.com/web   1.2.3   1s"),
+	}, 0, nil)}
+
+	result, err := p.Execute(context.Background(), "apply", ExecuteOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, ChangeSummary{}, result.ChangeSummary)
+}
+
+func TestHelmfilePlugin_MutationChangesReported(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{
+			name:   "a current transcript with the framed banner",
+			output: table(fixedBanner("Updated Releases"), updatedHeader, "web   default   example.com/web   1.2.3   1s"),
+			want:   true,
+		},
+		{
+			name:   "an older-format transcript",
+			output: "UPDATED RELEASES:\n" + updatedHeader + "\nweb   default   example.com/web   1.2.3   1s\n\n",
+			want:   false,
+		},
+		{
+			name:   "no table at all",
+			output: "Upgraded release=web\n",
+			want:   true,
+		},
+		{
+			name:   "an older-format transcript that only reinstalled (v1.4.0 to v1.5.x)",
+			output: "REINSTALLED RELEASES:\n" + updatedHeader + "\nweb   default   example.com/web   1.2.3   1s\n\n",
+			want:   false,
+		},
+		{
+			name:   "run with -q: Helmfile printed no tables",
+			output: "@@ turnip: a, helmfile v1.8.1 @@\n@@ turnip: helmfile apply -q @@\n@@ turnip: exit 0 in 2s @@",
+			want:   false,
+		},
+		{
+			name:   "run with --quiet",
+			output: "@@ turnip: helmfile --environment staging apply --quiet @@\n",
+			want:   false,
+		},
+		{
+			name:   "run with --log-level warn",
+			output: "@@ turnip: helmfile apply --log-level warn @@\n",
+			want:   false,
+		},
+		{
+			name:   "run with --log-level=error",
+			output: "@@ turnip: helmfile sync --log-level=error @@\n",
+			want:   false,
+		},
+		{
+			name:   "--debug overrides -q, as in Helmfile",
+			output: "@@ turnip: helmfile apply -q --debug @@\n" + table(fixedBanner("Updated Releases"), updatedHeader, "web   default   example.com/web   1.2.3   1s"),
+			want:   true,
+		},
+		{
+			name:   "run with --log-level info still prints its tables",
+			output: "@@ turnip: helmfile apply --log-level info @@\n",
+			want:   true,
+		},
+		{
+			name:   "-q after -- is not Helmfile's flag",
+			output: "@@ turnip: helmfile apply -- -q @@\n",
+			want:   true,
+		},
+		{
+			name:   "-q in the tool's own output is not the argv",
+			output: "@@ turnip: helmfile apply @@\nhelmfile apply -q\n",
+			want:   true,
+		},
+		{
+			name: "a current run whose stdout diff holds the older banner's text: the accepted trade-off",
+			output: "Comparing release=web, chart=charts/web\n" +
+				"UPDATED RELEASES:\n" +
+				"this is diff content that happens to contain that text\n",
+			want: false,
+		},
+	}
+
+	p := NewHelmfilePlugin()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, p.MutationChangesReported(tt.output))
+		})
+	}
+}
+
 // A stderr line between two releases changes neither.
 //
 // Mutation check: counting from the whole record reports 2 here.

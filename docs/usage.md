@@ -8,8 +8,9 @@ happens day-to-day on a pull request.
 
 Opening a PR, or pushing a new commit to one, triggers a **plan**
 automatically for every project whose `whenModified` glob matches at
-least one changed file, no comment needed. For Helmfile, "plan" means
-`helmfile diff`. A project with no `whenModified` is never planned this
+least one changed file, no comment needed. "Plan" means the tool's own
+plan command (for Helmfile, `helmfile diff`; see "Plan commands and
+mutating commands"). A project with no `whenModified` is never planned this
 way: it runs only when a comment names it (see "Which projects a command
 targets").
 
@@ -110,7 +111,8 @@ The difference: `/turnip ...` considers projects using any tool;
 `/helmfile ...` considers only the projects whose `uses:` runs Helmfile.
 Each tool this Server has a Plugin for gets its own trigger word, and
 today that is only `/helmfile`. `<operation>` must be one the tool actually
-supports (Helmfile: `diff`, `apply`, `sync`).
+supports; each tool's page lists its operations (Helmfile:
+[`diff`, `apply`, `sync`](plugins/helmfile.md#operations)).
 
 ### Plan commands and mutating commands
 
@@ -122,7 +124,7 @@ new operation is mutating unless it is the plan.
 
 | Tool | Plan command | Mutating commands |
 |---|---|---|
-| Helmfile | `diff` | `apply`, `sync` |
+| [Helmfile](plugins/helmfile.md#operations) | `diff` | `apply`, `sync` |
 
 The split decides most of what turnip allows:
 
@@ -142,7 +144,9 @@ The split decides most of what turnip allows:
 
 A plan changes no infrastructure, but it is not read-only: it runs the
 project's code with the Runner's credentials (Helmfile's `prepare` hooks
-run during `diff`). See [`SECURITY.md`](../SECURITY.md).
+run during `diff`; see
+[What that grant means](plugins/helmfile.md#what-that-grant-means)). See
+[`SECURITY.md`](../SECURITY.md).
 
 ## Which projects a command targets
 
@@ -211,17 +215,6 @@ trigger that supplies any, naming what they refused. That is what makes an
 apply match the diff you reviewed: the two cannot disagree, because only
 one of them chose a scope.
 
-### Removing a release
-
-There is no `destroy` for Helmfile. `helmfile destroy` has no dry-run and
-uninstalls everything its selector matches regardless of `installed:`, so
-no plan could show you what it would remove, and turnip only runs what a
-plan described.
-
-To remove a release, mark it `installed: false`. `diff` reports it as a
-pending removal and `apply` carries it out, reviewed like any other
-change.
-
 You can put more than one trigger line in a single comment; each runs in
 order (one finishes before the next starts), and a malformed line (e.g.
 `/turnip` with nothing after it) is reported back without blocking the
@@ -234,6 +227,14 @@ command like `/jira`, a `/cc`, or a file path pasted at the start of a
 line) is ignored
 completely: no operation, and no reply saying it was ignored. Turnip
 stays silent on comments that aren't addressed to it.
+
+### Removing infrastructure
+
+turnip only runs what a plan described, so removing infrastructure goes
+through a plan like any other change. Whether a tool offers a command
+for it, and how to remove things without one, is on the tool's page.
+Helmfile has no `destroy`; see
+[Removing a release](plugins/helmfile.md#removing-a-release).
 
 ### Releasing a lock manually
 
@@ -298,9 +299,11 @@ A lock that is still held is always listed in the comment's footer with
 | apply or sync failed, or timed out | held, plan invalidated |
 | PR merged or closed, or `/turnip unlock` | released |
 
-Helmfile is a tool that *can* act without changes, because `helmfile
-sync` upgrades every release regardless of the diff. So a Helmfile
-project keeps its lock even when its diff comes back clean.
+A tool *can act without changes* when one of its mutating commands can
+change infrastructure even though the plan found nothing; a project of
+such a tool keeps its lock even when its plan comes back clean. Each
+tool's page says whether it is one. Helmfile is, because of `sync`; see
+[`sync` acts even when the diff is empty](plugins/helmfile.md#sync-acts-even-when-the-diff-is-empty).
 
 ## Who can trigger what
 
@@ -396,9 +399,10 @@ Details worth knowing:
   refused override is different: changing `turnip.yaml` fixes it, so it is
   red here and on the project's own check.
 - **Whether a no-change plan needs an apply depends on the tool.** A plan
-  that finds nothing to apply counts as done, except for Helmfile, whose
-  `sync` acts even when the diff is empty, so a Helmfile project always
-  needs its apply or sync.
+  that finds nothing to apply counts as done, except for a tool that can
+  act without changes (see "What releases a lock"), whose projects always
+  need their apply. Helmfile is one; see
+  [`sync` acts even when the diff is empty](plugins/helmfile.md#sync-acts-even-when-the-diff-is-empty).
 - **`/turnip unlock` does not satisfy it.** Unlocking abandons a plan; it
   doesn't carry it out. Push a new commit, or apply, to move `turnip`.
 - **Every project planned on the commit counts**, including one you
@@ -421,7 +425,7 @@ Details worth knowing:
   |---|---|
   | a plan running | `running`, or `running, -l name=api` when scoped |
   | an apply or sync running | `running the recorded plan, +1 ~4 -2` |
-  | succeeded | `+1 ~4 -2`, or `no changes`, plus the scope when there was one |
+  | succeeded | `+1 ~4 -2`, `no changes`, or `succeeded` when an apply's counts can't be read, plus the scope when there was one |
   | the tool failed | `helmfile exited 1` |
   | turnip failed around the tool | `clone failed`, `workspace could not be prepared`, `helmfile could not be started` |
   | the Runner Job was refused | `Runner Job could not be created` |
@@ -433,6 +437,17 @@ Details worth knowing:
   A tool's failure is reported only as its exit code: the reason is in its
   output, one click away in the check's details, and turnip does not guess
   at it.
+
+  **A mutating command's counts are what the tool itself reports acting
+  on**, read from its own output rather than recomputed from the plan;
+  how each tool reports them is under "Gotchas" on its page (for
+  Helmfile, [Change counts](plugins/helmfile.md#change-counts)). It
+  renders `succeeded`, with no counts, instead of a count of zero, in two
+  cases: the Plugin says its mutating commands don't report meaningful
+  counts at all (a tool whose apply replays a plan the plan already
+  showed), or the tool printed nothing the Plugin can read counts from.
+  Either way, `succeeded` never means `no changes`; a mutating command
+  that changed nothing still shows `no changes`, exactly as a plan does.
 
   **A queued check is not a failure.** The plan did not run because
   another pull request holds the project's lock, which is nothing this pull

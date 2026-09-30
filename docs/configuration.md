@@ -151,9 +151,9 @@ The part after the last `@` is the **tag-spec**: one exact **tag**, or a
 **digest** written `sha256:` followed by 64 lowercase hex characters.
 Nothing else: no pattern, no version range, and no digest algorithm but
 `sha256`. It is used **exactly as written**: turnip never adds or removes a
-`v`. Write the tag the vendor publishes, the one you would `docker pull`.
-helmfile's tags carry a `v`, so it is `helmfile@v1.7.4`, not
-`helmfile@1.7.4`.
+`v`. Write the tag the vendor publishes, the one you would `docker pull`;
+each tool's page shows its vendor's tag format (see
+[Helmfile's](plugins/helmfile.md#the-helmfile-alias)).
 
 `uses:` never names the tool for an image: the operator's entry allowing
 the image says which tool it runs (so `ghcr.io/org/helmfile-aws@v1.7.4`
@@ -178,14 +178,10 @@ A digest pasted as the registry prints it
 
 **Which tags each alias allows.** An alias allows only full versions and
 digests of its vendor's image, so it can never move to a new release, or
-to a floating tag, with no change to `turnip.yaml`:
-
-| Alias | Image | Allowed tag-specs |
-|---|---|---|
-| `helmfile` | `ghcr.io/helmfile/helmfile` | `v*.*.*`, `sha256:*` |
-
-So `helmfile@latest`, `helmfile@v1.7` and `helmfile@1.7.4` are all
-validation errors, and the error names the tags the alias does allow. An
+to a floating tag, with no change to `turnip.yaml`. Each tool's page lists
+the exact tag-specs its alias allows
+([Helmfile](plugins/helmfile.md#the-helmfile-alias)). Any other tag is a
+validation error, and the error names the tags the alias does allow. An
 operator cannot redefine an alias, so `helmfile@v1.7.4` means the same
 image on every turnip Server. The vendor's image under any other tag
 (its own `latest`, say) runs only written out in full and allowed by the
@@ -254,11 +250,12 @@ error of `turnip.yaml`, naming the image and `TURNIP_ALLOWED_IMAGES`.
 main container, with turnip's runner binary handed to it (run-in-image,
 see "How a tool reaches the Runner" below), whatever strategy its tool
 normally uses. So it must have the tool on its `PATH`, and everything the
-tool's Plugin shells out to: for helmfile, `helm` and the plugins its
-commands use (helm-diff for `diff`, and helm-secrets and `sops` if your
-helmfiles decrypt anything). Building `FROM` the vendor's image keeps all
-of that and adds only what you need; the EKS recipe below does exactly
-this.
+tool's Plugin shells out to, which each tool's page lists (see
+[Helmfile's](plugins/helmfile.md#what-a-custom-helmfile-image-must-provide)).
+Building `FROM` the vendor's image keeps all of that and adds only what
+you need; Helmfile's
+[EKS recipe](plugins/helmfile.md#targeting-an-eks-cluster-the-operator-side)
+does exactly this.
 
 **Pulling from a private registry.** turnip handles no registry
 credentials. The Runner Pod pulls the way any Pod does:
@@ -286,12 +283,8 @@ Configuration for the tool itself. Nothing turnip reads lives here: every
 key is passed to the plugin for that tool, which is why unrecognized keys
 inside `with` are accepted rather than rejected.
 
-| Key | Tool | Meaning |
-|---|---|---|
-| `environment` | Helmfile | helmfile's own `--environment` flag |
-| `workspace` | Terraform | the Terraform workspace name |
-| `backendConfig` | Terraform | backend configuration for the tool's initialization step |
-| `stack` | Pulumi | the Pulumi stack name |
+Each tool's page lists the keys its plugin reads (see
+[Helmfile's](plugins/helmfile.md#with)).
 
 ### `runner`: where it runs
 
@@ -446,238 +439,15 @@ install turnip. `deploy/base` creates only the Server's own
 ServiceAccount and Role, which cover creating Jobs and reading Pods and
 nothing else.
 
-#### How helmfile authenticates
-
-Inside the cluster turnip runs in there is nothing to configure: the
-Runner Pod carries a projected ServiceAccount token, and helm's client
-finds it the way any in-cluster client does. No kubeconfig, no cloud
-credentials, no `aws eks update-kubeconfig`. *Which* ServiceAccount comes
-from `TURNIP_RUNNER_SERVICE_ACCOUNT`, or from `runner.serviceAccount`
-(top-level or a Project's) where the operator permits that override.
-
-Targeting any **other** cluster needs a kubeconfig. turnip does not
-generate one, and doesn't need to; see the next section.
-
-#### Targeting an EKS cluster turnip is not running in
-
-No step has to run before the tool. A kubeconfig produced by
-`aws eks update-kubeconfig` does not contain credentials: it tells the
-client to run `aws eks get-token` whenever it needs one. helm, helmfile
-and kubectl all run that command themselves, on demand. So the
-kubeconfig is generated **once**, committed to the repository, and the
-Runner only needs `aws` on its PATH and an AWS identity to sign with.
-
-**The identity.** With EKS Pod Identity, the Runner Pod already *is* the
-IAM role associated with its ServiceAccount; nothing assumes a role. The
-Pod Identity agent injects `AWS_CONTAINER_CREDENTIALS_FULL_URI` and
-`AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, and the AWS CLI's default
-credential chain uses them. The target cluster grants that role access
-through an access entry. Select the ServiceAccount with
-`TURNIP_RUNNER_SERVICE_ACCOUNT`, or with `runner.serviceAccount` (once at
-the top level, or per Project) where the override is permitted.
-
-**Generating the kubeconfig**, once, on your own machine, from the
-repository root, with any credentials allowed to call
-`eks:DescribeCluster`:
-
-```sh
-aws eks update-kubeconfig --name <cluster> --region <region> \
-  --kubeconfig .turnip/kubeconfig --alias <cluster>
-```
-
-Repeat for each cluster; each run adds a context to the same file.
-
-**Before committing it, check the `users` section.** If a profile was in
-use when you ran the command (`--profile`, or `AWS_PROFILE` set),
-`update-kubeconfig` records it:
-
-```yaml
-users:
-- name: <cluster>
-  user:
-    exec:
-      apiVersion: client.authentication.k8s.io/v1beta1
-      command: aws
-      args: [--region, <region>, eks, get-token, --cluster-name, <cluster>, --output, json]
-      env:                      # remove this block
-      - name: AWS_PROFILE
-        value: <your-local-profile>
-```
-
-Remove that `env` block: the Runner Pod has no profiles, and `get-token`
-would fail looking for one. The rest of the file (endpoints, CA
-certificates, the `exec` stanza) contains no secrets.
-
-Commit it as `.turnip/kubeconfig`, beside turnip's own `config.yaml`.
-
-**Pointing every Project at it**, once, in the top-level `runner.env`,
-and choosing the context in helmfile (`kubeContext`, under
-`helmDefaults` or per release):
-
-```yaml
-schemaVersion: v1alpha3
-
-runner:
-  env:
-    KUBECONFIG: /turnip/src/.turnip/kubeconfig
-
-projects:
-  - directory: infra/web
-    uses: ghcr.io/org/helmfile-aws@v1.7.4
-  - directory: infra/api
-    uses: ghcr.io/org/helmfile-aws@v1.7.4
-```
-
-The path has to be absolute. Every Project inherits this value, and the
-tool runs in each Project's own directory, so a relative `KUBECONFIG`
-would name a different file, most likely a missing one, in each.
-`/turnip/src` is the repository root in every Runner (see "Where the
-Runner puts things"), so this path names the committed file from any
-Project, and helm, which helmfile runs per release, reads the same one.
-
-Setting it once also closes a quiet failure. A Project that is missing
-`KUBECONFIG` does not fail: with no kubeconfig, helm and helmfile fall
-back to in-cluster configuration, and plan and apply against **the
-cluster turnip itself runs in**. Set at the top level, a Project cannot
-lose it by omission, and one that writes its own `env:` keeps it.
-
-**When a role *is* assumed.** Only if a cluster must be reached as a role
-other than the Pod's, typically a cluster in another AWS account whose
-access entries don't accept the Pod's role. Add `--role-arn <arn>` to that
-user's `args`, and allow the Pod's role to assume it.
-
-**The image** needs the AWS CLI next to the tool, and a version recent
-enough to read Pod Identity's token file; older versions behave as if no
-credentials existed. EKS's Pod Identity documentation lists the minimum
-versions. The vendor's helmfile image has no AWS CLI, so build one `FROM`
-it that adds the CLI and keeps everything else (helm, its plugins,
-`sops`):
-
-```dockerfile
-# The vendor's image is Alpine-based; Alpine's aws-cli package is v2.
-FROM ghcr.io/helmfile/helmfile:v1.7.4
-RUN apk add --no-cache aws-cli && aws --version
-```
-
-Push it under a tag that tracks the helmfile it was built from (here
-`ghcr.io/org/helmfile-aws:v1.7.4`), then have the Server's operator allow
-it (see "Running your own image" above):
-
-```
-TURNIP_ALLOWED_IMAGES=helmfile:ghcr.io/org/helmfile-aws@v*.*.*
-```
-
-and point the Project at it in place of the alias:
-
-```yaml
-    uses: ghcr.io/org/helmfile-aws@v1.7.4
-```
-
-If the image lives in ECR in the cluster's own account, the nodes can
-usually pull it with no further setup; otherwise see "Pulling from a
-private registry" above.
-
-**Verifying access before the first plan** (optional; the first plan
-tells you too): start a throwaway Pod in the cluster turnip runs in, with
-the Runner's ServiceAccount and any image that has the AWS CLI and
-kubectl, copy the kubeconfig in, and run:
-
-```sh
-aws sts get-caller-identity                       # the Pod Identity role
-KUBECONFIG=./kubeconfig kubectl --context <cluster> get namespaces
-```
-
-If both succeed, the Runner can reach the cluster the same way.
-
-Helm plugins authenticate separately, and to different things.
-`helm-secrets` decrypting through a cloud KMS, or a chart pulled from a
-private registry, needs *cloud* credentials rather than cluster ones.
-Those come from the Pod's identity (EKS Pod Identity/IRSA, GCP Workload
-Identity, selected by that same ServiceAccount) and from `runner.env`
-for whatever the plugin reads out of its environment.
-
-#### What to grant it
-
-**In practice, administrative access to the cluster.** That is not a
-recommendation made lightly, so here is why the smaller grants do not
-hold.
-
-Helm keeps each release's state in a Secret in the release's namespace, so
-even a read-only `diff` must list Secrets there. That is the first failure
-most people meet:
-
-```
-Error: query: failed to query with labels: secrets is forbidden:
-User "system:serviceaccount:<namespace>:<name>" cannot list resource
-"secrets" in API group "" in the namespace "<release-namespace>"
-```
-
-Granting exactly that gets past exactly that error, and then the next one
-arrives: a chart's `lookup`, a CRD, a namespace, a cluster-scoped
-resource. **Enumerating minimal permissions for helmfile is a losing
-game**: a helmfile manages whatever its charts declare, so the permission
-set is the union of every kind any chart touches, and it moves whenever a
-chart does. `apply` needs create/update/delete across all of it, and a
-repository that installs CRDs or namespaces needs cluster-scoped rights to
-match.
-
-Neither built-in shortcut works. `view` excludes Secrets deliberately:
-*"reading the contents of Secrets enables access to ServiceAccount
-credentials in the namespace, which would allow API access as any
-ServiceAccount in the namespace (a form of privilege escalation)"*, so it
-cannot even diff. `edit` covers Secrets but not cluster-scoped resources
-or CRDs.
-
-For a Runner that applies, bind `cluster-admin` and know that you did:
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: turnip-runner
-subjects:
-  - kind: ServiceAccount
-    name: turnip-runner
-    namespace: turnip-system
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-admin
-```
-
-A Runner that only ever diffs can be narrower (Secrets plus read on what
-the charts consult, bound per namespace), but expect to revisit it as the
-charts change.
-
-#### What that grant means
-
-**A plan is not a read-only operation in the security sense.** helmfile's
-`prepare` and `cleanup` hooks run for *every* command, `diff` included;
-only `presync`/`postsync` are restricted to the mutating ones, which
-helmfile documents as the place for commands that may mutate cluster state
-"as it will not be run for read-only operations like `lint`, `diff` or
-`template`". A hook runs an arbitrary executable inside the Runner
-container, and that container holds the ServiceAccount token.
-
-Since a plan runs automatically when a pull request opens, a pull request
-that adds a `prepare` hook runs arbitrary code with the Runner's cluster
-credentials before anyone reviews it. If those credentials are
-`cluster-admin`, so is the pull request.
-
-That is the same trust boundary the committed IaC already sits on (a
-chart can redirect a resource as readily as a hook can run one), but it
-is sharper than it looks, and two things follow:
-
-- **Run turnip only on repositories whose contributors you already trust
-  with the cluster.** turnip refuses to run anything on a pull request
-  from a fork, on both trigger paths (see "Pull requests from forks" in
-  `docs/usage.md`), so this is about the people who can push a branch to
-  the repository itself. For them, opening a pull request is enough to
-  run a hook with the Runner's credentials.
-- **Scope by cluster, not by rule set.** The practical blast radius is
-  decided when you choose which cluster turnip runs in and which
-  repository drives it, not by trimming permissions that will grow back
-  the next time a chart adds a resource kind.
+What the Runner needs, how it authenticates to a cluster, and what that
+grant means in practice depend on the tool, so each tool's page covers
+them. For Helmfile, the operator's side is under
+[Authentication and cluster access](plugins/helmfile.md#authentication-and-cluster-access)
+and the repository's under
+[Reaching a cluster](plugins/helmfile.md#reaching-a-cluster). Whatever
+the tool, a plan is not read-only in the security sense: it runs the pull
+request's code with the Runner's credentials (for Helmfile, see
+[What that grant means](plugins/helmfile.md#what-that-grant-means)).
 
 ### Where the Runner puts things
 
@@ -710,11 +480,15 @@ is parsed, with every other violation, and fails the `turnip` check as
 
 | Tool | Status | Provisioned by | Operations |
 |---|---|---|---|
-| Helmfile | implemented | run-in-image | `diff` (plan), `apply`, `sync` |
+| [Helmfile](plugins/helmfile.md) | implemented | run-in-image | `diff` (plan), `apply`, `sync` |
 | Terraform | **not yet implemented** | not decided | none; `uses: terraform@…` is a validation error until its Plugin lands |
 | Pulumi | **not yet implemented** | not decided | same as Terraform |
 
-Adding a tool is described in [`development.md`](development.md).
+Each implemented tool has its own page under [`plugins/`](plugins/),
+covering its operations, what `uses:` and `with:` accept for it, how it
+authenticates, and its gotchas (including how its mutating commands
+report what they changed). Adding a tool is described in
+[`development.md`](development.md).
 
 ### How a tool reaches the Runner
 
@@ -729,11 +503,8 @@ custom image always runs the second):
   `PATH`, environment and `HOME`, so its helper binaries and plugins are
   simply present.
 
-Helmfile needs the second: it shells out to `helm`, `helmfile diff` needs
-the helm-diff plugin, helm-secrets needs `sops`, and helm finds its plugins
-through an environment its image sets. Copying one binary out produced
-exactly the failure you'd expect: `exec: "helm": executable file not found
-in $PATH`.
+Each tool's page says which strategy it uses and why (Helmfile
+[runs in its image](plugins/helmfile.md#what-a-custom-helmfile-image-must-provide)).
 
 The practical consequence: **for a run-in-image tool, its plugins and
 helpers come from the image.** Needing one the vendor's image doesn't

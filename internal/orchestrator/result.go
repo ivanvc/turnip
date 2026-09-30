@@ -75,6 +75,13 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 	if p, ok := o.plugins[rec.Project.Tool]; ok {
 		pr.PlanOperation = p.GetPlanOperation()
 		pr.ApplyOperation = p.GetApplyOperation()
+		// Requirement 5: only a Mutating_Operation's counts can be
+		// unreported; a plan always reports what it found. An
+		// unregistered Plugin (pr built above with no Plugin found) leaves
+		// counts as reported, per the design.
+		if result.Success && rec.Operation != p.GetPlanOperation() && !p.MutationChangesReported(result.Output) {
+			pr.Changes.Unreported = true
+		}
 	}
 	if !result.Success && result.ErrorMessage != "" {
 		pr.Output = result.Output + "\n\n" + result.ErrorMessage
@@ -90,8 +97,8 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 			// status checks and branch protection match on it), so the
 			// outcome goes in the title and summary — which is what the
 			// checks tab renders under the name.
-			Title:   resultTitle(rec, result),
-			Summary: checkRunResultSummary(result.Success, changeSummaryText(result.Changes)),
+			Title:   resultTitle(rec, result, pr.Changes),
+			Summary: checkRunResultSummary(result.Success, pr.Changes),
 			Text:    result.Output,
 		}
 		if result.Success {
@@ -185,34 +192,42 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 // resultTitle and checkRunResultSummary render an Operation's
 // outcome for the checks tab. GitHub shows a check run's title (and the
 // first part of its summary) directly beneath the name, and the name
-// itself must stay stable — it is what required status checks match on —
+// itself must stay stable (it is what required status checks match on),
 // so these two fields are where the outcome belongs.
-func resultTitle(rec *OperationRecord, result rpc.OperationResult) string {
+//
+// changes is the ProjectResult's own counts, not result.Changes read
+// again: it is what HandleResult already worked out, Unreported included
+// (Requirement 5.3), so the Title, the Summary and the comment never
+// disagree about a Mutating_Operation whose counts do not mean anything.
+func resultTitle(rec *OperationRecord, result rpc.OperationResult, changes github.ChangeCounts) string {
 	if result.Success {
-		return completedTitle(github.ChangeCounts{
-			Add:     int(result.Changes.Add),
-			Change:  int(result.Changes.Change),
-			Destroy: int(result.Changes.Destroy),
-		}, rec.ExtraArgs)
+		return completedTitle(changes, rec.ExtraArgs)
 	}
 	return failedTitle(rec.Project.Tool, result.FailureCategory, result.ExitCode)
 }
 
-func checkRunResultSummary(success bool, changes string) string {
+func checkRunResultSummary(success bool, changes github.ChangeCounts) string {
+	text := changeSummaryText(changes)
 	switch {
-	case success && changes != "":
-		return changes
+	case success && changes.Unreported:
+		// Requirement 5.3: no counts, and never "No changes.".
+		return "Succeeded."
+	case success && text != "":
+		return text
 	case success:
 		return "No changes."
-	case changes != "":
-		return "The operation failed. " + changes
+	case text != "":
+		return "The operation failed. " + text
 	default:
 		return "The operation failed. See the output below."
 	}
 }
 
-func changeSummaryText(c rpc.ChangeSummary) string {
-	if c.Add == 0 && c.Change == 0 && c.Destroy == 0 {
+// changeSummaryText spells out an Operation's counts, or "" when there
+// are none to show: all zero, or unreported (Requirement 5.3), whose
+// counts must not render whatever their values.
+func changeSummaryText(c github.ChangeCounts) string {
+	if c.Unreported || !c.Any() {
 		return ""
 	}
 	return fmt.Sprintf("add: %d, change: %d, destroy: %d", c.Add, c.Change, c.Destroy)

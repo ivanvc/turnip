@@ -55,6 +55,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 44 | Running a Tool Image the Operator Approves | `tool-images` | Complete | Slices 14, 20, 45 |
 | 45 | One Place to Add a Tool | `plugin-registry` | Complete | Slices 2, 14 |
 | 46 | Kustomize Plugin | `plugin-kustomize` | Not Started | Slices 2, 14, 44, 45 |
+| 47 | What a Mutating Command Changed | `mutation-change-summary` | Complete | Slices 2, 35 |
 
 ## Slice Details
 
@@ -196,6 +197,19 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
   run-in-image for any image other than the Alias's; this slice confirms it
   with the real Terraform Plugin, and documents what a custom Terraform
   image must provide
+- **Mutating commands report no counts** (Slice 47, decided 2026-09-30).
+  Terraform's and Pulumi's `MutationChangesReported` return false, so an
+  apply or `up` renders "succeeded" rather than counts: each applies a
+  saved plan whose counts the plan comment already showed, and the full
+  output stays in the transcript. Revisit only if a reason appears to
+  confirm the plan ran in full from its own output.
+- **A documentation page per plugin**, `docs/plugins/terraform.md` and
+  `docs/plugins/pulumi.md`, following `docs/plugins/helmfile.md`
+  (decided 2026-09-30), split by audience: "Using" for repository
+  authors (operations, `uses:` alias and tags, `with:` keys, gotchas,
+  including that mutating commands report no counts) and "Running" for
+  operators (image needs, authentication, what to grant); developer
+  internals go in `docs/development.md`
 - Property tests for each plugin
 
 **Global requirements covered**: 11, 12
@@ -3139,8 +3153,32 @@ would be applied, object by object, but not what would change in each;
 - **Server-side apply** (`--server-side`) or client-side, and field
   manager naming.
 
+**Delivers, whatever the answers**: `docs/plugins/kustomize.md` (or
+`kubectl.md`), following `docs/plugins/helmfile.md`, with every answer
+above that a user can trip on (deletions not applied, `helmCharts:`,
+the exit code of `kubectl diff`) in its gotchas.
+
 **Out of scope**: `kubectl` operations beyond diff and apply, and any
 Kubernetes access model beyond the Runner's existing one.
+
+---
+
+### Slice 47: What a Mutating Command Changed (`mutation-change-summary`)
+
+**A bug** (found 2026-09-29): every Helmfile apply and sync reports
+"no changes", because the Plugin computes a change summary only for
+`diff`. An apply that upgraded three releases was reported as "apply, no
+changes" under a plan that had said `+0 ~3 -0`. Only the report is
+wrong: a mutating Operation's summary decides no Lock event or Outcome.
+
+**Delivers**: the count read from Helmfile's `UPDATED RELEASES` and
+`DELETED RELEASES` tables, every table summed (one per sub-helmfile),
+colored banners included; `sync` reporting every release it ran;
+fixtures in Helmfile's real format with placeholder names. Counts are
+read from Helmfile v1.6.0 on; an older version's output renders
+"succeeded". Each Plugin says, per run from its transcript, whether its
+mutating command's counts mean anything (Terraform and Pulumi: never, per
+Slice 7); one that does not renders "succeeded", never "no changes".
 
 ---
 

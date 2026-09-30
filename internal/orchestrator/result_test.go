@@ -328,18 +328,37 @@ func TestHandleResult_DeletesRecordAfterFinalizing(t *testing.T) {
 func TestResultTitle(t *testing.T) {
 	rec := &OperationRecord{Project: config.Project{Tool: "helmfile"}, ExtraArgs: []string{"-l", "name=api"}}
 
-	assert.Equal(t, "+0 ~2 -0, -l name=api", resultTitle(rec, rpc.OperationResult{Success: true, Changes: rpc.ChangeSummary{Change: 2}}))
-	assert.Equal(t, "helmfile exited 1", resultTitle(rec, rpc.OperationResult{ExitCode: 1, FailureCategory: rpc.FailureToolExited}))
-	assert.Equal(t, "clone failed", resultTitle(rec, rpc.OperationResult{ExitCode: -1, FailureCategory: rpc.FailureCloneFailed}))
+	assert.Equal(t, "+0 ~2 -0, -l name=api",
+		resultTitle(rec, rpc.OperationResult{Success: true, Changes: rpc.ChangeSummary{Change: 2}}, github.ChangeCounts{Change: 2}))
+	assert.Equal(t, "helmfile exited 1",
+		resultTitle(rec, rpc.OperationResult{ExitCode: 1, FailureCategory: rpc.FailureToolExited}, github.ChangeCounts{}))
+	assert.Equal(t, "clone failed",
+		resultTitle(rec, rpc.OperationResult{ExitCode: -1, FailureCategory: rpc.FailureCloneFailed}, github.ChangeCounts{}))
+}
+
+// A Mutating_Operation whose Plugin declared its counts unreported
+// (Requirement 5.3) titles the check "succeeded", never "no changes":
+// the same rendering HandleResult wires through ChangeCounts.Unreported,
+// exercised here directly against resultTitle/completedTitle.
+func TestResultTitle_Unreported(t *testing.T) {
+	rec := &OperationRecord{Project: config.Project{Tool: "helmfile"}}
+
+	assert.Equal(t, "succeeded",
+		resultTitle(rec, rpc.OperationResult{Success: true}, github.ChangeCounts{Unreported: true}))
 }
 
 func TestCheckRunResultSummary(t *testing.T) {
-	assert.Equal(t, "add: 1, change: 2, destroy: 0", checkRunResultSummary(true, "add: 1, change: 2, destroy: 0"))
-	assert.Equal(t, "No changes.", checkRunResultSummary(true, ""))
-	assert.Contains(t, checkRunResultSummary(false, "add: 0, change: 2, destroy: 0"), "failed")
-	assert.Contains(t, checkRunResultSummary(false, "add: 0, change: 2, destroy: 0"), "change: 2")
-	assert.Contains(t, checkRunResultSummary(false, ""), "failed")
-	assert.NotEmpty(t, checkRunResultSummary(false, ""), "summary is required by GitHub whenever output is sent")
+	assert.Equal(t, "add: 1, change: 2, destroy: 0", checkRunResultSummary(true, github.ChangeCounts{Add: 1, Change: 2}))
+	assert.Equal(t, "No changes.", checkRunResultSummary(true, github.ChangeCounts{}))
+	assert.Contains(t, checkRunResultSummary(false, github.ChangeCounts{Change: 2}), "failed")
+	assert.Contains(t, checkRunResultSummary(false, github.ChangeCounts{Change: 2}), "change: 2")
+	assert.Contains(t, checkRunResultSummary(false, github.ChangeCounts{}), "failed")
+	assert.NotEmpty(t, checkRunResultSummary(false, github.ChangeCounts{}), "summary is required by GitHub whenever output is sent")
+
+	// Requirement 5.3: an unreported success shows no counts, whatever
+	// their values, and never reads as "No changes.".
+	assert.Equal(t, "Succeeded.", checkRunResultSummary(true, github.ChangeCounts{Unreported: true}))
+	assert.Equal(t, "Succeeded.", checkRunResultSummary(true, github.ChangeCounts{Change: 3, Unreported: true}))
 }
 
 // The checks tab renders the title (and the start of the summary) under

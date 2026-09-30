@@ -300,11 +300,13 @@ func buildVerdictLine(results []ProjectResult) string {
 		return singleProjectVerdict(results[0])
 	}
 
-	var total, changed, noChanges, failed int
+	var total, changed, noChanges, failed, unreported int
 	for _, r := range results {
 		switch {
 		case !r.Success:
 			failed++
+		case r.Changes.Unreported:
+			unreported++
 		case r.Changes.Any():
 			changed++
 			total += r.Changes.Total()
@@ -313,19 +315,27 @@ func buildVerdictLine(results []ProjectResult) string {
 		}
 	}
 
+	// An unreported success is its own category: it never counts as "no
+	// changes" (that would be this Slice's bug again) and adds nothing
+	// to total, since it has no counts to add.
 	var headline string
 	switch {
 	case failed == len(results):
 		headline = fmt.Sprintf("All %d projects failed", len(results))
-	case changed == 0:
-		headline = fmt.Sprintf("No changes across %d projects", len(results))
-	default:
+	case changed > 0:
 		headline = fmt.Sprintf("%s across %d projects", changeCount(total), len(results))
+	case unreported > 0:
+		headline = fmt.Sprintf("Succeeded across %d projects", len(results))
+	default:
+		headline = fmt.Sprintf("No changes across %d projects", len(results))
 	}
 
 	var notes []string
-	if changed > 0 && noChanges > 0 {
+	if noChanges > 0 && (changed > 0 || unreported > 0) {
 		notes = append(notes, fmt.Sprintf("%d with no changes", noChanges))
+	}
+	if unreported > 0 && changed > 0 {
+		notes = append(notes, fmt.Sprintf("%d succeeded", unreported))
 	}
 	if failed > 0 && failed != len(results) {
 		notes = append(notes, fmt.Sprintf("%d failed", failed))
@@ -350,6 +360,8 @@ func singleProjectVerdict(r ProjectResult) string {
 	switch {
 	case !r.Success:
 		return fmt.Sprintf("**`%s` failed.**", r.ProjectName)
+	case r.Changes.Unreported:
+		return fmt.Sprintf("**Succeeded in `%s`.**", r.ProjectName)
 	case r.Changes.Any():
 		return fmt.Sprintf("**%s in `%s`.**", changeCount(r.Changes.Total()), r.ProjectName)
 	default:
@@ -480,10 +492,14 @@ func scopeMarker(args []string) string {
 }
 
 // ChangeText renders an Operation's counts as the comment's summary line
-// does: "+1 ~4 -2", or "no changes" when all are zero. Plain text, shared
+// does: "+1 ~4 -2", "no changes" when all are zero, or "succeeded" when
+// they are Unreported, whatever their values (Requirement 5.3). Plain text, shared
 // with check run titles so the same outcome reads the same in the comment
 // and in the checks list.
 func ChangeText(c ChangeCounts) string {
+	if c.Unreported {
+		return "succeeded"
+	}
 	if !c.Any() {
 		return "no changes"
 	}

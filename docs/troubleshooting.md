@@ -22,18 +22,18 @@ error with a line number, instead of a plan.
 - **Unsupported `schemaVersion`**: reported on its own, without also
   listing everything the older schema allowed. Migrate the file rather
   than changing the version alone. From `v1alpha2` to `v1alpha3`, every
-  `uses:` must name its version, written as the image tag
-  (`uses: helmfile@v1.7.4`, since helmfile's tags carry a `v`).
+  `uses:` must name its version, written as the image tag the vendor
+  publishes (e.g. `uses: helmfile@v1.7.4`).
 - **`uses:` names no version**: turnip has no default version. Write the
   one to run, e.g. `uses: helmfile@v1.7.4`.
 - **Unknown tool in `uses:`**: the error lists the tools this Server has
   Plugins for. A tool without a Plugin (today, `terraform` and `pulumi`)
   is not accepted. Any other image must be written in full, registry host
   included.
-- **A tag the alias does not allow** (`helmfile@latest`,
-  `helmfile@1.7.4` missing its `v`): the error names the tags the alias
-  allows (for helmfile, full versions `v*.*.*` and digests). Write the full
-  version the vendor publishes.
+- **A tag the alias does not allow**: the error names the tags the alias
+  allows, which the tool's page also lists (for Helmfile, see
+  [its troubleshooting](plugins/helmfile.md#troubleshooting)). Write the
+  full version the vendor publishes.
 - **`uses:` names its tag with `:`**: `uses:` separates the tag with `@`;
   the error shows the corrected line to paste back.
 - **This Server does not allow an image**: the image and tag match no
@@ -94,7 +94,9 @@ which step failed; the full error and output are in the check's details.
 
 - **`helmfile exited 1`** (or another tool and code): the tool itself ran
   and failed. The reason is in its output; turnip does not interpret it.
-  Usually a problem in the change being planned.
+  Usually a problem in the change being planned. The tool's page lists
+  errors specific to it (for Helmfile, see
+  [its troubleshooting](plugins/helmfile.md#troubleshooting)).
 - **`clone failed`**: the Runner could not check out the pull request's
   commit. The details carry git's message, often a merge conflict with the
   base branch, or credentials the repository's submodules need.
@@ -219,19 +221,12 @@ or nothing happens for several minutes before a timeout is reported.
   submodule on the *same* host works whatever URL form it uses: SSH and
   other schemes are rewritten to authenticated HTTPS automatically.
 
-- **`secrets is forbidden: User "system:serviceaccount:..." cannot list
-  resource "secrets"`**: the Runner's ServiceAccount has no RBAC in the
-  namespace a release lives in. Helm keeps release state in a Secret in
-  that namespace, so even a read-only `diff` must list Secrets there.
-  Binding the built-in `view` ClusterRole will **not** fix it. Kubernetes
-  excludes Secrets from `view` deliberately, because reading them grants
-  the API access of every ServiceAccount in the namespace.
-  **Granting only Secrets is not the fix either**: it clears this error,
-  and then the next one arrives for a CRD, a namespace, or whatever kind a
-  chart's `lookup` consults. helmfile manages whatever its charts declare,
-  so in practice the Runner needs administrative access to the cluster.
-  See "What the Runner's ServiceAccount needs" in `docs/configuration.md`
-  for what to grant and what that grant means.
+- **An error from inside the tool about cluster access** (for Helmfile,
+  `secrets is forbidden: User "system:serviceaccount:..." cannot list
+  resource "secrets"`): the Runner's ServiceAccount lacks what the tool
+  needs in the target cluster. What each tool needs, and what that grant
+  means, is on its page; for Helmfile, see
+  [What to grant it](plugins/helmfile.md#what-to-grant-it).
 
 ## Plugin execution errors
 
@@ -252,10 +247,9 @@ stdout/stderr attached.
   rather than from turnip (see "How a tool reaches the Runner" in
   `docs/configuration.md`). The fix is an image that bundles what you
   need, allowed by the Server's `TURNIP_ALLOWED_IMAGES` (see "Running your
-  own image" there); for a custom image, check it provides what "What the
-  image must provide" lists. Seeing this for Helmfile on a version the vendor's
-  own image ships is a turnip bug worth reporting, since that image
-  contains helm, sops and the standard plugins.
+  own image" there); for a custom image, check it provides what the tool's
+  page lists (for Helmfile,
+  [What a custom Helmfile image must provide](plugins/helmfile.md#what-a-custom-helmfile-image-must-provide)).
 - **Tool command failed** (e.g. `terraform plan` itself errored): the
   full stdout/stderr is in the PR comment. This is the tool telling you
   something real about your infrastructure code, not a turnip failure.
@@ -264,7 +258,8 @@ stdout/stderr attached.
   operation itself succeeded; turnip just couldn't extract a change count
   from the tool's output format. Check the comment's full output section
   for what actually happened rather than trusting the summary count in
-  this case.
+  this case. When a tool's counts can't be trusted is on its page (for
+  Helmfile, see [Change counts](plugins/helmfile.md#change-counts)).
 
 ## Authorization errors
 

@@ -199,11 +199,21 @@ type ChangeCounts struct {
 	Add     int
 	Change  int
 	Destroy int
+
+	// Unreported states whether this Operation's counts are meaningful.
+	// Its zero value, false, means the counts were reported: every
+	// ChangeCounts built before this field existed, a plan's included,
+	// keeps its old meaning. True means the Operation succeeded but its
+	// Plugin reported no meaningful counts for it (Slice 47), rendered
+	// as "succeeded", never as "no changes".
+	Unreported bool
 }
 
 // Any reports whether anything changed at all. A successful Operation
-// whose counts are all zero is "no changes" — a distinct statement from
-// having reported nothing, which is what a failure leaves behind.
+// whose counts are all zero is "no changes", unless Unreported is set, in
+// which case it is "succeeded" and its counts are not read at all. "No
+// changes" is a distinct statement from having reported nothing, which is
+// what a failure leaves behind.
 func (c ChangeCounts) Any() bool {
 	return c.Add != 0 || c.Change != 0 || c.Destroy != 0
 }

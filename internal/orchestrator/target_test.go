@@ -40,7 +40,8 @@ func (f *fakePlugin) ActsWithoutChanges() bool  { return f.actsWithoutChanges }
 func (f *fakePlugin) Provisioning() provisioning.Spec {
 	return provisioning.Spec{Strategy: provisioning.RunInImage, Image: "ghcr.io/" + f.name + "/" + f.name}
 }
-func (f *fakePlugin) ImageTags() []string { return []string{"v*.*.*", "sha256:*"} }
+func (f *fakePlugin) ImageTags() []string                 { return []string{"v*.*.*", "sha256:*"} }
+func (f *fakePlugin) MutationChangesReported(string) bool { return true }
 func (f *fakePlugin) Execute(ctx context.Context, operation string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
 	panic("not used by target_test.go")
 }
