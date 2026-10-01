@@ -71,6 +71,19 @@ renames means that rename moves both at once.
   operator docs already advise for audience changes.
 - [A future container needing a credential] → it gets the clone
   audience deliberately; the table above is the place it is decided.
+- [The Runner's ServiceAccount can mint tokens or reach into Pods:
+  `create` on `serviceaccounts/token`, `pods/exec`, or
+  `pods/ephemeralcontainers` in the Runner namespace] → code in the
+  tool container can request a clone-audience token bound to its own
+  Pod, read the clone identity of another Operation's running clone
+  container, or mount the clone identity's volume into an ephemeral
+  container. The Server cannot tell any of these from the clone identity
+  the kubelet projected, so the Goal above holds only without those
+  grants. `cluster-admin`, which the Helmfile docs recommend for a
+  Runner that applies, holds all three. Stated as a precondition in
+  `docs/operating/runner-access.md`, `SECURITY.md` and the spec delta
+  rather than enforced: turnip ships no Runner RBAC and cannot see what
+  the operator grants.
 
 ## Migration Plan
 

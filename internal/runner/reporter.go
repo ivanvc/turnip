@@ -87,11 +87,13 @@ type reporter struct {
 //
 // The connection is not encrypted. Encryption is a separate axis from
 // authentication and is tracked as its own slice; until it lands, the
-// Runner presents its credential over a plaintext pod-to-pod channel.
-// The credential is audience-scoped to turnip, expires in minutes, and
-// authorizes writing to exactly one Operation — so capturing it requires
-// network position and yields the power to forge results for an
-// operation whose output the captor can already read.
+// Runner presents its Runner identity over a plaintext pod-to-pod
+// channel. The Runner identity is audience-scoped to turnip, expires in
+// minutes, and is accepted for exactly one Operation, so capturing it
+// requires network position. A captured report identity yields the power
+// to forge results for an operation whose output the captor can already
+// read; a captured clone identity also yields that Operation's GitHub
+// credential until it expires.
 func NewReporter(addr string, cfg Config) (*reporter, func() error, error) {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {

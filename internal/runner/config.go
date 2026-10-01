@@ -39,11 +39,15 @@ type Config struct {
 	// turnip-built Job gets.
 	WorkspaceDir string
 
-	// TokenFile is where internal/jobs.BuildJob projected this Pod's
-	// ServiceAccount token, scoped to turnip's own audience. The reporter
-	// reads it on every stream it opens rather than once at startup,
-	// because kubelet rotates a projected token in place and a reconnect
-	// after rotation must present the current one.
+	// TokenFile is where internal/jobs.BuildJob projected this
+	// container's Runner identity: the clone identity
+	// (jobs.CloneAudience) in the clone init container, the report
+	// identity (jobs.ReportAudience) in the runner container. Both are
+	// mounted at the same path, so the Runner reads one file whichever
+	// container it runs in. The reporter reads it on every stream it opens
+	// rather than once at startup, because kubelet rotates a projected
+	// Runner identity in place and a reconnect after rotation must present
+	// the current one.
 	TokenFile string
 
 	// CloneSubmodules is the Submodule_Mode this Operation's clone uses:
@@ -122,8 +126,9 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 	// write and rejects it (see runCloneWith).
 	cfg.WorkspaceDir = env("TURNIP_WORKSPACE_DIR")
 
-	// Set on the clone initContainer and nowhere else, like the token
-	// above. Empty means top-level, not "off" — see initSubmodules.
+	// Set on the clone initContainer and nowhere else, since only the
+	// clone reads it. Empty means top-level, not "off"; see
+	// initSubmodules.
 	cfg.CloneSubmodules = env("TURNIP_CLONE_SUBMODULES")
 
 	if raw := env("TURNIP_TOOL_CONFIG"); raw != "" {

@@ -64,6 +64,34 @@ the tool, a plan is not read-only in the security sense: it runs the pull
 request's code with the Runner's credentials (for Helmfile, see
 [What that grant means](../plugins/helmfile.md#what-that-grant-means)).
 
+### Grants that reach the GitHub credential
+
+Code in the container that runs the tool cannot get a GitHub credential
+from the Server (see
+[How a Runner gets its GitHub credential](#how-a-runner-gets-its-github-credential)),
+but only while the Runner's ServiceAccount can neither mint a clone
+identity nor reach into a Runner Pod. Any of these grants in the Runner
+namespace (`TURNIP_K8S_NAMESPACE`) lets that code get one:
+
+| Grant | What code in the tool container can do with it |
+|---|---|
+| `create` on `serviceaccounts/token` | request a token for its own ServiceAccount with the clone identity's audience, bound to its own Pod. The Server cannot tell it apart from the clone identity Kubernetes mounted in the clone container, and mints a GitHub credential for it. |
+| `pods/exec` | read the clone identity from another Operation's clone container while that clone runs, and fetch that Operation's GitHub credential |
+| `patch` or `update` on `pods/ephemeralcontainers` | add a container to its own Pod that mounts the clone identity's volume |
+
+This applies to `TURNIP_RUNNER_SERVICE_ACCOUNT` and, when
+`runner.serviceAccount` is allowed, to every ServiceAccount in the Runner
+namespace. `cluster-admin`, which
+[Helmfile's page](../plugins/helmfile.md#what-to-grant-it) recommends
+for a Runner that applies, includes all three. In `deploy/base` the
+Server runs in the Runner namespace too, so a Runner that can exec into
+Pods or read Secrets there can also reach the GitHub App's private key
+(the `turnip-github-app` Secret), which is worth more than any GitHub
+credential the Server mints. Giving a Runner any of these trusts the
+pull request's code with the GitHub App as well as with the cluster:
+that is the threat model in [`SECURITY.md`](../../SECURITY.md), and
+turnip cannot narrow it.
+
 ## Cloud credentials
 
 turnip itself hands the Runner nothing beyond the ServiceAccount above:
@@ -151,14 +179,35 @@ working, not only for the first pull.
 
 **Nothing to configure. It is listed so you know what is and isn't there.**
 
-A Runner Pod carries no GitHub credential. Its spec has no token in any
-container, so reading the Pod (or the etcd behind it) yields nothing
-worth having. When git needs a credential it asks turnip's own binary,
-running as a git credential helper, which fetches one from the Server over
-the authenticated gRPC channel at that moment and hands it to git on a
-pipe. It is never written to a file, never put in a URL, and never passed
-as a command-line argument, so a failed clone leaves nothing behind in the
-workspace either.
+A Runner Pod carries no GitHub credential. Its spec has no GitHub
+credential in any container, so reading the Pod (or the etcd behind it)
+yields nothing worth having. When git needs a credential it asks turnip's
+own binary, running as a git credential helper in the clone init
+container, which fetches one from the Server over the authenticated gRPC
+channel at that moment and hands it to git on a pipe. It is never written
+to a file, never put in a URL, and never passed as a command-line
+argument, so a failed clone leaves nothing behind in the workspace
+either.
+
+**Two identities, one per container.** Each Runner container presents a
+short-lived Kubernetes projected ServiceAccount token (its Runner
+identity) to the Server, and the Pod has two, each mounted only in its own
+container:
+
+| Container | Runner identity | Audience | May |
+|---|---|---|---|
+| `clone` (init container) | clone identity | `turnip.ivan.vc/clone` | fetch a GitHub credential, report |
+| `runner` (runs the tool) | report identity | `turnip.ivan.vc` | report only |
+
+The container that runs the tool holds only the report identity, and the
+Server refuses a GitHub credential to any caller without the clone
+identity. The clone identity is mounted only in the clone init container,
+which has exited before the tool starts. Both identities are validated
+against the Pod they were issued to. So the tool cannot obtain a GitHub
+credential, **as long as the Runner's ServiceAccount holds none of the
+[grants that reach the GitHub credential](#grants-that-reach-the-github-credential)**
+(`cluster-admin` holds all of them). The audiences are fixed, so there is
+nothing to configure here either.
 
 **What the credential can do.** It is scoped to the repositories that
 clone will actually fetch (the pull request's own repository, plus any
@@ -174,6 +223,10 @@ narrowed to `contents: read`. Narrowing must never be the reason a clone
 that worked yesterday stops working, so this widens rather than guesses.
 
 **What it does not protect against.** Not someone with cluster-admin, who
-can read anything. And not the tool your repository chooses to run: that
-executes with the workspace mounted, by design, and turnip has no way to
-know what it does with it.
+can read anything. Not the tool in a Runner whose ServiceAccount holds
+any of the
+[grants that reach the GitHub credential](#grants-that-reach-the-github-credential)
+(`cluster-admin` among them): it can then obtain a GitHub credential, its
+own Operation's or another's. And not the tool your repository chooses
+to run: that executes with the workspace mounted, by design, and turnip
+has no way to know what it does with it.

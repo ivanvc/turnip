@@ -73,6 +73,18 @@ Each opt-in's own documentation is in
   by the Server or the Runner reaching a pull request comment, a check
   run, a log line, or anyone outside the cluster, on a Server with none of
   the opt-ins above enabled.
+- **A tool container that can obtain a GitHub credential**: the container
+  that runs the tool holds only the report identity (audience
+  `turnip.ivan.vc`), which may report a result and nothing else. The GitHub
+  credential is fetched only by the clone init container, with the clone
+  identity (audience `turnip.ivan.vc/clone`). Any path by which code in the
+  tool container obtains a GitHub credential is a vulnerability, on a
+  Runner whose ServiceAccount holds none of the grants listed in
+  [`docs/operating/runner-access.md`](docs/operating/runner-access.md#grants-that-reach-the-github-credential)
+  (`create` on `serviceaccounts/token`, `pods/exec`, or
+  `pods/ephemeralcontainers` in the Runner namespace; `cluster-admin`
+  holds all three). A Runner given one of those can mint or read a clone
+  identity, and that is the operator's grant, not a flaw in turnip.
 
 What a pull request's own code does with the credentials the operator gave
 the Runner is the threat model above, not a vulnerability in turnip.

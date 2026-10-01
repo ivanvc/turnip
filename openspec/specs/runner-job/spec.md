@@ -56,9 +56,10 @@ Everything turnip places in a Runner Pod SHALL live under `/turnip`, on these vo
 | `/turnip/src` | emptyDir `workspace` | `clone`, `runner` | always |
 | `/turnip/tools` | emptyDir `tools` | `provision-<tool>`, `runner` | copy-out only |
 | `/turnip/bin` | emptyDir `bin` | `copy-runner`, `runner` | run-in-image only |
-| `/turnip/run/secrets/token` | projected `turnip-token`, read-only | `clone`, `runner` | always |
+| `/turnip/run/secrets/token` | projected `turnip-clone-identity`, read-only | `clone` | always |
+| `/turnip/run/secrets/token` | projected `turnip-report-identity`, read-only | `runner` | always |
 
-`/turnip/src` SHALL be the repository root in every Runner, so a Project's `directory` is resolved relative to it and committed configuration may reference it by absolute path. The token volume's contents are defined by the `runner-security` capability.
+`/turnip/src` SHALL be the repository root in every Runner, so a Project's `directory` is resolved relative to it and committed configuration may reference it by absolute path. Each container that talks to the Server SHALL find its own Runner identity at the same path, so `TURNIP_TOKEN_FILE` has one value for both; the contents of the two Runner identity volumes are defined by the `runner-security` capability.
 
 #### Scenario: An absolute path in committed configuration
 - **WHEN** a Project's `runner.env` sets `KUBECONFIG: /turnip/src/.turnip/kubeconfig`
@@ -67,6 +68,10 @@ Everything turnip places in a Runner Pod SHALL live under `/turnip`, on these vo
 #### Scenario: Where a Project's tool runs
 - **WHEN** an Operation runs for a Project with `directory: infra/web`
 - **THEN** the tool runs with working directory `/turnip/src/infra/web`
+
+#### Scenario: Each container's Runner identity at one path
+- **WHEN** a Runner Job is built
+- **THEN** `/turnip/run/secrets/token` is the `turnip-clone-identity` volume in the `clone` container and the `turnip-report-identity` volume in the `runner` container, and no other container mounts either
 
 ### Requirement: Runner environment
 The `clone` and `runner` containers SHALL both receive these variables: `TURNIP_SERVER_ADDR` (from the Server's `TURNIP_RUNNER_SERVER_ADDR`), `TURNIP_OPERATION_ID`, `TURNIP_PROJECT_NAME`, `TURNIP_PROJECT_DIR`, `TURNIP_TOOL`, `TURNIP_TOOL_VERSION` (the tag the Project's `uses:` names), `TURNIP_OPERATION`, `TURNIP_REPO_URL`, `TURNIP_COMMIT_SHA`, `TURNIP_BASE_REF`, `TURNIP_TOOL_CONFIG` (the Project's `with:` as JSON), `TURNIP_EXTRA_ARGS` (JSON array), `TURNIP_PLAN_DATA` (base64), `TURNIP_WORKSPACE_DIR=/turnip/src` and `TURNIP_TOKEN_FILE=/turnip/run/secrets/token`.

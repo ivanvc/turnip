@@ -73,7 +73,11 @@ func (g *grpcDrivingJobCreator) Status(ctx context.Context, jobName string) (*jo
 
 type acceptAllAuth struct{}
 
-func (acceptAllAuth) Authenticate(context.Context, string, string) error { return nil }
+// Authenticate admits every caller as the report identity: these tests
+// only drive the result stream.
+func (acceptAllAuth) Authenticate(context.Context, string, string) (rpc.Identity, error) {
+	return rpc.IdentityReport, nil
+}
 
 func newBufconnOperationClient(t *testing.T, handler rpc.OperationHandler) pb.OperationServiceClient {
 	t.Helper()

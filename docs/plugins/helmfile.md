@@ -257,11 +257,19 @@ If an apply or sync that changed something reads `no changes`, the image
 may be silencing Helmfile's summary through its environment; see
 [Gotchas for operators](#gotchas-for-operators).
 
-#### A plan is not read-only
+#### Don't use helmfile hooks
 
-`diff` runs the helmfile's `prepare` and `cleanup` hooks, so a plan runs
-the pull request's code with the Runner's credentials before anyone
-reviews it. See [What that grant means](#what-that-grant-means).
+A helmfile hook runs a command of the helmfile's choosing inside turnip's
+Runner, with the Runner's credentials. The `prepare` and `cleanup` hooks
+run for every command, `diff` included, so a plan runs them as soon as a
+pull request opens, before anyone reviews it. A plan is not read-only.
+
+Move that work into the cluster instead: a Kubernetes `Job` or `CronJob`
+your releases deploy runs under its own ServiceAccount, with only the
+permissions you give it, and exists only once an apply has deployed it,
+which is the reviewed step. turnip does not stop a helmfile from using
+hooks, so keeping them out is up to the repository. See
+[What that grant means](#what-that-grant-means) for what a hook can do.
 
 #### A relative `KUBECONFIG` resolves per project
 
@@ -535,9 +543,30 @@ that adds a `prepare` hook runs arbitrary code with the Runner's cluster
 credentials before anyone reviews it. If those credentials are
 `cluster-admin`, so is the pull request.
 
-That is the same trust boundary the committed IaC already sits on (a
-chart can redirect a resource as readily as a hook can run one), but it
-is sharper than it looks, and two things follow:
+Two things make a hook more than a change to the IaC:
+
+- **It gets around mutation requirements.** A plan is never gated by
+  [`TURNIP_MUTATION_REQUIREMENTS`](../operating/server-settings.md#mutation-requirements).
+  Under `approved`, someone with write access cannot apply their own
+  change without another person's approval, but a `prepare` hook in
+  their pull request runs with the Runner's credentials as soon as the
+  pull request opens. If those credentials can change the cluster, the
+  hook is an unreviewed apply.
+- **Its output can reach the pull request.** A hook with `showlogs: true`
+  prints its command's output, and turnip includes the tool's output in
+  the results comment without redacting it. Whatever the hook can read in
+  the Runner container, it can print where the pull request's author
+  reads it.
+
+`presync` and `postsync` hooks run only on `apply` and `sync`, so they
+are gated like any mutating command; `prepare` and `cleanup` are the ones
+a plan runs.
+
+Short of removing hooks (see
+[Don't use helmfile hooks](#dont-use-helmfile-hooks)), this is the same
+trust boundary the committed IaC already sits on (a chart can redirect a
+resource as readily as a hook can run one), but it is sharper than it
+looks, and two things follow:
 
 - **Run turnip only on repositories whose contributors you already trust
   with the cluster.** turnip refuses to run anything on a pull request

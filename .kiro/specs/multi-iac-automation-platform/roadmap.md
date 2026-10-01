@@ -57,6 +57,7 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 | 46 | Kustomize Plugin | `plugin-kustomize` | Not Started | Slices 2, 14, 44, 45 |
 | 47 | What a Mutating Command Changed | `mutation-change-summary` | Complete | Slices 2, 35 |
 | 48 | Documentation a New User Can Follow | `docs-onboarding` | Complete | Slice 47 |
+| 49 | Published Images, Under the Project's Organization | `org-images` | Not Started | Slices 10, 25, 48 |
 
 ## Slice Details
 
@@ -183,10 +184,19 @@ The global spec in this directory (`requirements.md`, `design.md`, `tasks.md`) s
 - OpenTofu as a supported tool. It is Terraform-compatible, so whatever
   Plugin runs one runs the other, and a tool nothing can execute yet has
   nowhere useful to live until this slice — adding it earlier would be
-  scope that delays the Helmfile MVP. Note that OpenTofu considers direct
-  use of its images unsupported as of 1.10 and documents copying the binary
-  out of its `:…-minimal` variant instead, which is what turnip's copy-out
-  provisioning already does
+  scope that delays the Helmfile MVP. OpenTofu's images are unsupported
+  for direct use as of 1.10; OpenTofu documents copying the binary out of
+  its `-minimal` image, which is built `FROM scratch`. turnip's copy-out
+  cannot do that today: it runs `sh -c "cp …"` inside the tool's image
+  (`internal/jobs/build.go`), and a scratch image has neither. **Copy-out
+  brings its own copier** (decided 2026-09-30): a first init container,
+  on turnip's image, puts the static runner binary on a shared volume, as
+  run-in-image already does, and the tool-image init container runs
+  `runner copy <binary> <dest>` instead of a shell. The Alias names the
+  official image, so a repository pins OpenTofu's own tag and turnip
+  hosts and maintains no tool image. Rejected: publishing an OpenTofu
+  image from a `turnip-iac/docker-images` repository, which would put a
+  rebuild between every OpenTofu release and the repositories using it
 - Pulumi's provisioning strategy (Slice 14 defers it here): its CLI
   orchestrates separate language-host binaries and runtime-fetched provider
   plugins, and a program needs a language runtime chosen by the user's
@@ -3201,6 +3211,26 @@ guides; a `turnip.yaml` reference and a Server settings reference, each
 checked against the code by a test; a link check in the tests; a map of
 every moved section; `CLAUDE.md` saying where each audience's docs live;
 and the Redis persistence requirement the operator docs never stated.
+
+---
+
+### Slice 49: Published Images, Under the Project's Organization (`org-images`)
+
+**Goal**: Every push to `main` publishes multi-architecture images, and
+everything that names the project moves to the `turnip-iac`
+organization at once, before anything is published.
+
+**Why now** (2026-09-30): images have never been published; the
+repository owner builds and pushes them by hand. `release.yml`'s tag
+path has never run.
+
+**Delivers**: the repository transferred (owner step) and the module
+path `github.com/turnip-iac/turnip`; images
+`ghcr.io/turnip-iac/turnip/{server,runner}` for `linux/amd64` and
+`linux/arm64`; a push to `main` publishing its full commit SHA as the
+tag, a release its version, and no floating tag anywhere (`latest`
+included); labels and the Runner token audience under
+`turnip-iac.github.io`.
 
 ---
 

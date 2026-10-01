@@ -91,10 +91,13 @@ func NewServer(handler OperationHandler, opts ...Option) *grpc.Server {
 	// split out (see the TLS slice): what this interceptor establishes is
 	// *who* is calling, which holds whether or not the transport is
 	// encrypted. Without TLS a caller with network position can capture a
-	// token — a far higher bar than reading TURNIP_OPERATION_ID out of a
-	// Pod spec, which is what this replaces — and the token it captures is
-	// audience-scoped, short-lived, and authorizes writing to exactly one
-	// Operation.
+	// Runner identity (a far higher bar than reading TURNIP_OPERATION_ID
+	// out of a Pod spec, which is what this replaces), and the Runner
+	// identity it captures is audience-scoped, short-lived, and accepted
+	// for exactly one Operation. A captured report identity authorizes
+	// only writing to that Operation; a captured clone identity also
+	// authorizes fetching that Operation's GitHub credential until it
+	// expires.
 	s := grpc.NewServer(
 		grpc.StreamInterceptor(streamAuthInterceptor(o.auth)),
 		// Both kinds, so "an RPC added later is authenticated" is true
@@ -111,15 +114,16 @@ type operationServer struct {
 	handler OperationHandler
 }
 
-// FetchCloneCredential returns the credential for the Operation the
-// caller was authenticated as.
+// FetchCloneCredential returns the GitHub credential for the Operation
+// the caller was authenticated as, and only when the caller presented the
+// clone identity.
 //
 // The request is ignored, and that is the design rather than an
 // oversight: the parameter is named "_" so that adding a field to it and
 // reading it here requires deleting this comment first. A Runner
-// authenticated for one Operation asking for another's token is the
-// cross-repository theft this whole slice narrows the blast radius of;
-// the way it is prevented is by there being nothing to read.
+// authenticated for one Operation asking for another's GitHub credential
+// is the cross-repository theft this whole slice narrows the blast radius
+// of; the way it is prevented is by there being nothing to read.
 func (s *operationServer) FetchCloneCredential(ctx context.Context, _ *pb.FetchCloneCredentialRequest) (*pb.FetchCloneCredentialResponse, error) {
 	operationID, ok := OperationIDFromContext(ctx)
 	if !ok {
@@ -128,6 +132,26 @@ func (s *operationServer) FetchCloneCredential(ctx context.Context, _ *pb.FetchC
 		// future refactor that removes it fails loudly instead of handing
 		// credentials to anyone who asks.
 		return nil, status.Error(codes.Unauthenticated, "rpc: credential request reached handler unauthenticated")
+	}
+
+	// Only the clone identity may fetch a GitHub credential. The report
+	// identity is mounted into the runner container, where the repository's
+	// own code runs (a Helmfile prepare hook, say) and can read it; minting
+	// for it would hand that code a credential that, in some submodule
+	// modes, reads every repository the GitHub App is installed on.
+	identity, ok := IdentityFromContext(ctx)
+	if !ok {
+		// Unreachable while the unary interceptor is installed: it never
+		// admits a caller without an identity. Refusing keeps a refactor
+		// that loses it from defaulting to "allowed".
+		return nil, status.Error(codes.Unauthenticated, "rpc: credential request reached handler without a runner identity")
+	}
+	if identity != IdentityClone {
+		slog.ErrorContext(ctx, "refusing rpc: credential fetch requires the clone identity",
+			"operation_id", operationID,
+			"method", pb.OperationService_FetchCloneCredential_FullMethodName,
+			"identity", identity.String())
+		return nil, status.Error(codes.PermissionDenied, "rpc: credential fetch requires the clone identity")
 	}
 
 	cred, err := s.handler.CloneCredential(ctx, operationID)
@@ -165,6 +189,9 @@ func (s *operationServer) ExecuteOperation(stream pb.OperationService_ExecuteOpe
 		// empty id means a future refactor that removes it fails loudly.
 		return status.Error(codes.Unauthenticated, "rpc: stream reached handler unauthenticated")
 	}
+	// Either Runner identity may report: the clone container reports a
+	// failed clone, the runner container the tool's result. The
+	// interceptor has already refused a caller with neither.
 
 	for {
 		req, err := stream.Recv()

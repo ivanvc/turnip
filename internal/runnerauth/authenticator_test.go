@@ -87,7 +87,7 @@ func newAuthenticator(t *testing.T, r review, ops ...operationPod) (*Authenticat
 }
 
 func acceptedReview(podUID string) review {
-	return review{authenticated: true, audiences: []string{jobs.TokenAudience}, podUID: podUID}
+	return review{authenticated: true, audiences: []string{jobs.ReportAudience}, podUID: podUID}
 }
 
 func TestAuthenticate_RunnerMayWriteToItsOwnOperation(t *testing.T) {
@@ -95,9 +95,11 @@ func TestAuthenticate_RunnerMayWriteToItsOwnOperation(t *testing.T) {
 		operationPod{operationID: "op-1", jobName: "turnip-runner-a", podUID: "pod-uid-1"},
 	)
 
-	require.NoError(t, auth.Authenticate(context.Background(), "token", "op-1"))
-	assert.Equal(t, []string{jobs.TokenAudience}, *asked,
-		"the review must name turnip's audience, or a default API-server token would pass")
+	identity, err := auth.Authenticate(context.Background(), "token", "op-1")
+	require.NoError(t, err)
+	assert.Equal(t, rpc.IdentityReport, identity)
+	assert.Equal(t, []string{jobs.ReportAudience, jobs.CloneAudience}, *asked,
+		"the review must name turnip's audiences, or a default API-server token would pass")
 }
 
 // The attack this slice exists to stop. The caller's token is entirely
@@ -113,10 +115,10 @@ func TestAuthenticate_ValidRunnerCannotWriteToAnotherOperation(t *testing.T) {
 		operationPod{operationID: "op-2", jobName: "turnip-runner-b", podUID: "pod-uid-2"},
 	)
 
-	require.NoError(t, auth.Authenticate(context.Background(), "token", "op-1"),
-		"precondition: this really is op-1's runner")
+	_, err := auth.Authenticate(context.Background(), "token", "op-1")
+	require.NoError(t, err, "precondition: this really is op-1's runner")
 
-	err := auth.Authenticate(context.Background(), "token", "op-2")
+	_, err = auth.Authenticate(context.Background(), "token", "op-2")
 	require.Error(t, err)
 	require.ErrorIs(t, err, rpc.ErrNotBound)
 	assert.NotErrorIs(t, err, rpc.ErrInvalidCredential,
@@ -129,7 +131,7 @@ func TestAuthenticate_UnauthenticatedTokenIsRefused(t *testing.T) {
 		operationPod{operationID: "op-1", jobName: "turnip-runner-a", podUID: "pod-uid-1"},
 	)
 
-	err := auth.Authenticate(context.Background(), "token", "op-1")
+	_, err := auth.Authenticate(context.Background(), "token", "op-1")
 	require.Error(t, err)
 	require.ErrorIs(t, err, rpc.ErrInvalidCredential)
 	assert.Contains(t, err.Error(), "token expired", "the cluster's own reason is reported")
@@ -146,10 +148,11 @@ func TestAuthenticate_TokenForAnotherAudienceIsRefused(t *testing.T) {
 		operationPod{operationID: "op-1", jobName: "turnip-runner-a", podUID: "pod-uid-1"},
 	)
 
-	err := auth.Authenticate(context.Background(), "token", "op-1")
+	_, err := auth.Authenticate(context.Background(), "token", "op-1")
 	require.Error(t, err)
 	require.ErrorIs(t, err, rpc.ErrInvalidCredential)
-	assert.Contains(t, err.Error(), jobs.TokenAudience)
+	assert.Contains(t, err.Error(), jobs.ReportAudience)
+	assert.Contains(t, err.Error(), jobs.CloneAudience)
 }
 
 // A cluster that cannot say which Pod a token belongs to gets a refusal,
@@ -158,11 +161,11 @@ func TestAuthenticate_TokenForAnotherAudienceIsRefused(t *testing.T) {
 // the clusters least able to notice.
 func TestAuthenticate_NoPodIdentityNoStream(t *testing.T) {
 	auth, _ := newAuthenticator(t,
-		review{authenticated: true, audiences: []string{jobs.TokenAudience}, omitPodUID: true},
+		review{authenticated: true, audiences: []string{jobs.ReportAudience}, omitPodUID: true},
 		operationPod{operationID: "op-1", jobName: "turnip-runner-a", podUID: "pod-uid-1"},
 	)
 
-	err := auth.Authenticate(context.Background(), "token", "op-1")
+	_, err := auth.Authenticate(context.Background(), "token", "op-1")
 	require.Error(t, err)
 	require.ErrorIs(t, err, rpc.ErrInvalidCredential)
 	assert.Contains(t, err.Error(), "v1.32", "the refusal says what the cluster is missing")
@@ -178,7 +181,7 @@ func TestAuthenticate_UnresolvableOperationIsRefused(t *testing.T) {
 				operationPod{operationID: "op-1", jobName: "turnip-runner-a", podUID: "pod-uid-1"},
 			)
 
-			err := auth.Authenticate(context.Background(), "token", operationID)
+			_, err := auth.Authenticate(context.Background(), "token", operationID)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, rpc.ErrInvalidCredential)
 		})
@@ -197,13 +200,13 @@ func TestAuthenticate_JobWithoutAPodIsRefused(t *testing.T) {
 		tr := action.(k8stesting.CreateAction).GetObject().(*authv1.TokenReview).DeepCopy()
 		tr.Status = authv1.TokenReviewStatus{
 			Authenticated: true,
-			Audiences:     []string{jobs.TokenAudience},
+			Audiences:     []string{jobs.ReportAudience},
 			User:          authv1.UserInfo{Extra: map[string]authv1.ExtraValue{podUIDExtra: {"pod-uid-1"}}},
 		}
 		return true, tr, nil
 	})
 
-	err := New(clientset, testNamespace).Authenticate(context.Background(), "token", "op-1")
+	_, err := New(clientset, testNamespace).Authenticate(context.Background(), "token", "op-1")
 	require.Error(t, err)
 	require.ErrorIs(t, err, rpc.ErrInvalidCredential)
 }
@@ -227,7 +230,7 @@ func TestAuthenticate_ComparesUIDsNotNames(t *testing.T) {
 		tr := action.(k8stesting.CreateAction).GetObject().(*authv1.TokenReview).DeepCopy()
 		tr.Status = authv1.TokenReviewStatus{
 			Authenticated: true,
-			Audiences:     []string{jobs.TokenAudience},
+			Audiences:     []string{jobs.ReportAudience},
 			// Same Pod name as op-1's, different uid: the caller is a
 			// later Pod that happens to have inherited the name.
 			User: authv1.UserInfo{
@@ -241,7 +244,7 @@ func TestAuthenticate_ComparesUIDsNotNames(t *testing.T) {
 		return true, tr, nil
 	})
 
-	err := New(clientset, testNamespace).Authenticate(context.Background(), "token", "op-1")
+	_, err := New(clientset, testNamespace).Authenticate(context.Background(), "token", "op-1")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, rpc.ErrNotBound)
 }
@@ -269,7 +272,7 @@ func TestAuthenticate_ServiceAccountIsNotPartOfTheDecision(t *testing.T) {
 			tr := action.(k8stesting.CreateAction).GetObject().(*authv1.TokenReview).DeepCopy()
 			tr.Status = authv1.TokenReviewStatus{
 				Authenticated: true,
-				Audiences:     []string{jobs.TokenAudience},
+				Audiences:     []string{jobs.ReportAudience},
 				User: authv1.UserInfo{
 					Username: username,
 					Extra:    map[string]authv1.ExtraValue{podUIDExtra: {"pod-uid-1"}},
@@ -278,7 +281,94 @@ func TestAuthenticate_ServiceAccountIsNotPartOfTheDecision(t *testing.T) {
 			return true, tr, nil
 		})
 
-		assert.NoError(t, New(clientset, testNamespace).Authenticate(context.Background(), "token", "op-1"),
-			"account %q", username)
+		_, err := New(clientset, testNamespace).Authenticate(context.Background(), "token", "op-1")
+		assert.NoError(t, err, "account %q", username)
+	}
+}
+
+// The Runner identity comes only from the audiences the API server
+// reports the token valid for. The clone identity, the one that may fetch
+// a GitHub credential, is never granted unless the review reported
+// jobs.CloneAudience; a token valid for both is the clone identity, since
+// the review vouched for that audience.
+func TestAuthenticate_IdentityIsTheReviewedAudience(t *testing.T) {
+	for name, tc := range map[string]struct {
+		audiences []string
+		want      rpc.Identity
+	}{
+		"report audience only": {[]string{jobs.ReportAudience}, rpc.IdentityReport},
+		"clone audience only":  {[]string{jobs.CloneAudience}, rpc.IdentityClone},
+		"both audiences":       {[]string{jobs.ReportAudience, jobs.CloneAudience}, rpc.IdentityClone},
+		"both, clone first":    {[]string{jobs.CloneAudience, jobs.ReportAudience}, rpc.IdentityClone},
+	} {
+		t.Run(name, func(t *testing.T) {
+			auth, _ := newAuthenticator(t,
+				review{authenticated: true, audiences: tc.audiences, podUID: "pod-uid-1"},
+				operationPod{operationID: "op-1", jobName: "turnip-runner-a", podUID: "pod-uid-1"},
+			)
+
+			identity, err := auth.Authenticate(context.Background(), "token", "op-1")
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, identity)
+		})
+	}
+}
+
+// A review reporting neither turnip audience is refused as an unknown
+// caller, whatever else it reports, and yields no identity.
+func TestAuthenticate_NeitherAudienceIsRefused(t *testing.T) {
+	for name, audiences := range map[string][]string{
+		"no audiences reported":    nil,
+		"another audience":         {"https://kubernetes.default.svc"},
+		"a lookalike of clone":     {jobs.CloneAudience + "/"},
+		"a lookalike of report":    {"https://" + jobs.ReportAudience},
+		"report audience's parent": {"ivan.vc"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			auth, _ := newAuthenticator(t,
+				review{authenticated: true, audiences: audiences, podUID: "pod-uid-1"},
+				operationPod{operationID: "op-1", jobName: "turnip-runner-a", podUID: "pod-uid-1"},
+			)
+
+			identity, err := auth.Authenticate(context.Background(), "token", "op-1")
+			require.Error(t, err)
+			require.ErrorIs(t, err, rpc.ErrInvalidCredential)
+			assert.Equal(t, rpc.IdentityNone, identity)
+		})
+	}
+}
+
+// Pod-uid binding applies to the clone identity exactly as to the report
+// identity: a valid clone token for another Operation's Pod is the
+// forgery, and yields no identity.
+func TestAuthenticate_CloneIdentityIsBoundToItsOperation(t *testing.T) {
+	auth, _ := newAuthenticator(t,
+		review{authenticated: true, audiences: []string{jobs.CloneAudience}, podUID: "pod-uid-1"},
+		operationPod{operationID: "op-1", jobName: "turnip-runner-a", podUID: "pod-uid-1"},
+		operationPod{operationID: "op-2", jobName: "turnip-runner-b", podUID: "pod-uid-2"},
+	)
+
+	identity, err := auth.Authenticate(context.Background(), "token", "op-2")
+	require.Error(t, err)
+	require.ErrorIs(t, err, rpc.ErrNotBound)
+	assert.Equal(t, rpc.IdentityNone, identity)
+}
+
+// Every failure returns IdentityNone, so a caller that ignored the error
+// still could not mistake a refused token for either identity.
+func TestAuthenticate_FailureYieldsNoIdentity(t *testing.T) {
+	for name, r := range map[string]review{
+		"unauthenticated": {authenticated: false, audiences: []string{jobs.CloneAudience}, errMessage: "expired"},
+		"no pod uid":      {authenticated: true, audiences: []string{jobs.CloneAudience}, omitPodUID: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			auth, _ := newAuthenticator(t, r,
+				operationPod{operationID: "op-1", jobName: "turnip-runner-a", podUID: "pod-uid-1"},
+			)
+
+			identity, err := auth.Authenticate(context.Background(), "token", "op-1")
+			require.ErrorIs(t, err, rpc.ErrInvalidCredential)
+			assert.Equal(t, rpc.IdentityNone, identity)
+		})
 	}
 }

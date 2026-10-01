@@ -54,15 +54,20 @@ func New(clientset kubernetes.Interface, namespace string) *Authenticator {
 // finding it belongs to a different Operation is the forgery, and the
 // only case where turnip knows something is wrong rather than merely
 // unresolvable.
-func (a *Authenticator) Authenticate(ctx context.Context, token, operationID string) error {
-	callerUID, err := a.podUIDFromToken(ctx, token)
+//
+// On success it also returns which Runner identity the token is:
+// rpc.IdentityClone when the review reported jobs.CloneAudience, else
+// rpc.IdentityReport. Pod-uid binding is the same for both. On failure
+// the identity is always rpc.IdentityNone.
+func (a *Authenticator) Authenticate(ctx context.Context, token, operationID string) (rpc.Identity, error) {
+	callerUID, identity, err := a.reviewToken(ctx, token)
 	if err != nil {
-		return err
+		return rpc.IdentityNone, err
 	}
 
 	expectedUID, err := a.podUIDForOperation(ctx, operationID)
 	if err != nil {
-		return err
+		return rpc.IdentityNone, err
 	}
 
 	// uids, not names. A Pod name can be reused after deletion — a Job
@@ -70,15 +75,16 @@ func (a *Authenticator) Authenticate(ctx context.Context, token, operationID str
 	// name matches a previous Operation's, and a name comparison would
 	// admit it. A uid is unique for the life of the cluster.
 	if callerUID != expectedUID {
-		return fmt.Errorf("%w: token belongs to pod %s, operation %s runs on pod %s",
+		return rpc.IdentityNone, fmt.Errorf("%w: token belongs to pod %s, operation %s runs on pod %s",
 			rpc.ErrNotBound, callerUID, operationID, expectedUID)
 	}
-	return nil
+	return identity, nil
 }
 
-// podUIDFromToken validates token against turnip's audience and returns
-// the uid of the Pod it was minted for.
-func (a *Authenticator) podUIDFromToken(ctx context.Context, token string) (types.UID, error) {
+// reviewToken validates token against turnip's two audiences and returns
+// the uid of the Pod it was minted for and the Runner identity its
+// audience makes it.
+func (a *Authenticator) reviewToken(ctx context.Context, token string) (types.UID, rpc.Identity, error) {
 	review, err := a.reviews.Create(ctx, &authv1.TokenReview{
 		Spec: authv1.TokenReviewSpec{
 			Token: token,
@@ -87,30 +93,44 @@ func (a *Authenticator) podUIDFromToken(ctx context.Context, token string) (type
 			// own audience, so a Pod's default ServiceAccount token would
 			// pass — and the Server could then replay that token to the API
 			// server as the Runner's ServiceAccount.
-			Audiences: []string{jobs.TokenAudience},
+			//
+			// Both identities are named so one review serves either
+			// container; the API server answers with the subset the token
+			// is actually valid for, and that answer alone decides the
+			// identity below.
+			Audiences: []string{jobs.ReportAudience, jobs.CloneAudience},
 		},
 	}, metav1.CreateOptions{})
 	if err != nil {
-		return "", fmt.Errorf("%w: token review failed: %v", rpc.ErrInvalidCredential, err)
+		return "", rpc.IdentityNone, fmt.Errorf("%w: token review failed: %v", rpc.ErrInvalidCredential, err)
 	}
 
 	if !review.Status.Authenticated {
-		return "", fmt.Errorf("%w: %s", rpc.ErrInvalidCredential, reviewError(review))
+		return "", rpc.IdentityNone, fmt.Errorf("%w: %s", rpc.ErrInvalidCredential, reviewError(review))
 	}
 
 	// The API server echoes back which of the requested audiences the
-	// token is actually valid for. An authenticated response with our
-	// audience absent means it authenticated for something else.
-	if !containsAudience(review.Status.Audiences, jobs.TokenAudience) {
-		return "", fmt.Errorf("%w: token is not scoped to %s", rpc.ErrInvalidCredential, jobs.TokenAudience)
+	// token is actually valid for. An authenticated response with neither
+	// of ours means it authenticated for something else. The clone
+	// identity is granted only on the review's word that the token is
+	// valid for jobs.CloneAudience: never by default, never by elimination.
+	var identity rpc.Identity
+	switch {
+	case containsAudience(review.Status.Audiences, jobs.CloneAudience):
+		identity = rpc.IdentityClone
+	case containsAudience(review.Status.Audiences, jobs.ReportAudience):
+		identity = rpc.IdentityReport
+	default:
+		return "", rpc.IdentityNone, fmt.Errorf("%w: token is not scoped to %s or %s",
+			rpc.ErrInvalidCredential, jobs.ReportAudience, jobs.CloneAudience)
 	}
 
 	uids := review.Status.User.Extra[podUIDExtra]
 	if len(uids) != 1 || uids[0] == "" {
-		return "", fmt.Errorf("%w: the cluster reported no %s; turnip requires Kubernetes v1.32 or later",
+		return "", rpc.IdentityNone, fmt.Errorf("%w: the cluster reported no %s; turnip requires Kubernetes v1.32 or later",
 			rpc.ErrInvalidCredential, podUIDExtra)
 	}
-	return types.UID(uids[0]), nil
+	return types.UID(uids[0]), identity, nil
 }
 
 // podUIDForOperation resolves the uid of the one Pod running

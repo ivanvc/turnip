@@ -115,8 +115,8 @@ func TestBuildJob_EveryStrategyClonesInAnInitContainer(t *testing.T) {
 			assert.Equal(t, []string{"clone"}, clone.Args)
 			assert.Equal(t, []corev1.VolumeMount{
 				{Name: workspaceVolumeName, MountPath: workspaceMountPath},
-				{Name: tokenVolumeName, MountPath: tokenMountPath, ReadOnly: true},
-			}, clone.VolumeMounts, "it writes the workspace, reads its credential, and touches nothing else")
+				{Name: cloneIdentityVolumeName, MountPath: tokenMountPath, ReadOnly: true},
+			}, clone.VolumeMounts, "it writes the workspace, reads its clone identity, and touches nothing else")
 		})
 	}
 }
@@ -162,7 +162,7 @@ func TestBuildJob_CopyOutShape(t *testing.T) {
 	assert.ElementsMatch(t, []corev1.VolumeMount{
 		{Name: toolsVolumeName, MountPath: toolsMountPath},
 		{Name: workspaceVolumeName, MountPath: workspaceMountPath},
-		{Name: tokenVolumeName, MountPath: tokenMountPath, ReadOnly: true},
+		{Name: reportIdentityVolumeName, MountPath: tokenMountPath, ReadOnly: true},
 	}, main.VolumeMounts)
 }
 
@@ -188,26 +188,26 @@ func TestBuildJob_RunInImageShape(t *testing.T) {
 	assert.ElementsMatch(t, []corev1.VolumeMount{
 		{Name: binVolumeName, MountPath: binMountPath},
 		{Name: workspaceVolumeName, MountPath: workspaceMountPath},
-		{Name: tokenVolumeName, MountPath: tokenMountPath, ReadOnly: true},
+		{Name: reportIdentityVolumeName, MountPath: tokenMountPath, ReadOnly: true},
 	}, main.VolumeMounts)
 }
 
 func TestBuildJob_VolumesPerStrategy(t *testing.T) {
 	copyOutJob, err := BuildJob(testProject("terraform"), testParams("terraform"))
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{toolsVolumeName, workspaceVolumeName, tokenVolumeName}, volumeNames(copyOutJob))
+	assert.ElementsMatch(t, []string{toolsVolumeName, workspaceVolumeName, cloneIdentityVolumeName, reportIdentityVolumeName}, volumeNames(copyOutJob))
 
 	runInImageJob, err := BuildJob(testProject("helmfile"), testParams("helmfile"))
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{binVolumeName, workspaceVolumeName, tokenVolumeName}, volumeNames(runInImageJob))
+	assert.ElementsMatch(t, []string{binVolumeName, workspaceVolumeName, cloneIdentityVolumeName, reportIdentityVolumeName}, volumeNames(runInImageJob))
 
-	// Every volume turnip adds is scratch space, with one exception: the
-	// credential, which kubelet mints and rotates and so cannot be an
-	// emptyDir.
+	// Every volume turnip adds is scratch space, with two exceptions: the
+	// Runner identities, which kubelet mints and rotates and so cannot be
+	// an emptyDir.
 	for _, job := range []*batchv1.Job{copyOutJob, runInImageJob} {
 		for _, v := range job.Spec.Template.Spec.Volumes {
-			if v.Name == tokenVolumeName {
-				assert.NotNil(t, v.Projected, "the credential is a projection, not scratch space")
+			if v.Name == cloneIdentityVolumeName || v.Name == reportIdentityVolumeName {
+				assert.NotNil(t, v.Projected, "a Runner identity is a projection, not scratch space")
 				continue
 			}
 			assert.NotNil(t, v.EmptyDir, "volume %q", v.Name)
@@ -434,42 +434,89 @@ func TestBuildJob_PullPolicyOnToolContainer(t *testing.T) {
 	}
 }
 
-// The Runner's credential is a ServiceAccountToken projection scoped to
-// turnip's own audience. The audience is the load-bearing part: a token
+// Each Runner identity is a ServiceAccountToken projection scoped to its
+// own turnip audience. The audience is the load-bearing part: a token
 // minted for the API server's audience would be replayable by whoever
 // received it *as* the Runner's ServiceAccount, which is exactly what
 // scoping prevents.
-func TestBuildJob_ProjectsAnAudienceScopedToken(t *testing.T) {
+func TestBuildJob_ProjectsAudienceScopedIdentities(t *testing.T) {
 	for tool := range testSpecs {
 		t.Run(tool, func(t *testing.T) {
 			job, err := BuildJob(testProject(tool), testParams(tool))
 			require.NoError(t, err)
 
-			var projection *corev1.ServiceAccountTokenProjection
-			for _, v := range job.Spec.Template.Spec.Volumes {
-				if v.Name == tokenVolumeName {
-					require.NotNil(t, v.Projected)
-					require.Len(t, v.Projected.Sources, 1)
-					projection = v.Projected.Sources[0].ServiceAccountToken
-				}
-			}
-			require.NotNil(t, projection, "no projected token volume")
+			for volume, audience := range map[string]string{
+				cloneIdentityVolumeName:  CloneAudience,
+				reportIdentityVolumeName: ReportAudience,
+			} {
+				v := identityVolumeOf(t, job, volume)
+				require.NotNil(t, v.Projected)
+				require.Len(t, v.Projected.Sources, 1)
+				projection := v.Projected.Sources[0].ServiceAccountToken
+				require.NotNil(t, projection, "volume %q", volume)
 
-			assert.Equal(t, TokenAudience, projection.Audience,
-				"a token for the API server's own audience would be replayable as the Pod's ServiceAccount")
-			require.NotNil(t, projection.ExpirationSeconds)
-			assert.Equal(t, tokenExpirationSeconds, *projection.ExpirationSeconds)
-			assert.Equal(t, tokenFileName, projection.Path)
+				assert.Equal(t, audience, projection.Audience,
+					"a token for the API server's own audience would be replayable as the Pod's ServiceAccount")
+				require.NotNil(t, projection.ExpirationSeconds)
+				assert.Equal(t, tokenExpirationSeconds, *projection.ExpirationSeconds)
+				assert.Equal(t, tokenFileName, projection.Path)
+			}
 		})
 	}
 }
 
-// The credential rides a field of the Pod spec turnip already writes, so
+// identityMountsOf returns the volumes of c that are Runner identities.
+func identityMountsOf(c corev1.Container) []corev1.VolumeMount {
+	var out []corev1.VolumeMount
+	for _, m := range c.VolumeMounts {
+		if m.Name == cloneIdentityVolumeName || m.Name == reportIdentityVolumeName {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// The clone identity may fetch a GitHub credential; the report identity may
+// only report. Repository code runs in the runner container, so it must
+// mount the report identity alone and the clone identity must never be
+// reachable from it, under either strategy. The provisioning containers
+// run vendor images and need neither.
+func TestBuildJob_EachContainerMountsOnlyItsOwnIdentity(t *testing.T) {
+	for tool := range testSpecs {
+		t.Run(tool, func(t *testing.T) {
+			job, err := BuildJob(testProject(tool), testParams(tool))
+			require.NoError(t, err)
+
+			audienceMounted := func(c corev1.Container) []string {
+				var audiences []string
+				for _, m := range identityMountsOf(c) {
+					assert.Equal(t, tokenMountPath, m.MountPath)
+					assert.True(t, m.ReadOnly)
+					audiences = append(audiences,
+						identityVolumeOf(t, job, m.Name).Projected.Sources[0].ServiceAccountToken.Audience)
+				}
+				return audiences
+			}
+
+			assert.Equal(t, []string{CloneAudience}, audienceMounted(initContainerNamed(t, "clone", job)))
+			assert.Equal(t, []string{ReportAudience}, audienceMounted(mainContainer(t, job)))
+
+			for _, c := range job.Spec.Template.Spec.InitContainers {
+				if c.Name == "clone" {
+					continue
+				}
+				assert.Empty(t, identityMountsOf(c), "provisioning container %q mounts no identity", c.Name)
+			}
+		})
+	}
+}
+
+// The identities ride a field of the Pod spec turnip already writes, so
 // a Project choosing its own ServiceAccount (Slice 13) changes nothing
 // about how the Runner authenticates. This is the property to protect:
 // any rule that makes the projection depend on the account name has
 // reintroduced the coupling.
-func TestBuildJob_TokenProjectionIsIndependentOfServiceAccount(t *testing.T) {
+func TestBuildJob_IdentityProjectionIsIndependentOfServiceAccount(t *testing.T) {
 	withDefault := testParams("helmfile")
 	withDefault.ServiceAccount = ""
 	chosen := testParams("helmfile")
@@ -480,26 +527,26 @@ func TestBuildJob_TokenProjectionIsIndependentOfServiceAccount(t *testing.T) {
 	b, err := BuildJob(testProject("helmfile"), chosen)
 	require.NoError(t, err)
 
-	assert.Equal(t, tokenVolumeOf(t, a), tokenVolumeOf(t, b),
+	assert.Equal(t, a.Spec.Template.Spec.Volumes, b.Spec.Template.Spec.Volumes,
 		"the identity that matters is the Pod's, not the account's")
 	assert.Equal(t, "project-chosen", b.Spec.Template.Spec.ServiceAccountName)
 }
 
-func tokenVolumeOf(t require.TestingT, job *batchv1.Job) corev1.Volume {
+func identityVolumeOf(t require.TestingT, job *batchv1.Job, name string) corev1.Volume {
 	for _, v := range job.Spec.Template.Spec.Volumes {
-		if v.Name == tokenVolumeName {
+		if v.Name == name {
 			return v
 		}
 	}
-	require.Fail(t, "no projected token volume")
+	require.Failf(t, "no projected identity volume", "volume %q", name)
 	return corev1.Volume{}
 }
 
 // Both containers that reach the Server need to prove who they are: the
 // clone reports its own failures over the same authenticated stream the
-// tool's container later uses, so the token path is base environment
-// rather than per-container.
-func TestBuildJob_TokenPathReachesBothContainers(t *testing.T) {
+// tool's container later uses, so the identity path is base environment
+// rather than per-container. Both identities mount at the same path.
+func TestBuildJob_IdentityPathReachesBothContainers(t *testing.T) {
 	for tool := range testSpecs {
 		t.Run(tool, func(t *testing.T) {
 			job, err := BuildJob(testProject(tool), testParams(tool))

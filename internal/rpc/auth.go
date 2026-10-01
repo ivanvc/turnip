@@ -26,19 +26,58 @@ var (
 	ErrNotBound          = errors.New("rpc: caller is not this operation's runner")
 )
 
-// Authenticator decides whether the holder of token may write to
-// operationID, returning nil when it may.
+// Identity is which Runner identity a caller presented: the projected
+// ServiceAccount token of the clone init container, or that of the
+// runner container that runs the tool. Each is a different audience (see
+// internal/jobs), mounted only into its own container.
 //
-// It takes the claimed Operation rather than returning the caller's
-// identity for the interceptor to compare, because the comparison is the
-// whole decision: an implementation that returned "this is Pod X" and
-// left the caller to check would be one refactor away from nobody
-// checking. See internal/runnerauth for the Kubernetes implementation.
-type Authenticator interface {
-	Authenticate(ctx context.Context, token, operationID string) error
+// The zero value is no identity at all, so a context or an Authenticator
+// that never set one is refused rather than mistaken for either.
+type Identity int
+
+const (
+	// IdentityNone is the zero value: nothing was established.
+	IdentityNone Identity = iota
+	// IdentityReport is the runner container's identity (audience
+	// jobs.ReportAudience). It may only report: the tool runs beside it,
+	// so the repository's own code can present it.
+	IdentityReport
+	// IdentityClone is the clone init container's identity (audience
+	// jobs.CloneAudience). It may report and fetch a GitHub credential.
+	IdentityClone
+)
+
+// String names the identity for logs.
+func (i Identity) String() string {
+	switch i {
+	case IdentityReport:
+		return "report"
+	case IdentityClone:
+		return "clone"
+	default:
+		return "none"
+	}
 }
 
-type operationIDKey struct{}
+// Authenticator decides whether the holder of token may write to
+// operationID. It returns nil and the Runner identity the token
+// presented when it may.
+//
+// It takes the claimed Operation rather than returning the caller's
+// Pod for the interceptor to compare, because the comparison is the
+// whole decision: an implementation that returned "this is Pod X" and
+// left the caller to check would be one refactor away from nobody
+// checking. The identity it does return is not a Pod but which of the
+// Pod's two containers is calling, which only the token's audience can
+// say. See internal/runnerauth for the Kubernetes implementation.
+type Authenticator interface {
+	Authenticate(ctx context.Context, token, operationID string) (Identity, error)
+}
+
+type (
+	operationIDKey struct{}
+	identityKey    struct{}
+)
 
 // OperationIDFromContext returns the Operation the interceptor
 // established this stream belongs to, and whether one was established at
@@ -49,6 +88,15 @@ type operationIDKey struct{}
 func OperationIDFromContext(ctx context.Context) (string, bool) {
 	id, ok := ctx.Value(operationIDKey{}).(string)
 	return id, ok
+}
+
+// IdentityFromContext returns the Runner identity the interceptor
+// established the caller presented. A false second return means none was
+// established; like a missing Operation id, handlers treat that as a bug
+// and refuse.
+func IdentityFromContext(ctx context.Context) (Identity, bool) {
+	id, ok := ctx.Value(identityKey{}).(Identity)
+	return id, ok && id != IdentityNone
 }
 
 // wrappedStream replaces a ServerStream's context so a handler sees the
@@ -65,7 +113,10 @@ func (w *wrappedStream) Context() context.Context { return w.ctx }
 // kinds of RPC cannot drift apart.
 //
 // It returns the context a handler should see: the caller's, carrying the
-// Operation the credential was established to belong to.
+// Operation the credential was established to belong to and the Runner
+// identity it presented. Which identity a method requires is the
+// method's decision (see FetchCloneCredential); this check only
+// establishes it.
 //
 // A nil Authenticator refuses everything rather than waving it through:
 // the failure mode of a misconfigured server should be "nothing works",
@@ -82,7 +133,8 @@ func authorize(ctx context.Context, auth Authenticator, method string) (context.
 		return nil, status.Error(codes.Unauthenticated, err.Error())
 	}
 
-	if err := auth.Authenticate(ctx, token, operationID); err != nil {
+	identity, err := auth.Authenticate(ctx, token, operationID)
+	if err != nil {
 		if errors.Is(err, ErrNotBound) {
 			// Someone presented a valid credential for a different
 			// Operation. That is the forgery this check exists for, and
@@ -96,7 +148,17 @@ func authorize(ctx context.Context, auth Authenticator, method string) (context.
 		return nil, status.Error(codes.Unauthenticated, err.Error())
 	}
 
-	return context.WithValue(ctx, operationIDKey{}, operationID), nil
+	// An Authenticator that admits a caller without saying which identity
+	// it presented is broken. Refusing here keeps every method's identity
+	// check meaningful: no handler ever sees IdentityNone.
+	if identity != IdentityReport && identity != IdentityClone {
+		slog.WarnContext(ctx, "refusing rpc: credential not accepted",
+			"method", method, "claimed_operation", operationID, "error", "authenticator established no runner identity")
+		return nil, status.Error(codes.Unauthenticated, ErrInvalidCredential.Error())
+	}
+
+	ctx = context.WithValue(ctx, operationIDKey{}, operationID)
+	return context.WithValue(ctx, identityKey{}, identity), nil
 }
 
 // streamAuthInterceptor authenticates every stream before its handler

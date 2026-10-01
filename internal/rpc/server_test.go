@@ -67,7 +67,9 @@ func (h *fakeHandler) HandleResult(ctx context.Context, operationID string, resu
 // one. auth_test.go covers the decision itself.
 type acceptAll struct{}
 
-func (acceptAll) Authenticate(context.Context, string, string) error { return nil }
+func (acceptAll) Authenticate(context.Context, string, string) (Identity, error) {
+	return IdentityReport, nil
+}
 
 // authedContext produces the metadata a Runner attaches to every stream.
 // Every test here needs it, because the interceptor is installed

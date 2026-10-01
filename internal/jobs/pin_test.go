@@ -101,7 +101,24 @@ func TestBuildJob_PinnedHelmfileJob(t *testing.T) {
 
 	binMount := corev1.VolumeMount{Name: "bin", MountPath: "/turnip/bin"}
 	workspaceMount := corev1.VolumeMount{Name: "workspace", MountPath: "/turnip/src"}
-	tokenMount := corev1.VolumeMount{Name: "turnip-token", MountPath: "/turnip/run/secrets", ReadOnly: true}
+	cloneIdentityMount := corev1.VolumeMount{Name: "turnip-clone-identity", MountPath: "/turnip/run/secrets", ReadOnly: true}
+	reportIdentityMount := corev1.VolumeMount{Name: "turnip-report-identity", MountPath: "/turnip/run/secrets", ReadOnly: true}
+	identityVolume := func(name, audience string) corev1.Volume {
+		return corev1.Volume{
+			Name: name,
+			VolumeSource: corev1.VolumeSource{
+				Projected: &corev1.ProjectedVolumeSource{
+					Sources: []corev1.VolumeProjection{{
+						ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+							Audience:          audience,
+							ExpirationSeconds: ptr.To(int64(600)),
+							Path:              "token",
+						},
+					}},
+				},
+			},
+		}
+	}
 
 	want := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -131,7 +148,7 @@ func TestBuildJob_PinnedHelmfileJob(t *testing.T) {
 							Image:        "ghcr.io/ivanvc/turnip-runner:test",
 							Args:         []string{"clone"},
 							Env:          env(corev1.EnvVar{Name: "TURNIP_CLONE_SUBMODULES", Value: "recursive"}),
-							VolumeMounts: []corev1.VolumeMount{workspaceMount, tokenMount},
+							VolumeMounts: []corev1.VolumeMount{workspaceMount, cloneIdentityMount},
 						},
 					},
 					Containers: []corev1.Container{
@@ -141,26 +158,14 @@ func TestBuildJob_PinnedHelmfileJob(t *testing.T) {
 							ImagePullPolicy: corev1.PullAlways,
 							Command:         []string{"/turnip/bin/runner"},
 							Env:             env(),
-							VolumeMounts:    []corev1.VolumeMount{binMount, workspaceMount, tokenMount},
+							VolumeMounts:    []corev1.VolumeMount{binMount, workspaceMount, reportIdentityMount},
 						},
 					},
 					Volumes: []corev1.Volume{
 						{Name: "bin", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 						{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-						{
-							Name: "turnip-token",
-							VolumeSource: corev1.VolumeSource{
-								Projected: &corev1.ProjectedVolumeSource{
-									Sources: []corev1.VolumeProjection{{
-										ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
-											Audience:          "turnip.ivan.vc",
-											ExpirationSeconds: ptr.To(int64(600)),
-											Path:              "token",
-										},
-									}},
-								},
-							},
-						},
+						identityVolume("turnip-clone-identity", "turnip.ivan.vc/clone"),
+						identityVolume("turnip-report-identity", "turnip.ivan.vc"),
 					},
 				},
 			},

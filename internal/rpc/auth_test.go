@@ -30,22 +30,28 @@ const (
 )
 
 // recordingAuth captures what the interceptor passed it and answers with
-// a scripted error.
+// a scripted Runner identity and error.
 type recordingAuth struct {
 	mu          sync.Mutex
 	token       string
 	operationID string
 	calls       int
+	identity    Identity
 	err         error
 }
 
-func (a *recordingAuth) Authenticate(_ context.Context, token, operationID string) error {
+func (a *recordingAuth) Authenticate(_ context.Context, token, operationID string) (Identity, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.calls++
 	a.token, a.operationID = token, operationID
-	return a.err
+	return a.identity, a.err
 }
+
+// reportAuth and cloneAuth admit every caller as the report identity and
+// the clone identity respectively.
+func reportAuth() *recordingAuth { return &recordingAuth{identity: IdentityReport} }
+func cloneAuth() *recordingAuth  { return &recordingAuth{identity: IdentityClone} }
 
 func (a *recordingAuth) snapshot() (token, operationID string, calls int) {
 	a.mu.Lock()
@@ -104,7 +110,7 @@ func TestInterceptor_RefusesMalformedCredentials(t *testing.T) {
 		"authorization reversed": metadata.Pairs(AuthorizationKey, "t "+BearerPrefix, OperationIDKey, "op-1"),
 	} {
 		t.Run(name, func(t *testing.T) {
-			auth := &recordingAuth{}
+			auth := reportAuth()
 			handler := &fakeHandler{}
 			client, _ := serveWith(t, handler, WithAuthenticator(auth))
 
@@ -169,7 +175,7 @@ func TestInterceptor_MapsFailureKindsToDistinctCodes(t *testing.T) {
 // presented — not a value derived from the stream's contents, which have
 // not been read yet.
 func TestInterceptor_PassesPresentedCredentialThrough(t *testing.T) {
-	auth := &recordingAuth{}
+	auth := reportAuth()
 	client, _ := serveWith(t, &fakeHandler{}, WithAuthenticator(auth))
 
 	ctx := metadata.AppendToOutgoingContext(context.Background(),
@@ -190,7 +196,7 @@ func TestInterceptor_PassesPresentedCredentialThrough(t *testing.T) {
 // someone who saw a field going unused — would reopen the whole gap.
 func TestExecuteOperation_AuthenticatedIDSupersedesTheMessage(t *testing.T) {
 	handler := &fakeHandler{}
-	client, _ := serveWith(t, handler, WithAuthenticator(&recordingAuth{}))
+	client, _ := serveWith(t, handler, WithAuthenticator(reportAuth()))
 
 	stream, err := client.ExecuteOperation(authedContext("op-authenticated"))
 	require.NoError(t, err)
@@ -276,7 +282,7 @@ func TestInterceptor_CoversAUnaryRPCItWasNotWrittenFor(t *testing.T) {
 	}
 
 	lis := bufconn.Listen(1024 * 1024)
-	server := NewServer(&fakeHandler{}, WithAuthenticator(&recordingAuth{}))
+	server := NewServer(&fakeHandler{}, WithAuthenticator(reportAuth()))
 	server.RegisterService(probeUnaryDesc(record), struct{}{})
 	go func() { _ = server.Serve(lis) }()
 	t.Cleanup(server.Stop)
@@ -323,7 +329,7 @@ func TestInterceptor_CoversAnRPCItWasNotWrittenFor(t *testing.T) {
 	}
 
 	lis := bufconn.Listen(1024 * 1024)
-	server := NewServer(&fakeHandler{}, WithAuthenticator(&recordingAuth{}))
+	server := NewServer(&fakeHandler{}, WithAuthenticator(reportAuth()))
 	server.RegisterService(probeDesc(record), struct{}{})
 	go func() { _ = server.Serve(lis) }()
 	t.Cleanup(server.Stop)
@@ -375,7 +381,7 @@ func TestInterceptor_CoversAnRPCItWasNotWrittenFor(t *testing.T) {
 // repository credential rather than a forged result.
 func TestFetchCloneCredential_ServesTheAuthenticatedOperation(t *testing.T) {
 	handler := &fakeHandler{}
-	client, _ := serveWith(t, handler, WithAuthenticator(&recordingAuth{}))
+	client, _ := serveWith(t, handler, WithAuthenticator(cloneAuth()))
 
 	resp, err := client.FetchCloneCredential(authedContext("op-authenticated"), &pb.FetchCloneCredentialRequest{})
 	require.NoError(t, err)
@@ -388,7 +394,7 @@ func TestFetchCloneCredential_ServesTheAuthenticatedOperation(t *testing.T) {
 
 func TestFetchCloneCredential_RefusedWithoutACredential(t *testing.T) {
 	handler := &fakeHandler{}
-	client, _ := serveWith(t, handler, WithAuthenticator(&recordingAuth{}))
+	client, _ := serveWith(t, handler, WithAuthenticator(cloneAuth()))
 
 	_, err := client.FetchCloneCredential(context.Background(), &pb.FetchCloneCredentialRequest{})
 	require.Error(t, err)
@@ -405,7 +411,7 @@ func TestFetchCloneCredential_RefusedWithoutACredential(t *testing.T) {
 func TestFetchCloneCredential_RefusedWhenBoundToAnotherOperation(t *testing.T) {
 	handler := &fakeHandler{}
 	client, _ := serveWith(t, handler,
-		WithAuthenticator(&recordingAuth{err: fmt.Errorf("%w: pod mismatch", ErrNotBound)}))
+		WithAuthenticator(&recordingAuth{identity: IdentityClone, err: fmt.Errorf("%w: pod mismatch", ErrNotBound)}))
 
 	_, err := client.FetchCloneCredential(authedContext("op-someone-elses"), &pb.FetchCloneCredentialRequest{})
 	require.Error(t, err)
@@ -420,7 +426,7 @@ func TestFetchCloneCredential_RefusedWhenBoundToAnotherOperation(t *testing.T) {
 // repositories the caller was refused for.
 func TestFetchCloneCredential_MintFailureIsNotDetailedToTheCaller(t *testing.T) {
 	handler := &fakeHandler{credentialErr: errors.New("422 repository not covered: secret-repo")}
-	client, _ := serveWith(t, handler, WithAuthenticator(&recordingAuth{}))
+	client, _ := serveWith(t, handler, WithAuthenticator(cloneAuth()))
 
 	_, err := client.FetchCloneCredential(authedContext("op-1"), &pb.FetchCloneCredentialRequest{})
 	require.Error(t, err)

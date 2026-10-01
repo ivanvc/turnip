@@ -45,7 +45,8 @@ ARCH_ARM := $(filter arm64 aarch64,$(UNAME_M))
 # Markdown resolves, with lychee (https://github.com/lycheeverse/lychee),
 # offline: external links are not fetched. It reads only the files git
 # tracks, so untracked scratch directories are never checked, and skips
-# .kiro/ (specs cite paths as history, not as links to follow).
+# .kiro/ and openspec/ (specs cite paths as history, not as links to
+# follow).
 LYCHEE_VERSION := $(shell sed -n 's|^FROM docker.io/lycheeverse/lychee:||p' build/tools/lychee/Dockerfile)
 LYCHEE := $(BIN_DIR)/lychee-$(LYCHEE_VERSION)
 ifeq ($(UNAME_S),Darwin)
@@ -67,7 +68,7 @@ $(LYCHEE):
 	echo "downloaded lychee $(LYCHEE_VERSION) ($(LYCHEE_TARGET)) to $@"
 
 docs-check: $(LYCHEE)
-	$(LYCHEE) --offline --include-fragments --no-progress $$(git ls-files '*.md' ':!:.kiro/**')
+	$(LYCHEE) --offline --include-fragments --no-progress $$(git ls-files '*.md' ':!:.kiro/**' ':!:openspec/**')
 
 # lint runs golangci-lint from its release binary, which its maintainers
 # recommend over building it from source.

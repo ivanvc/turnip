@@ -16,17 +16,21 @@ starting point for a real deployment.
    -f` can reach.
 
    The version floor comes from how the Server identifies a Runner. Each
-   Runner Pod carries a ServiceAccount token projected with turnip's own
-   audience, and the Server validates it with a `TokenReview`; what makes
-   that token bind to *one* operation rather than merely prove "some
+   Runner container presents a Runner identity, a ServiceAccount token
+   projected with one of turnip's two audiences (the clone identity in
+   the clone container, the report identity in the container that runs
+   the tool; see
+   [Runner access](runner-access.md#how-a-runner-gets-its-github-credential)),
+   and the Server validates it with a `TokenReview`. What makes a Runner
+   identity bind to *one* operation rather than merely prove "some
    Runner" is the `authentication.kubernetes.io/pod-uid` extra the API
    server reports alongside it. That extra exists from v1.29 but sits
    behind a feature gate until v1.32, and a gate turnip cannot detect
    from a response is not a version it can claim to support, because an
    older cluster simply answers without the extra, which is
-   indistinguishable from a token that never carried one. turnip refuses
-   such a stream rather than relaxing the check, so on a cluster below
-   v1.32 no operation will ever report its result.
+   indistinguishable from a Runner identity that never carried one.
+   turnip refuses such a stream rather than relaxing the check, so on a
+   cluster below v1.32 no operation will ever report its result.
 2. **Redis or Valkey, with persistence enabled**: turnip's own manifests
    deliberately don't include one (`deploy/base/kustomization.yaml` ships
    no `TURNIP_REDIS_ADDR` default at all): the Server is stateless, and
@@ -286,7 +290,7 @@ Two grants, in `deploy/base`:
 | Scope | Grant | Why |
 |---|---|---|
 | Namespaced (`Role`) | `jobs` create/delete/get/list/watch, `pods` get/list | dispatching Runners, diagnosing ones that never start, and resolving which Pod belongs to which operation |
-| Cluster (`ClusterRole`) | `tokenreviews` create | validating a Runner's token against turnip's audience |
+| Cluster (`ClusterRole`) | `tokenreviews` create | validating a Runner identity against turnip's two audiences (clone and report) |
 
 The `tokenreviews` grant is turnip's only cluster-scoped ask, and it has
 to be: `TokenReview` is a cluster-scoped API, so the permission to create
@@ -307,13 +311,21 @@ What that does and doesn't mean:
 - A Runner proves which Pod it is before it can write anything, so
   knowing an operation's id is no longer enough to forge a plan result or
   release a lock. That check does not depend on encryption.
-- The credential a Runner presents is scoped to turnip's own audience,
-  expires in minutes, and authorizes writing to exactly one operation. It
-  is useless against the Kubernetes API or anything else.
+- The Runner identity a Runner presents is scoped to one of turnip's two
+  audiences, expires in minutes, and is accepted for exactly one
+  operation. It is useless against the Kubernetes API or anything else.
+  The report identity (the container that runs the tool) authorizes only
+  writing that operation's result; the clone identity (the clone
+  container) also authorizes fetching that operation's GitHub credential
+  (see
+  [Runner access](runner-access.md#how-a-runner-gets-its-github-credential)).
 - Someone able to capture pod-to-pod traffic can read your plan and diff
-  output, and can capture that credential within its lifetime. That
-  requires network position on the cluster (node access or `CAP_NET_RAW`)
-  rather than the ability to read a Pod spec.
+  output, and can capture a Runner identity within its lifetime. A
+  captured clone identity can be traded for the operation's GitHub
+  credential until it expires, and the GitHub credential itself crosses
+  the same channel when the clone fetches it. That requires network
+  position on the cluster (node access or `CAP_NET_RAW`) rather than the
+  ability to read a Pod spec.
 
 If your cluster carries infrastructure detail you consider sensitive in
 plan output, run turnip inside a service mesh that provides transport

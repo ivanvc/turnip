@@ -43,21 +43,24 @@ const (
 	workspaceVolumeName = "workspace"
 	workspaceMountPath  = "/turnip/src"
 
-	// tokenVolumeName/tokenMountPath/tokenFileName carry the Runner's
-	// proof of identity: a ServiceAccount token projected with turnip's
-	// own audience, which the Server validates with a TokenReview before
-	// letting the caller write to an Operation (Slice 25).
+	// cloneIdentityVolumeName, reportIdentityVolumeName, tokenMountPath
+	// and tokenFileName carry the Runner identities: ServiceAccount
+	// tokens projected with turnip's own audiences, which the Server
+	// validates with a TokenReview before letting the caller write to an
+	// Operation (Slice 25). Each container mounts only its own identity,
+	// at the same path, so TURNIP_TOKEN_FILE is one value for both.
 	//
-	// It is a volume projection — a field of the Pod spec turnip already
-	// writes — and not a change to any ServiceAccount object. That is what
+	// They are volume projections, a field of the Pod spec turnip already
+	// writes, and not a change to any ServiceAccount object. That is what
 	// keeps Slice 13's runner.serviceAccount override orthogonal: a
 	// Project may still choose which account the Pod runs as, because the
 	// identity that matters here is the Pod's, not the account's.
-	tokenVolumeName = "turnip-token"
-	tokenMountPath  = "/turnip/run/secrets"
-	tokenFileName   = "token"
+	cloneIdentityVolumeName  = "turnip-clone-identity"
+	reportIdentityVolumeName = "turnip-report-identity"
+	tokenMountPath           = "/turnip/run/secrets"
+	tokenFileName            = "token"
 
-	// tokenExpirationSeconds is how long kubelet lets a projected token
+	// tokenExpirationSeconds is how long kubelet lets a projected identity
 	// live before rotating it in place. Ten minutes is the API server's
 	// own floor; asking for less gets silently rounded up. The Runner
 	// re-reads the file on every stream it opens rather than caching what
@@ -79,16 +82,24 @@ const (
 	provisionContainerPrefix = "provision-"
 )
 
-// TokenAudience is what the Runner's projected token is scoped to, and
-// the only audience the Server's TokenReview accepts.
+// ReportAudience and CloneAudience scope the two Runner identities a
+// Runner Pod carries, one projected token per container that talks to
+// the Server. The report identity, held by the container that runs the
+// tool, may only report the Operation's result. The clone identity, held
+// only by the clone init container, may also fetch the GitHub credential
+// git uses to clone. Repository code runs in the tool container, so it
+// must never hold an identity that can fetch that credential.
 //
-// It is deliberately not the API server's own audience. A Pod's default
+// Neither is the API server's own audience. A Pod's default
 // token — the one at /var/run/secrets/kubernetes.io/serviceaccount —
 // would be accepted by any component that merely checks "is this a valid
 // token", and the Server could then replay it to the API server *as* the
 // Runner's ServiceAccount. Scoping to an audience nothing else honors
 // makes that impossible rather than merely discouraged.
-const TokenAudience = "turnip.ivan.vc"
+const (
+	ReportAudience = "turnip.ivan.vc"
+	CloneAudience  = "turnip.ivan.vc/clone"
+)
 
 var jobTTLSecondsAfterFinished = ptr.To(jobTTLSeconds)
 
@@ -210,8 +221,12 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 	binMount := corev1.VolumeMount{Name: binVolumeName, MountPath: binMountPath}
 	workspaceMount := corev1.VolumeMount{Name: workspaceVolumeName, MountPath: workspaceMountPath}
 	// ReadOnly because nothing in the Pod has any business rewriting the
-	// credential kubelet maintains there.
-	tokenMount := corev1.VolumeMount{Name: tokenVolumeName, MountPath: tokenMountPath, ReadOnly: true}
+	// identity kubelet maintains there. The clone init container mounts
+	// the clone identity and the runner container the report identity,
+	// both at tokenMountPath. Provisioning init containers mount neither:
+	// they run vendor images that need no identity.
+	cloneIdentityMount := corev1.VolumeMount{Name: cloneIdentityVolumeName, MountPath: tokenMountPath, ReadOnly: true}
+	reportIdentityMount := corev1.VolumeMount{Name: reportIdentityVolumeName, MountPath: tokenMountPath, ReadOnly: true}
 
 	// The clone runs in turnip's own image, which has git — so the image
 	// that runs the tool needs nothing but the tool, and can be a vendor
@@ -231,7 +246,7 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		Env: append(slices.Clone(baseEnv),
 			corev1.EnvVar{Name: "TURNIP_CLONE_SUBMODULES", Value: op.Submodules},
 		),
-		VolumeMounts: []corev1.VolumeMount{workspaceMount, tokenMount},
+		VolumeMounts: []corev1.VolumeMount{workspaceMount, cloneIdentityMount},
 	}
 
 	var (
@@ -263,8 +278,8 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		// is statically linked (CGO_ENABLED=0), so it executes in any
 		// image regardless of libc.
 		mainCommand = []string{binMountPath + "/runner"}
-		mainMounts = []corev1.VolumeMount{binMount, workspaceMount, tokenMount}
-		volumes = []corev1.Volume{emptyDirVolume(binVolumeName), emptyDirVolume(workspaceVolumeName), tokenVolume()}
+		mainMounts = []corev1.VolumeMount{binMount, workspaceMount, reportIdentityMount}
+		volumes = []corev1.Volume{emptyDirVolume(binVolumeName), emptyDirVolume(workspaceVolumeName), identityVolume(cloneIdentityVolumeName, CloneAudience), identityVolume(reportIdentityVolumeName, ReportAudience)}
 
 		// No TURNIP_TOOLS_DIR: the tool is already on the vendor image's
 		// own PATH. The Runner needs no branch for this — pathWithToolsDir
@@ -285,8 +300,8 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 			cloneContainer,
 		}
 		mainImage = op.RunnerImage
-		mainMounts = []corev1.VolumeMount{toolsMount, workspaceMount, tokenMount}
-		volumes = []corev1.Volume{emptyDirVolume(toolsVolumeName), emptyDirVolume(workspaceVolumeName), tokenVolume()}
+		mainMounts = []corev1.VolumeMount{toolsMount, workspaceMount, reportIdentityMount}
+		volumes = []corev1.Volume{emptyDirVolume(toolsVolumeName), emptyDirVolume(workspaceVolumeName), identityVolume(cloneIdentityVolumeName, CloneAudience), identityVolume(reportIdentityVolumeName, ReportAudience)}
 
 		// TURNIP_TOOLS_DIR tells the Runner where the initContainer copied
 		// the tool binary, so it can prepend that directory to its own
@@ -365,22 +380,23 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 	return job, nil
 }
 
-// tokenVolume is the ServiceAccountToken projection the Runner presents
-// to the Server. kubelet mints it against the Pod's own ServiceAccount,
-// scoped to turnip's audience, and rotates it in place as it nears
-// expiry.
+// identityVolume is the ServiceAccountToken projection a Runner container
+// presents to the Server. kubelet mints it against the Pod's own
+// ServiceAccount, scoped to the given audience (CloneAudience for the
+// clone identity, ReportAudience for the report identity), and rotates it
+// in place as it nears expiry.
 //
-// The projection carries the Pod's identity — name and uid — in the
+// The projection carries the Pod's identity (name and uid) in the
 // resulting token's claims, which is what lets the Server bind a caller
 // to one Operation rather than merely recognizing that it is some Runner.
-func tokenVolume() corev1.Volume {
+func identityVolume(name, audience string) corev1.Volume {
 	return corev1.Volume{
-		Name: tokenVolumeName,
+		Name: name,
 		VolumeSource: corev1.VolumeSource{
 			Projected: &corev1.ProjectedVolumeSource{
 				Sources: []corev1.VolumeProjection{{
 					ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
-						Audience:          TokenAudience,
+						Audience:          audience,
 						ExpirationSeconds: ptr.To(tokenExpirationSeconds),
 						Path:              tokenFileName,
 					},

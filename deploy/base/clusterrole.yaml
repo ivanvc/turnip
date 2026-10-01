@@ -11,8 +11,9 @@ kind: ClusterRole
 metadata:
   name: turnip-server-token-review
 rules:
-  # internal/runnerauth: validate a Runner's projected ServiceAccount
-  # token, scoped to turnip's own audience.
+  # internal/runnerauth: validate a Runner identity (a projected
+  # ServiceAccount token) against turnip's two audiences, clone and
+  # report.
   - apiGroups: ["authentication.k8s.io"]
     resources: ["tokenreviews"]
     verbs: ["create"]
