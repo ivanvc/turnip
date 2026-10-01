@@ -1,0 +1,38 @@
+schema: spec-driven
+
+context: |
+  turnip is a public repository, pre-1.0, with a single pilot user. Breaking
+  changes are expected and need no migration, compatibility shim or
+  transition step; the simplest design wins.
+  Nothing identifying the private repository turnip is piloted against may
+  appear in any artifact: no repository, environment, organization or
+  release names, state paths or cloud account ids. Use neutral
+  placeholders (web, api, project, example.com).
+  Git belongs to the repository owner: no commit, stage, push, branch or
+  history rewrite is ever part of a task; owner steps are listed as such.
+  turnip never gates tool versions: a repository states its tool version,
+  vendor images supply it, and turnip keeps no default or known-version list.
+  Every turnip.yaml Runner setting is a runner: field available at the top
+  level and per Project, merged by the Runner merge-rules table.
+  Completed history lives in openspec/changes/archive/, including the
+  pre-OpenSpec slices archived in their original Kiro format.
+
+rules:
+  proposal:
+    - State what is explicitly out of scope, naming where it is deferred
+    - Cite the capabilities the change modifies or adds
+  specs:
+    - Requirements use SHALL and describe externally observable behavior, never implementation structure
+    - Every requirement has at least one WHEN/THEN scenario
+    - Describe what the code does today in main specs; a known defect is stated as current behavior with its fix change named
+    - No source line numbers; name files or packages only when an operator or user needs them
+  design:
+    - Document architecture for review before code exists, not a pseudocode draft
+    - Prefer Mermaid diagrams for control flow, tables for data and config shapes, short prose for decisions
+    - Literal Go only for load-bearing contracts (exported signatures, wire formats, short atomic scripts), never a function body
+    - Record each real judgment call as a Decision with "Alternative considered" and "Rejected because"
+  tasks:
+    - Include verification checkpoints, naming the one that matters most and why
+    - End with a "## Task Dependency Graph" section holding a JSON block of zero-based waves, e.g. {"waves":[{"id":0,"tasks":["1.1","1.2"]}]}; tasks in one wave touch disjoint files
+    - List repository-owner steps (git, GitHub settings) separately; they are not in the graph
+    - Record intermittent test failures with full output rather than rerunning them away
