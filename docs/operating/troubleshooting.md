@@ -87,6 +87,46 @@ or nothing happens for several minutes before a timeout is reported.
   means, is on its page; for Helmfile, see
   [What to grant it](../plugins/helmfile.md#what-to-grant-it).
 
+## Redis connection and startup errors
+
+**Symptom**: the Server exits at startup with one of these messages
+(`kubectl logs` on the Server Pod), or `/readyz` returns 503. None of
+them print the password.
+
+- **`must not carry a password in the URL`**: `TURNIP_REDIS_ADDR` has
+  `user:password@`. The address is delivered through a ConfigMap, so a
+  password there would not be secret. Keep the username if you need one
+  (`rediss://user@host:6379`) and set `TURNIP_REDIS_PASSWORD_PATH` (a
+  mounted Secret file) or `TURNIP_REDIS_PASSWORD`.
+- **`must not set skip_verify`**: the address has `skip_verify` with any
+  value. turnip always verifies the Redis certificate. Remove it; for a
+  private CA, set `TURNIP_REDIS_CA_PATH` instead.
+- **`scheme ... is not supported`**: the scheme is neither `redis` nor
+  `rediss` (`unix://`, `http://` and a typo all land here). Use
+  `redis://`, `rediss://` or a bare `host:port`.
+- **`TURNIP_REDIS_CA_PATH is set but ... does not use rediss://`**: a CA
+  bundle only matters for TLS. Switch the address to `rediss://` or unset
+  the CA path.
+- **`set TURNIP_REDIS_PASSWORD_PATH (a file) or TURNIP_REDIS_PASSWORD (a
+  value), not both`**: pick one; the file form is recommended.
+- **`reading TURNIP_REDIS_CA_PATH` or `holds no PEM certificate`**: the
+  CA file is missing, unreadable, or contains no PEM certificate. Check
+  the mount path and the file's contents.
+- **`reading TURNIP_REDIS_PASSWORD_PATH`**: the password file is missing
+  or unreadable. It is checked at startup and again for each new
+  connection, so a Secret that later disappears also fails there.
+- **An unknown query parameter** in the address: go-redis refuses
+  parameters it does not recognize. See its
+  [connection URL](https://pkg.go.dev/github.com/redis/go-redis/v9#ParseURL)
+  list.
+- **`MOVED` errors** in the Server's logs or in a failed check's details:
+  the endpoint is a clustered Redis (ElastiCache cluster mode enabled),
+  which turnip does not support. Point it at a cluster-mode-disabled
+  primary endpoint. See [Prerequisites](deployment.md#prerequisites).
+- **Connected, but plaintext when you expected TLS**: the startup line
+  and `/readyz` show `tls=false`. The address is `redis://` or bare;
+  change it to `rediss://`.
+
 ## Failed checks that are the Server's to fix
 
 **Symptom**: a per-project check failed with one of these titles. The

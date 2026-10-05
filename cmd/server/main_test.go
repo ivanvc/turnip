@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ivanvc/turnip/internal/github"
+	"github.com/ivanvc/turnip/internal/health"
 )
 
 // recordingHandler stands in for the webhook handler and records whether
@@ -85,7 +86,7 @@ func TestNewMux_Routing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			webhook := &recordingHandler{}
-			mux := newMux(webhook, readyAlways)
+			mux := newMux(webhook, readyAlways, health.RedisTransport{Addr: "redis:6379", Auth: "none"})
 
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, httptest.NewRequest(tt.method, tt.path, nil))
@@ -102,7 +103,7 @@ func TestNewMux_Routing(t *testing.T) {
 // when a liveness probe starts 404ing.
 func TestNewMux_OperationalPathsUnchanged(t *testing.T) {
 	webhook := &recordingHandler{}
-	mux := newMux(webhook, readyAlways)
+	mux := newMux(webhook, readyAlways, health.RedisTransport{Addr: "redis:6379", Auth: "none"})
 
 	for _, path := range []string{"/healthz", "/readyz", "/metrics"} {
 		t.Run(path, func(t *testing.T) {

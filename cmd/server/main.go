@@ -57,7 +57,11 @@ func run(cfg orchestrator.Config, plugins orchestrator.PluginRegistry) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	redisOpts, transport, err := orchestrator.RedisOptions(cfg)
+	if err != nil {
+		return err
+	}
+	redisClient := redis.NewClient(redisOpts)
 	defer func() { _ = redisClient.Close() }()
 
 	appAuth, err := github.NewAppAuth(cfg.GitHubAppID, cfg.GitHubPrivateKey)
@@ -91,11 +95,18 @@ func run(cfg orchestrator.Config, plugins orchestrator.PluginRegistry) error {
 	)
 
 	pingRedis := func(ctx context.Context) error { return redisClient.Ping(ctx).Err() }
+	readyTransport := health.RedisTransport{
+		Addr:     transport.Addr,
+		TLS:      transport.TLS,
+		Auth:     transport.Auth,
+		CustomCA: transport.CustomCA,
+	}
+	go logRedisConnected(ctx, pingRedis, readyTransport)
 	webhook := github.NewWebhookHandler([]byte(cfg.GitHubWebhookSecret), orch)
 
 	httpServer := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: newMux(webhook, pingRedis),
+		Handler: newMux(webhook, pingRedis, readyTransport),
 	}
 
 	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)
@@ -138,6 +149,31 @@ func run(cfg orchestrator.Config, plugins orchestrator.PluginRegistry) error {
 	)
 }
 
+// logRedisConnected logs the Redis Transport once, at info, after the first
+// Ping succeeds, retrying until it does or ctx ends. The fields describe the
+// connection only; no credential is ever among them.
+func logRedisConnected(ctx context.Context, ping func(context.Context) error, t health.RedisTransport) {
+	for {
+		pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err := ping(pingCtx)
+		cancel()
+		if err == nil {
+			slog.Info("redis connected",
+				"addr", t.Addr,
+				"tls", t.TLS,
+				"auth", t.Auth,
+				"custom_ca", t.CustomCA,
+			)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
 // newMux builds the Server's HTTP routes.
 //
 // Separated from run so that routing is testable: run dials Redis and
@@ -146,10 +182,10 @@ func run(cfg orchestrator.Config, plugins orchestrator.PluginRegistry) error {
 // and the readiness probe's dependency — so a test can pass a stub that
 // records whether it was called, which is the only way to assert that an
 // unmatched path does *not* reach the webhook handler.
-func newMux(webhook http.Handler, ready func(context.Context) error) *http.ServeMux {
+func newMux(webhook http.Handler, ready func(context.Context) error, transport health.RedisTransport) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("GET /healthz", health.Healthz())
-	mux.Handle("GET /readyz", health.Readyz(ready))
+	mux.Handle("GET /readyz", health.Readyz(ready, transport))
 	mux.Handle("GET /metrics", metrics.Handler())
 	// Registered at an exact path, with its method: the handler performs
 	// no method check of its own, so without "POST " a GET here would

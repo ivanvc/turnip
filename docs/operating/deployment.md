@@ -52,17 +52,27 @@ starting point for a real deployment.
      request's side, from turnip forgetting every plan and lock it ever
      held**, so persistence is not an optimization, it's what keeps
      "planned" meaning something between now and when someone applies.
-   - **`TURNIP_REDIS_ADDR` is a plain `host:port`, nothing else**. The
-     Server connects with `redis.Options{Addr: cfg.RedisAddr}`
-     (`cmd/server/main.go`): no password/AUTH field, no TLS. It has to be
-     an unauthenticated, non-TLS-only Redis/Valkey reachable from the
-     cluster: a bare in-cluster `Deployment`+`Service` works (e.g.
-     `TURNIP_REDIS_ADDR=redis.redis-ns.svc.cluster.local:6379` for a
-     Service named `redis` in namespace `redis-ns`); a managed instance
-     (ElastiCache, Memorystore, etc.) works only if you disable its
-     AUTH/in-transit-encryption requirement, or put an unauthenticated
-     proxy in front of it. Pointing this at an AUTH- or TLS-required
-     endpoint as-is will fail to connect.
+   - **It must be a single, non-clustered endpoint.** turnip connects to
+     one address. A primary with optional replicas works (on Amazon
+     ElastiCache, cluster mode disabled); a clustered Redis does not
+     (ElastiCache cluster mode enabled), and its operations fail with
+     `MOVED` errors. See
+     [Troubleshooting](troubleshooting.md#redis-connection-and-startup-errors).
+   - **Version.** Redis 5.0 or later (or Valkey), and 6.0 or later when
+     the address carries a username, since a username needs ACLs.
+   - **TLS and AUTH are supported, and recommended for anything outside
+     the cluster.** `TURNIP_REDIS_ADDR` takes a bare `host:port` (no TLS,
+     no AUTH), `redis://host:port` or `rediss://host:port` (TLS, with the
+     certificate always verified); the password comes from
+     `TURNIP_REDIS_PASSWORD_PATH` (a mounted Secret) or
+     `TURNIP_REDIS_PASSWORD`, and a private CA from
+     `TURNIP_REDIS_CA_PATH`. Every setting is in
+     [Server settings](server-settings.md). A bare in-cluster
+     `Deployment` plus `Service` works with the bare form (e.g.
+     `TURNIP_REDIS_ADDR=redis.redis-ns.svc.cluster.local:6379`). A typo
+     such as `redis://` for `rediss://` means plaintext, so after a
+     deploy confirm `tls=true` in the startup line or `/readyz` (see
+     [Verify your deployment](#verify-your-deployment)).
 3. **Public HTTPS ingress for the webhook path**: turnip ships no
    Ingress, Gateway API resource, or LoadBalancer Service (`deploy/base`
    has only a plain `ClusterIP` one, `deploy/base/service.yaml`). GitHub
@@ -215,6 +225,45 @@ The single file assumes the `default` namespace, as `deploy/base` does
 it and run the commands above with `-n default`, or use the Kustomize
 path to install anywhere else.
 
+## Connecting to ElastiCache
+
+For Amazon ElastiCache for Redis OSS or Valkey, with a replication group
+that has **cluster mode disabled**:
+
+1. Enable **in-transit encryption** and set an **AUTH token** (or a user
+   with a password, which needs Redis 6.0 or later), and enable
+   persistence as described under [Prerequisites](#prerequisites).
+2. Store the token in a Kubernetes Secret and mount it into the Server
+   Pod as a file. Set `TURNIP_REDIS_PASSWORD_PATH` to that file's path.
+   turnip re-reads the file for each new connection, so rotating the
+   token (ElastiCache accepts the old and new together for a while) needs
+   no restart once the mounted Secret updates.
+3. Set `TURNIP_REDIS_ADDR` to the primary endpoint with the `rediss://`
+   scheme, e.g. `rediss://<primary-endpoint>:6379`. ElastiCache's
+   certificates chain to a public CA, so `TURNIP_REDIS_CA_PATH` is not
+   needed. Do not put the token in the address: the Server refuses to
+   start.
+4. Deploy and confirm the transport. The startup log has one line, and
+   `/readyz` returns the same facts (never the token):
+
+   ```text
+   redis connected addr=<primary-endpoint>:6379 tls=true auth=password custom_ca=false
+   ```
+
+   ```json
+   {"redis":{"addr":"<primary-endpoint>:6379","tls":true,"auth":"password","custom_ca":false}}
+   ```
+
+A new instance starts empty, so every open pull request plans again.
+
+**ElastiCache Serverless is unverified.** AWS documents Serverless
+caches as always cluster mode enabled, fronted by a single endpoint and a
+proxy, and says clients must support cluster mode to connect to one.
+turnip uses a single-node client, so whether it works against Serverless
+is unverified. If you want to use it, test a plan and apply on a scratch
+pull request first, and watch for `MOVED` errors. The tested path is a
+node-based replication group with cluster mode disabled.
+
 ## Verify your deployment
 
 The Server exposes `/healthz` (always 200 once the process is up) and
@@ -227,6 +276,12 @@ kubectl port-forward svc/turnip-server 8080:8080 &
 curl -i localhost:8080/healthz   # expect: HTTP/1.1 200 OK
 curl -i localhost:8080/readyz    # expect: HTTP/1.1 200 OK once Redis is reachable
 ```
+
+The `/readyz` body is JSON naming how the Server reaches Redis
+(`{"redis":{"addr":...,"tls":...,"auth":...,"custom_ca":...}}`), with no
+credential. Check that `tls` is `true` if you expect an encrypted
+connection; the same fields are logged once as `redis connected` after
+the first successful ping.
 
 A `503` from `/readyz` with a `200` from `/healthz` means the process is
 up but can't currently reach Redis. Check `TURNIP_REDIS_ADDR` and that

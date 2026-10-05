@@ -19,6 +19,17 @@ type Config struct {
 	GitHubPrivateKey    []byte // PEM-encoded
 	GitHubWebhookSecret string
 	RedisAddr           string
+	// RedisPassword is the AUTH password as a literal value, from
+	// TURNIP_REDIS_PASSWORD. RedisPasswordPath names a file holding it,
+	// from TURNIP_REDIS_PASSWORD_PATH (recommended: a mounted Secret,
+	// re-read per connection so a rotated token needs no restart). Setting
+	// both is a startup error. See RedisOptions in redisoptions.go.
+	RedisPassword     string
+	RedisPasswordPath string
+	// RedisCAPath is a PEM bundle of trusted roots for a rediss:// address,
+	// from TURNIP_REDIS_CA_PATH; empty uses the system roots. Set without a
+	// rediss:// address it is a startup error (it would verify nothing).
+	RedisCAPath         string
 	KubernetesNamespace string
 	HTTPAddr            string
 	GRPCAddr            string
@@ -129,6 +140,7 @@ func ConfigFromEnv(env func(string) string, plugins PluginRegistry) (Config, err
 	cfg := Config{
 		GitHubWebhookSecret: env("TURNIP_GITHUB_WEBHOOK_SECRET"),
 		RedisAddr:           env("TURNIP_REDIS_ADDR"),
+		RedisCAPath:         env("TURNIP_REDIS_CA_PATH"),
 		KubernetesNamespace: env("TURNIP_K8S_NAMESPACE"),
 		HTTPAddr:            env("TURNIP_HTTP_ADDR"),
 		GRPCAddr:            env("TURNIP_GRPC_ADDR"),
@@ -179,6 +191,21 @@ func ConfigFromEnv(env func(string) string, plugins PluginRegistry) (Config, err
 		cfg.GitHubPrivateKey = []byte(env("TURNIP_GITHUB_PRIVATE_KEY"))
 	default:
 		missing = append(missing, "TURNIP_GITHUB_PRIVATE_KEY or TURNIP_GITHUB_PRIVATE_KEY_PATH")
+	}
+
+	// The AUTH password comes from a file (recommended) or a literal value,
+	// never both: two sources could disagree, and only the operator knows
+	// which was meant. Mirrors the private-key pair above, but where that
+	// pair lets the path win, a password demands the operator resolve it.
+	switch {
+	case env("TURNIP_REDIS_PASSWORD_PATH") != "" && env("TURNIP_REDIS_PASSWORD") != "":
+		return Config{}, fmt.Errorf(
+			"orchestrator: set TURNIP_REDIS_PASSWORD_PATH (a file) or TURNIP_REDIS_PASSWORD (a value), not both",
+		)
+	case env("TURNIP_REDIS_PASSWORD_PATH") != "":
+		cfg.RedisPasswordPath = env("TURNIP_REDIS_PASSWORD_PATH")
+	case env("TURNIP_REDIS_PASSWORD") != "":
+		cfg.RedisPassword = env("TURNIP_REDIS_PASSWORD")
 	}
 
 	if len(missing) > 0 {
