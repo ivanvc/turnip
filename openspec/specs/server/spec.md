@@ -42,6 +42,7 @@ Every `TURNIP_*` setting the Server reads SHALL be one of those below, with its 
 | `TURNIP_RUNNER_IMAGE` | yes | `runner-job` |
 | `TURNIP_LOG_LEVEL` | no | `observability` |
 | `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` | no | `pr-comment` |
+| `TURNIP_MAX_COMMENTS_PER_PROJECT` | no | `pr-comment` |
 | `TURNIP_RUNNER_SERVICE_ACCOUNT` | no | `runner-access` |
 | `TURNIP_ALLOWED_OVERRIDES` | no | `runner-access` |
 | `TURNIP_CLONE_SUBMODULES` | no | `checkout` |
