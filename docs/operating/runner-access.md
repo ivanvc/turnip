@@ -117,8 +117,12 @@ whatever you provide, through any of these routes, alone or together:
 
 ## The repository's Secret
 
-A repository may have one Kubernetes Secret of its own, for a credential
-that cannot be committed. Creating it is the opt-in: there is no Server
+A repository may have one Kubernetes Secret of its own, for anything
+that cannot be committed: a credential such as a kubeconfig or a cloud
+key, a value a release needs such as a database password, or a
+decryption key. How a tool uses the files is the tool's business (for
+Helmfile, see
+[Keys from the repository's Secret](../plugins/helmfile.md#keys-from-the-repositorys-secret)). Creating it is the opt-in: there is no Server
 setting, and a repository without the Secret behaves as it always has.
 
 - **Name.** `turnip-repository-<id>`, where `<id>` is the repository's numeric

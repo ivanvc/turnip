@@ -309,9 +309,11 @@ Settings that shape the Runner Pod rather than the tool inside it:
   for anything the tool's own ecosystem reads.
 - **`secrets`**: keys of the repository's Secret. Each listed key
   becomes a read-only file, `/turnip/repository-secrets/<key>`, in the
-  tool's container, and nothing else of the Secret is mounted. Point
-  `runner.env` at the file when the tool reads its credentials from a
-  path, for example `KUBECONFIG: /turnip/repository-secrets/lab-kubeconfig`.
+  tool's container, and nothing else of the Secret is mounted. Use it
+  from the tool's own configuration, or point `runner.env` at it, for
+  example `KUBECONFIG: /turnip/repository-secrets/lab-kubeconfig` (for
+  Helmfile's other uses, such as release values and kustomize, see
+  [Keys from the repository's Secret](../plugins/helmfile.md#keys-from-the-repositorys-secret)).
   A key is 1 to 253 letters, digits, `-`, `_` or `.`, other than `.`
   and not starting with `..`, and may be listed once. A Project's list
   replaces the top-level one, and `secrets: []` mounts nothing. **Any

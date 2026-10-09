@@ -184,3 +184,9 @@ Record.
   directory (anonymous pulls). Its `go test -timeout` is raised from 180s
   to 360s for the 60 second Pending check.
 - An invalid key is not also reported as a duplicate.
+- After the owner's first use, the Helmfile guide gained "Keys from the
+  repository's Secret": release values through vals (`ref+file://` with
+  `fetchSecretValue`), a kustomize `secretGenerator` (helmfile builds
+  kustomizations with `--load-restrictor=LoadRestrictionsNone`, checked
+  locally against `kubectl kustomize`), and a SOPS age key, since the
+  first version read as if a kubeconfig were the only use.
