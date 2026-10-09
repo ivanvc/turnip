@@ -28,7 +28,6 @@ In the order discussed so far; reorder here.
 
 | Change | What it does | Stage |
 |---|---|---|
-| [`redis-tls-auth`](changes/redis-tls-auth/) | TLS and AUTH to Redis (Slice 27) | implemented; archived once a deployment reports `tls=true` |
 | [`fix-results-comment-on-replica-loss`](changes/fix-results-comment-on-replica-loss/) | a trigger's results comment and later commands survive the loss of the replica that dispatched them | specs |
 | [`fix-output-order`](changes/fix-output-order/) | output in write order; each plugin decides what its output shows | proposal |
 | [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized (Slice 40) | proposal |

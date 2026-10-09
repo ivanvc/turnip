@@ -60,11 +60,15 @@ Histograms SHALL use the Prometheus client's default buckets. Projects refused d
 - **THEN** `turnip_lock_attempts_total{outcome="rejected"}` and `turnip_operations_dispatched_total{outcome="rejected"}` each increase by one
 
 ### Requirement: Health endpoints
-The Server SHALL answer `GET /healthz` with 200 whenever the process is serving HTTP, without checking any dependency, and `GET /readyz` with 200 only while a Redis `PING` succeeds and 503 otherwise. Both SHALL be served on `TURNIP_HTTP_ADDR`. The Kubernetes probes that use them are the `deployment` capability's.
+The Server SHALL answer `GET /healthz` with 200 whenever the process is serving HTTP, without checking any dependency, and `GET /readyz` with 200 only while a Redis `PING` succeeds and 503 otherwise. `GET /readyz` SHALL return a JSON body reporting the Redis transport in use under a `redis` field: the address (host and port, with no credential), whether TLS is on, how it authenticated (`none`, `username`, `password`, or `username+password`), and whether a custom CA bundle was used. The body SHALL never contain a credential. Both endpoints SHALL be served on `TURNIP_HTTP_ADDR`. The Kubernetes probes that use them are the `deployment` capability's.
 
 #### Scenario: Redis unreachable
 - **WHEN** the Server is running but cannot reach Redis
 - **THEN** `/healthz` answers 200 and `/readyz` answers 503
+
+#### Scenario: Readiness reports the transport
+- **WHEN** the Server connected to Redis over TLS with a password, and `/readyz` is requested
+- **THEN** its body reports `tls` true and `auth` `password`, with the address and no credential
 
 ### Requirement: Grafana dashboard
 turnip SHALL ship a Grafana dashboard titled `turnip` (uid `turnip-server`) with a Prometheus data source variable and panels for: webhook throughput and error rate by `event_type` and `outcome`; Operation dispatch rate by `tool`, `operation` and `outcome`; Lock acquisition rejection rate; Runner Job start latency (p99); and Operation duration (p50 and p99) by `tool` and `operation`. It SHALL be installable as a ConfigMap generated from the name `turnip-grafana-dashboard` (Kustomize appends a content hash) and labeled `grafana_dashboard: "1"` through the opt-in Kustomize component `deploy/components/grafana-dashboard`, which is not part of the default install.
@@ -72,3 +76,14 @@ turnip SHALL ship a Grafana dashboard titled `turnip` (uid `turnip-server`) with
 #### Scenario: Installing the dashboard
 - **WHEN** an operator applies `deploy/components/grafana-dashboard` to a cluster whose Grafana discovers dashboards by the `grafana_dashboard` label
 - **THEN** the `turnip` dashboard appears with its five panels
+
+### Requirement: Redis transport logged at startup
+After its first successful Redis `PING`, the Server SHALL log, once, at `info`, the transport it connected with: the address (host and port, no credential), whether TLS is on, how it authenticated (`none`, `username`, `password`, or `username+password`), and whether a custom CA bundle was used. The line SHALL never contain a credential. This is what makes a mistyped scheme (`redis://` where `rediss://` was meant, which connects in plaintext) visible rather than silent.
+
+#### Scenario: TLS connection logged
+- **WHEN** the Server connects to Redis over `rediss://` with a password
+- **THEN** it logs `redis connected` with `tls=true` and `auth=password`, and no credential
+
+#### Scenario: A plaintext typo is visible
+- **WHEN** an operator meant `rediss://` but set `redis://`
+- **THEN** the startup line reports `tls=false`, so the plaintext connection can be seen

@@ -114,3 +114,8 @@ external Redis.
   ]
 }
 ```
+
+- Archived 2026-10-09 before the owner's ElastiCache check, which waits
+  on the infrastructure's own review. The behavior is implemented and
+  proven against a TLS, password-protected Redis in task 3.1; whatever
+  the real deployment finds becomes a `fix-*` change.
