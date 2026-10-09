@@ -14,6 +14,7 @@
 | `runner` | no | Runner settings every project starts from, with the same fields as `projects[].runner`; a project's own block is merged over it; see [`runner`: where it runs](#runner-where-it-runs) |
 | `runner.serviceAccount` | no | the Kubernetes ServiceAccount the Runner Pod runs as; see [`runner`: where it runs](#runner-where-it-runs) |
 | `runner.env` | no | environment variables for the tool's process; see [`runner`: where it runs](#runner-where-it-runs) |
+| `runner.secrets` | no | keys of the repository's Secret to mount as files in the tool's container; see [`runner`: where it runs](#runner-where-it-runs) |
 | `projects` | no | the list of projects this file defines; see [Projects](#projects) |
 | `projects[].name` | no | defaults to `directory`; must be unique across the file once defaulted; see [Projects](#projects) |
 | `projects[].directory` | **yes** | the tool's working directory, relative to the repo root; see [Projects](#projects) |
@@ -23,6 +24,7 @@
 | `projects[].runner` | no | where it runs: settings for the Runner Pod, merged over the top-level `runner`; see [`runner`: where it runs](#runner-where-it-runs) |
 | `projects[].runner.serviceAccount` | no | see [`runner`: where it runs](#runner-where-it-runs) |
 | `projects[].runner.env` | no | see [`runner`: where it runs](#runner-where-it-runs) |
+| `projects[].runner.secrets` | no | see [`runner`: where it runs](#runner-where-it-runs) |
 
 **A key turnip doesn't recognize is an error, not a silent no-op.** Every
 field above is checked by name, so a misspelling or a setting written at
@@ -285,6 +287,9 @@ Settings that shape the Runner Pod rather than the tool inside it:
       serviceAccount: turnip-runner
       env:
         AWS_PROFILE: web-deployer
+        KUBECONFIG: /turnip/repository-secrets/lab-kubeconfig
+      secrets:
+        - lab-kubeconfig
 ```
 
 - **`serviceAccount`**: the Kubernetes ServiceAccount this Project's
@@ -302,6 +307,18 @@ Settings that shape the Runner Pod rather than the tool inside it:
   `with`, these are never interpreted by turnip at all. They are simply
   present in the environment the tool runs in, which makes this the place
   for anything the tool's own ecosystem reads.
+- **`secrets`**: keys of the repository's Secret. Each listed key
+  becomes a read-only file, `/turnip/repository-secrets/<key>`, in the
+  tool's container, and nothing else of the Secret is mounted. Point
+  `runner.env` at the file when the tool reads its credentials from a
+  path, for example `KUBECONFIG: /turnip/repository-secrets/lab-kubeconfig`.
+  A key is 1 to 253 letters, digits, `-`, `_` or `.`, other than `.`
+  and not starting with `..`, and may be listed once. A Project's list
+  replaces the top-level one, and `secrets: []` mounts nothing. **Any
+  pull request's plan can read every key of the Secret**: this file is
+  read from the pull request itself, so it can list any key, and the plan
+  runs the pull request's own code. The operator creates the Secret; see
+  [the repository's Secret](../operating/runner-access.md#the-repositorys-secret).
 
 ### Shared settings: the top-level `runner:` block
 
@@ -318,6 +335,8 @@ runner:
   serviceAccount: turnip-deployer
   env:
     AWS_REGION: us-west-2
+  secrets:
+    - shared-kubeconfig
 
 projects:
   - directory: infra/web
@@ -328,6 +347,7 @@ projects:
       serviceAccount: api-deployer   # replaces turnip-deployer
       env:
         AWS_PROFILE: api             # added beside AWS_REGION
+      secrets: []                    # replaces [shared-kubeconfig]: mounts nothing
 ```
 
 Each field has its own rule for combining the two levels:
@@ -336,6 +356,7 @@ Each field has its own rule for combining the two levels:
 |---|---|---|
 | `serviceAccount` | replaced | the Project's own if it sets one, else the top level's, else the Server's `TURNIP_RUNNER_SERVICE_ACCOUNT` |
 | `env` | merged per variable | every top-level variable, plus every Project variable; where both set the same variable, the Project's value wins |
+| `secrets` | replaced | the Project's own list if it sets one (even an empty one), else the top level's, else none |
 
 A Project that writes its own `env:` keeps every top-level variable it
 does not name. That is the difference from sharing the block with a YAML

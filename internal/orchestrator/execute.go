@@ -302,6 +302,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		Project:        t.Project,
 		Owner:          repo.Owner,
 		Repo:           repo.Name,
+		RepositoryID:   repo.ID,
 		InstallationID: installationID,
 		PRNumber:       pr.Number,
 		PRURL:          pullRequestURL(repo.Owner, repo.Name, pr.Number),
@@ -363,6 +364,11 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		Provisioning:   jobProvisioning(t.Project, p.Provisioning()),
 		ImageRef:       imageRef,
 		PullAlways:     pullAlways,
+		// The webhook's repository, never anything read from turnip.yaml or
+		// the pull request: it alone names the Secret the Pod mounts keys
+		// from. A zero id with keys listed fails the build, refusing the
+		// Operation below.
+		RepositoryID: repo.ID,
 	})
 	if err != nil {
 		o.deleteRecord(ctx, operationID)

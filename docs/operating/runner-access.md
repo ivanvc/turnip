@@ -94,15 +94,84 @@ turnip cannot narrow it.
 
 ## Cloud credentials
 
-turnip itself hands the Runner nothing beyond the ServiceAccount above:
-no cloud credential is generated, injected or rotated by turnip. A
-Runner Pod gets cloud credentials the same way any Pod in your cluster
-would, through that ServiceAccount: EKS Pod Identity or IRSA on AWS,
-Workload Identity on GKE, and so on, all decided by your cluster's own
-setup and which ServiceAccount the Pod runs as.
-[Targeting an EKS cluster: the operator side](../plugins/helmfile.md#targeting-an-eks-cluster-the-operator-side)
-walks through one concrete example end to end (identity, image, and the
-access entry the target cluster needs).
+turnip creates no RBAC for the Runner and mints no cloud credential: it
+does not generate, inject or rotate one. What a Runner can reach is
+whatever you provide, through any of these routes, alone or together:
+
+- **The ServiceAccount's identity.** A Runner Pod gets cloud credentials
+  the way any Pod in your cluster would: EKS Pod Identity or IRSA on AWS,
+  Workload Identity on GKE, and so on, all decided by your cluster's own
+  setup and which ServiceAccount the Pod runs as.
+  [Targeting an EKS cluster: the operator side](../plugins/helmfile.md#targeting-an-eks-cluster-the-operator-side)
+  walks through one concrete example end to end (identity, image, and the
+  access entry the target cluster needs).
+- **The repository's Secret.** A file you keep out of git, such as a
+  kubeconfig with an embedded credential, mounted for the Projects that
+  list it (see [The repository's Secret](#the-repositorys-secret)).
+- **What the tool's committed configuration reaches.** For example, a
+  committed kubeconfig whose user runs `aws eks get-token --role-arn ...`
+  reaches a cluster in another AWS account, using the identity the first
+  route gives the Runner to assume that role. The Helmfile guide's
+  [EKS section](../plugins/helmfile.md#targeting-an-eks-cluster-the-repository-side)
+  shows it.
+
+## The repository's Secret
+
+A repository may have one Kubernetes Secret of its own, for a credential
+that cannot be committed. Creating it is the opt-in: there is no Server
+setting, and a repository without the Secret behaves as it always has.
+
+- **Name.** `turnip-repository-<id>`, where `<id>` is the repository's numeric
+  GitHub id. The id survives renames and transfers, so the name does too.
+  Look it up with `gh api repos/OWNER/REPO --jq .id`.
+- **Namespace.** The Runner namespace (`TURNIP_K8S_NAMESPACE`).
+- **Creating it.** You create and fill it; turnip never reads, creates,
+  changes or deletes a Secret, and the Server needs no permission on
+  Secrets:
+
+```sh
+id=$(gh api repos/OWNER/REPO --jq .id)
+kubectl -n <runner-namespace> create secret generic "turnip-repository-$id" \
+  --from-file=<key>=<path>
+```
+
+- **What a Project gets.** Each key a Project lists in `runner.secrets`
+  becomes the read-only file `/turnip/repository-secrets/<key>` (mode
+  `0444`, so a tool image running as a non-root user can read it) in the
+  container that runs the tool. The clone container never has it, and keys
+  a Project does not list are not mounted. The user-facing side is in the
+  [`turnip.yaml` Reference](../using/turnip-yaml.md).
+- **Size.** Kubernetes limits a Secret to 1 MiB in total, all keys
+  together.
+- **When it is missing.** A Secret, or a listed key, that does not exist
+  keeps the Pod from starting. turnip reports it when the 5 minute start
+  timeout passes, with a hint naming the Secret and keys (see
+  [Troubleshooting](troubleshooting.md#a-project-lists-keys-of-a-secret-and-the-runner-never-started)).
+
+### What it costs
+
+- **Any collaborator's pull request can read every key in the Secret,
+  during its plan, before review.** turnip reads `turnip.yaml` from the
+  pull request's own head commit, so a pull request can list any key of
+  its repository's Secret, not only the keys the default branch lists,
+  and a plan runs the pull request's code. That code can print a key
+  where everyone who reads the repository sees it. Put a key in the
+  Secret only if you trust every collaborator with it. See
+  [What that grant means](../plugins/helmfile.md#what-that-grant-means)
+  for how a hook or templating does it. A pull request reaches only its
+  own repository's Secret, never another's.
+- **Do not let a Runner ServiceAccount read or create Secrets in the
+  Runner namespace.** A grant that reads Secrets there reaches every
+  repository's Secret, and one that creates them can plant a Secret for
+  another repository. This applies to `TURNIP_RUNNER_SERVICE_ACCOUNT` and,
+  when `runner.serviceAccount` is allowed, to every ServiceAccount in the
+  namespace.
+- **turnip's own Secret shares the namespace.** Until
+  `split-server-runner-namespaces` lands, the Runner namespace also holds
+  turnip's `turnip-github-app` Secret. A repository cannot name it (it
+  names only keys of its own Secret), but a Runner grant that reaches
+  Secrets in the namespace does. See
+  [Grants that reach the GitHub credential](#grants-that-reach-the-github-credential).
 
 ## Running a custom image
 

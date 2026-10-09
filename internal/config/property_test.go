@@ -89,6 +89,17 @@ func genRunner(t *rapid.T, label string) RunnerSpec {
 			1, 3,
 		).Draw(t, label+" env")
 	}
+	// Secrets is drawn absent, empty or non-empty: unlike Env, an empty
+	// list must survive the round trip, since it means "mount nothing".
+	switch rapid.IntRange(0, 2).Draw(t, label+" secrets form") {
+	case 1:
+		r.Secrets = SecretKeys{}
+	case 2:
+		r.Secrets = rapid.SliceOfNDistinct(
+			rapid.StringMatching("[a-zA-Z0-9][-_.a-zA-Z0-9]{0,20}"),
+			1, 3, func(s string) string { return s },
+		).Draw(t, label+" secrets")
+	}
 	return r
 }
 

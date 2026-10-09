@@ -201,13 +201,31 @@ func TestBuildJob_VolumesPerStrategy(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{binVolumeName, workspaceVolumeName, cloneIdentityVolumeName, reportIdentityVolumeName}, volumeNames(runInImageJob))
 
-	// Every volume turnip adds is scratch space, with two exceptions: the
+	// A Project listing keys adds the repository's Secret, and only that,
+	// under either strategy.
+	copyOutWithKeys := testProject("terraform")
+	copyOutWithKeys.Runner.Secrets = config.SecretKeys{"web-kubeconfig"}
+	copyOutKeysJob, err := BuildJob(copyOutWithKeys, testParamsWithRepository("terraform"))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{toolsVolumeName, workspaceVolumeName, cloneIdentityVolumeName, reportIdentityVolumeName, repositorySecretsVolumeName}, volumeNames(copyOutKeysJob))
+
+	runInImageWithKeys := testProject("helmfile")
+	runInImageWithKeys.Runner.Secrets = config.SecretKeys{"web-kubeconfig"}
+	runInImageKeysJob, err := BuildJob(runInImageWithKeys, testParamsWithRepository("helmfile"))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{binVolumeName, workspaceVolumeName, cloneIdentityVolumeName, reportIdentityVolumeName, repositorySecretsVolumeName}, volumeNames(runInImageKeysJob))
+
+	// Every volume turnip adds is scratch space, with three exceptions: the
 	// Runner identities, which kubelet mints and rotates and so cannot be
-	// an emptyDir.
-	for _, job := range []*batchv1.Job{copyOutJob, runInImageJob} {
+	// an emptyDir, and the repository's Secret.
+	for _, job := range []*batchv1.Job{copyOutJob, runInImageJob, copyOutKeysJob, runInImageKeysJob} {
 		for _, v := range job.Spec.Template.Spec.Volumes {
 			if v.Name == cloneIdentityVolumeName || v.Name == reportIdentityVolumeName {
 				assert.NotNil(t, v.Projected, "a Runner identity is a projection, not scratch space")
+				continue
+			}
+			if v.Name == repositorySecretsVolumeName {
+				assert.NotNil(t, v.Secret, "the repository's keys come from its Secret")
 				continue
 			}
 			assert.NotNil(t, v.EmptyDir, "volume %q", v.Name)
@@ -255,6 +273,9 @@ func TestBuildJob_MountPathsLiveUnderTurnipRoot(t *testing.T) {
 	assert.Equal(t, "/turnip/tools", toolsMountPath)
 	assert.Equal(t, "/turnip/bin", binMountPath)
 	assert.Equal(t, "/turnip/src", workspaceMountPath)
+	assert.Equal(t, "/turnip/run/secrets", tokenMountPath)
+	assert.Equal(t, "/turnip/repository-secrets", repositorySecretsMountPath,
+		"runner.env points a tool at a key's file by this absolute path")
 }
 
 func TestBuildJob_RestartPolicyAndTTL(t *testing.T) {

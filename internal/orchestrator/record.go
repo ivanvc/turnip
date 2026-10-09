@@ -21,17 +21,22 @@ const operationTTL = 24 * time.Hour
 // Server replica's gRPC handler or sweep tick can act on an Operation ID
 // it did not itself create the Job for.
 type OperationRecord struct {
-	OperationID    string         `json:"operation_id"`
-	ProjectKey     string         `json:"project_key"`
-	Project        config.Project `json:"project"`
-	Owner          string         `json:"owner"`
-	Repo           string         `json:"repo"`
-	InstallationID int64          `json:"installation_id"`
-	PRNumber       int            `json:"pr_number"`
-	PRURL          string         `json:"pr_url"`
-	HeadSHA        string         `json:"head_sha"`
-	Operation      string         `json:"operation"`
-	ExtraArgs      []string       `json:"extra_args,omitempty"`
+	OperationID string         `json:"operation_id"`
+	ProjectKey  string         `json:"project_key"`
+	Project     config.Project `json:"project"`
+	Owner       string         `json:"owner"`
+	Repo        string         `json:"repo"`
+	// RepositoryID is the repository's numeric GitHub id, from the
+	// webhook. It names the repository's Secret
+	// (jobs.RepositorySecretName), so the sweep's start-timeout hint names
+	// the same Secret the Pod mounts from.
+	RepositoryID   int64    `json:"repository_id"`
+	InstallationID int64    `json:"installation_id"`
+	PRNumber       int      `json:"pr_number"`
+	PRURL          string   `json:"pr_url"`
+	HeadSHA        string   `json:"head_sha"`
+	Operation      string   `json:"operation"`
+	ExtraArgs      []string `json:"extra_args,omitempty"`
 	// TokenRepositories is the repository scope this Operation's clone
 	// credential is minted for, resolved at dispatch — when the Project,
 	// the commit and the submodule mode are all in hand — and consumed

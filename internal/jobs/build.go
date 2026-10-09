@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -67,6 +68,22 @@ const (
 	// it read at startup, so a rotation mid-Operation costs nothing.
 	tokenExpirationSeconds = int64(10 * 60)
 
+	// repositorySecretsVolumeName/repositorySecretsMountPath carry the keys
+	// a Project lists in runner.secrets, out of its repository's own
+	// Secret. Only the runner container mounts them: the clone and the
+	// provisioning containers have no use for a credential the tool
+	// reads, and the clone must not hold more than it needs.
+	repositorySecretsVolumeName = "repository-secrets"
+	repositorySecretsMountPath  = "/turnip/repository-secrets"
+
+	// repositorySecretsMode lets a tool image running as a non-root user
+	// read the files. The container they land in holds only the tool.
+	repositorySecretsMode = int32(0o444)
+
+	// repositorySecretPrefix starts the name of every repository's
+	// Secret; RepositorySecretName appends the repository id.
+	repositorySecretPrefix = "turnip-repository-"
+
 	// jobTTLSeconds bounds how long Kubernetes keeps a finished Job (and
 	// its Pod) around (Requirement 7.4/9.1) — matching the reporter's
 	// final-result-delivery retry budget (design.md), so a Job whose
@@ -102,6 +119,17 @@ const (
 )
 
 var jobTTLSecondsAfterFinished = ptr.To(jobTTLSeconds)
+
+// RepositorySecretName is the name of the Secret a repository's Runner
+// Pods mount keys from: "turnip-repository-<id>".
+//
+// It is the only place the name is derived, so the Pod and the sweep's
+// start-timeout hint can never name different Secrets. The id is the
+// repository's numeric GitHub id from the webhook, a value a pull request
+// cannot influence; nothing in turnip.yaml takes part in the name.
+func RepositorySecretName(repositoryID int64) string {
+	return repositorySecretPrefix + strconv.FormatInt(repositoryID, 10)
+}
 
 // OperationParams carries the per-invocation values a Job needs beyond what
 // the matched Project already provides.
@@ -147,6 +175,12 @@ type OperationParams struct {
 	// Always when true (a tag, whose meaning can move), IfNotPresent
 	// otherwise (a digest, which cannot).
 	PullAlways bool
+	// RepositoryID is the repository's numeric GitHub id, read from the
+	// webhook. It names the repository's Secret (RepositorySecretName)
+	// when the Project lists keys in runner.secrets. Zero means unknown:
+	// BuildJob refuses a Project that lists keys rather than mount a
+	// Secret that cannot be the repository's.
+	RepositoryID int64
 }
 
 // BuildJob constructs the Kubernetes Job that runs one Operation for one
@@ -169,6 +203,15 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 	toolPullPolicy := corev1.PullIfNotPresent
 	if op.PullAlways {
 		toolPullPolicy = corev1.PullAlways
+	}
+
+	// The Secret is named from the repository id alone. Without one there
+	// is no Secret that could be the repository's, so a Project listing
+	// keys is refused rather than mounted from the wrong name or left to
+	// fail later on a missing file.
+	listsKeys := len(project.Runner.Secrets) > 0
+	if listsKeys && op.RepositoryID == 0 {
+		return nil, fmt.Errorf("jobs: runner.secrets lists keys but the repository id is unknown")
 	}
 
 	toolConfig, err := json.Marshal(project.With)
@@ -314,6 +357,17 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		mainEnv = append(mainEnv, corev1.EnvVar{Name: "TURNIP_TOOLS_DIR", Value: toolsMountPath})
 	}
 
+	// Added after the switch, and to the runner container only, so it is
+	// the same under both strategies and no init container ever mounts it.
+	if listsKeys {
+		volumes = append(volumes, repositorySecretsVolume(op.RepositoryID, project.Runner.Secrets))
+		mainMounts = append(mainMounts, corev1.VolumeMount{
+			Name:      repositorySecretsVolumeName,
+			MountPath: repositorySecretsMountPath,
+			ReadOnly:  true,
+		})
+	}
+
 	// A Project's own environment rides the Job spec rather than a
 	// transport of its own, so the Runner needs no code for it — the
 	// variables are simply present in the process it spawns. They come
@@ -401,6 +455,29 @@ func identityVolume(name, audience string) corev1.Volume {
 						Path:              tokenFileName,
 					},
 				}},
+			},
+		},
+	}
+}
+
+// repositorySecretsVolume projects exactly the listed keys of the
+// repository's Secret, each to a file named after its key. Keys the
+// Project did not list never appear. The volume is not optional: a missing
+// Secret or key keeps the Pod from starting, which the start timeout
+// reports, instead of a tool failing later on a missing file.
+func repositorySecretsVolume(repositoryID int64, keys config.SecretKeys) corev1.Volume {
+	items := make([]corev1.KeyToPath, 0, len(keys))
+	for _, key := range keys {
+		items = append(items, corev1.KeyToPath{Key: key, Path: key})
+	}
+	return corev1.Volume{
+		Name: repositorySecretsVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName:  RepositorySecretName(repositoryID),
+				Items:       items,
+				DefaultMode: ptr.To(repositorySecretsMode),
+				Optional:    ptr.To(false),
 			},
 		},
 	}

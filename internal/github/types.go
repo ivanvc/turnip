@@ -12,6 +12,9 @@ type WebhookEvent struct {
 }
 
 type Repository struct {
+	// ID is the repository's numeric GitHub id, stable across renames
+	// and transfers. Zero when the payload carries none.
+	ID    int64
 	Owner string
 	Name  string
 	URL   string

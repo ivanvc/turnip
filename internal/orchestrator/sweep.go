@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/ivanvc/turnip/internal/github"
 	"github.com/ivanvc/turnip/internal/jobs"
 	"github.com/ivanvc/turnip/internal/lock"
@@ -84,7 +86,7 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 		Tool:        rec.Project.Tool,
 		Operation:   rec.Operation,
 		Success:     false,
-		Output:      diagnostic,
+		Output:      diagnostic + o.repositorySecretHint(rec, status),
 		// A timed-out Operation leaves its Lock held, and until this slice
 		// nothing here said so: Locked was never set, so it defaulted to
 		// false and the Project vanished from the comment's footer and was
@@ -160,6 +162,24 @@ func timeoutDiagnostic(jobName string, status *jobs.JobStatus, mutating bool) st
 		return fmt.Sprintf("Job %s: Pod still %s after 5 minutes", jobName, status.PodPhase)
 	}
 	return fmt.Sprintf("Job %s: no Pod found yet after 5 minutes", jobName)
+}
+
+// repositorySecretHint is the line the results comment adds under a
+// start-timeout diagnostic when the Project lists keys of the repository's
+// Secret and its Pod is still Pending: a missing Secret or key keeps the
+// Pod there, and nothing else the Server can read says so. It is worded
+// as a condition because a Pod can stay Pending for other reasons too.
+// Empty, so the output is the diagnostic alone, in every other case. The
+// check's title is built from the diagnostic without it.
+func (o *Orchestrator) repositorySecretHint(rec *OperationRecord, status *jobs.JobStatus) string {
+	keys := rec.Project.Runner.Secrets
+	if len(keys) == 0 || status == nil || !status.JobFound || status.PodPhase != corev1.PodPending {
+		return ""
+	}
+	return fmt.Sprintf(
+		"\nThis Project mounts keys %s of Secret %s in namespace %s; if that Secret or one of those keys is missing, the Pod cannot start.",
+		strings.Join(keys, ", "), jobs.RepositorySecretName(rec.RepositoryID), o.runnerNamespace,
+	)
 }
 
 // isImagePullFailure reports whether a container's waiting reason means

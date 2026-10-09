@@ -13,16 +13,24 @@ import (
 
 // Client creates and deletes Runner Jobs in one Kubernetes namespace.
 type Client struct {
-	jobs batchv1client.JobInterface
-	pods corev1client.PodInterface
+	namespace string
+	jobs      batchv1client.JobInterface
+	pods      corev1client.PodInterface
 }
 
 // NewClient constructs a Client backed by clientset, scoped to namespace.
 func NewClient(clientset kubernetes.Interface, namespace string) *Client {
 	return &Client{
-		jobs: clientset.BatchV1().Jobs(namespace),
-		pods: clientset.CoreV1().Pods(namespace),
+		namespace: namespace,
+		jobs:      clientset.BatchV1().Jobs(namespace),
+		pods:      clientset.CoreV1().Pods(namespace),
 	}
+}
+
+// Namespace is the namespace the Client creates Runner Jobs in, which is
+// also where a repository's Secret must live.
+func (c *Client) Namespace() string {
+	return c.namespace
 }
 
 // Create submits job to the cluster and returns the created object

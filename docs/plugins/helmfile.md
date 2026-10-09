@@ -110,6 +110,28 @@ there is nothing to configure. Any other cluster needs a kubeconfig,
 which you commit to the repository and point `KUBECONFIG` at through
 `runner.env`. turnip does not generate one, and doesn't need to.
 
+A kubeconfig that must stay out of git can come from the repository's
+Secret instead (see
+[The repository's Secret](../operating/runner-access.md#the-repositorys-secret)).
+List its key in `runner.secrets`, point `KUBECONFIG` at
+`/turnip/repository-secrets/<key>`, and select the context with
+helmfile's `kubeContext`, which passes `--kube-context`:
+
+```yaml
+projects:
+  - directory: web
+    runner:
+      secrets: [web-kubeconfig]
+      env:
+        KUBECONFIG: /turnip/repository-secrets/web-kubeconfig
+```
+
+The mounted file is read-only, so never run anything that writes the
+kubeconfig, such as `kubectl config use-context` or
+`aws eks update-kubeconfig`: it fails. Read the warning in
+[What that grant means](#what-that-grant-means) first, because every
+listed key is readable by a pull request's plan.
+
 #### Targeting an EKS cluster: the repository side
 
 This is the half of the recipe that lives in the repository. The other
@@ -561,6 +583,20 @@ Two things make a hook more than a change to the IaC:
 `presync` and `postsync` hooks run only on `apply` and `sync`, so they
 are gated like any mutating command; `prepare` and `cleanup` are the ones
 a plan runs.
+
+**Keys mounted from the repository's Secret are readable during `diff`.**
+A `prepare` or `cleanup` hook can read them, and so can templating with no
+hook at all: `exec` or `readFile` in a `.gotmpl` helmfile or values file
+runs during `diff`. Either can print a key into the results comment (a
+hook with `showlogs: true`, or a value rendered into a manifest that the
+diff prints). That comment is read by everyone who can read the repository,
+a wider group than those trusted with the cluster, and the Runner Pod's
+log mirrors the output unredacted. Blocking hooks does not close this,
+because templating needs no hook, and neither does leaving a key out of
+the default branch's `runner.secrets`: a pull request can list any key of
+its repository's Secret. Put a key in the Secret only if you trust every
+collaborator with it. See
+[The repository's Secret](../operating/runner-access.md#the-repositorys-secret).
 
 Short of removing hooks (see
 [Don't use helmfile hooks](#dont-use-helmfile-hooks)), this is the same

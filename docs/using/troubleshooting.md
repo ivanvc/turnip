@@ -188,6 +188,20 @@ stdout/stderr attached.
   this case. When a tool's counts can't be trusted is on its page (for
   Helmfile, see [Change counts](../plugins/helmfile.md#change-counts)).
 
+## A Project that lists `runner.secrets` never started
+
+**Symptom**: the check fails with a title like `Job <name>: container
+stuck (PodInitializing)`, and the Project's output ends with `This
+Project mounts keys <keys> of Secret <secret> in namespace <namespace>;
+if that Secret or one of those keys is missing, the Pod cannot start.`
+
+The Secret belongs to the operator, not the repository, and turnip
+mounts only the keys your Project lists. Check that each name in
+`runner.secrets` matches a key of the Secret exactly, then ask the
+operator to confirm the Secret and those keys exist. The operator's
+steps are in
+[Troubleshooting (operators)](../operating/troubleshooting.md#a-project-lists-keys-of-a-secret-and-the-runner-never-started).
+
 ## Authorization errors
 
 **Symptom**: a reply comment saying you don't have permission, instead of

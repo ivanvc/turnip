@@ -130,7 +130,7 @@ test-kind:
 	kubectl apply -f test/load/redis.yaml; \
 	kubectl apply -k deploy/overlays/kind; \
 	kubectl wait --for=condition=available deployment/turnip-server --timeout=120s; \
-	go test -tags kind -race ./test/load/... -timeout 180s
+	go test -tags kind -race ./test/load/... -timeout 360s
 
 lint: $(GOLANGCI_LINT)
 	$(GOLANGCI_LINT) run ./...

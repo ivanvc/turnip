@@ -5,8 +5,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/ivanvc/turnip/internal/github"
+	"github.com/ivanvc/turnip/internal/jobs"
 	"github.com/ivanvc/turnip/internal/lock"
 )
 
@@ -39,6 +41,19 @@ func TestNew_ConstructsOrchestratorWithDefaults(t *testing.T) {
 	assert.Equal(t, []string{MutationRequirementApproved}, o.mutationRequirements, "the Requirement_Set reaches the Orchestrator")
 	assert.False(t, o.allowedOverrides[overrideServiceAccount], "the default lets a repository choose nothing an operator owns")
 	require.NotNil(t, o.installationClient)
+}
+
+// The sweep's hint names the namespace the repository's Secret must be
+// in. New takes it from the Jobs client, so the Server cannot be wired
+// with a hint that names a different namespace, or none.
+func TestNew_RunnerNamespaceComesFromTheJobsClient(t *testing.T) {
+	client := newTestRedisClient(t)
+	appAuth, err := github.NewAppAuth(1, []byte(testPEMKey))
+	require.NoError(t, err)
+
+	jobsClient := jobs.NewClient(fake.NewSimpleClientset(), "turnip-runners")
+	o := New(appAuth, (lock.LockManager)(nil), jobsClient, NewPluginRegistry(), NewCatalog(NewPluginRegistry(), nil), client, true, "turnip-server:9090", "ghcr.io/ivanvc/turnip-runner:test", "turnip-runner", defaultAllowedOverrides(), "top-level", []string{MutationRequirementApproved})
+	assert.Equal(t, "turnip-runners", o.runnerNamespace)
 }
 
 // testPEMKey is a throwaway RSA private key, generated solely for this

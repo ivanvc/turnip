@@ -10,9 +10,11 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,6 +62,12 @@ func TestKind_RBACAndNetworking(t *testing.T) {
 	t.Run("RBAC: can get/list Pods", func(t *testing.T) {
 		runCanI(t, ctx, "get", "pods", ns)
 	})
+	// The kubelet mounts a repository's Secret into its Runner Pods; the
+	// Server only names it, so it needs no permission on Secrets at all.
+	t.Run("RBAC: cannot get/list Secrets", func(t *testing.T) {
+		runCannotI(t, ctx, "get", "secrets", ns)
+		runCannotI(t, ctx, "list", "secrets", ns)
+	})
 	t.Run("Networking: Service reachable", func(t *testing.T) {
 		runNetworkCheck(t, ctx, ns)
 	})
@@ -76,6 +84,20 @@ func runCanI(t *testing.T, ctx context.Context, verb, resource, ns string) {
 		return
 	}
 	require.NoError(t, err, "kubectl auth can-i %s %s: %s", verb, resource, out)
+}
+
+// runCannotI shells out to `kubectl auth can-i`, impersonating the
+// turnip-server ServiceAccount, and requires the answer to be "no".
+// kubectl exits non-zero for a "no", so the exit status is not checked.
+func runCannotI(t *testing.T, ctx context.Context, verb, resource, ns string) {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, "kubectl", "auth", "can-i", verb, resource,
+		"--as=system:serviceaccount:"+ns+":turnip-server", "-n", ns)
+	out, err := cmd.Output()
+	if handleKindTimeout(t, ctx, "kubectl auth can-i "+verb+" "+resource, err) {
+		return
+	}
+	assert.Equal(t, "no", strings.TrimSpace(string(out)), "kubectl auth can-i %s %s", verb, resource)
 }
 
 // runNetworkCheck shells out to a one-shot `kubectl run` Pod that

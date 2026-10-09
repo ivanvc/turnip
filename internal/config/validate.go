@@ -113,11 +113,13 @@ func validate(c *Config, catalog Catalog) error {
 		}
 
 		errs = append(errs, validateRunnerEnv(p.Runner.Env, ref)...)
+		errs = append(errs, validateRunnerSecrets(p.Runner.Secrets, ref)...)
 	}
 
 	// The top-level runner: block is checked by the same rules, once,
 	// against the file rather than against every Project that inherits it.
 	errs = append(errs, validateRunnerEnv(c.Runner.Env, configFileRef)...)
+	errs = append(errs, validateRunnerSecrets(c.Runner.Secrets, configFileRef)...)
 
 	// clone: belongs to the file rather than to any one Project, so its
 	// problems are reported against the file itself. An empty value is
@@ -163,6 +165,56 @@ func validateRunnerEnv(env map[string]string, ref string) ValidationErrors {
 				Message:    "PATH is reserved; the tools directory is prepended to it at startup",
 			})
 		}
+	}
+	return errs
+}
+
+// maxSecretKeyLength is the longest key a Kubernetes Secret accepts.
+const maxSecretKeyLength = 253
+
+// validSecretKey reports whether key is a legal Secret key: 1 to 253 of
+// letters, digits, "-", "_" and ".", other than "." and not starting with
+// "..". A test checks it against Kubernetes' own rule.
+func validSecretKey(key string) bool {
+	if key == "" || len(key) > maxSecretKeyLength || key == "." || strings.HasPrefix(key, "..") {
+		return false
+	}
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// validateRunnerSecrets checks the keys of one runner: block's secrets,
+// reporting against ref like validateRunnerEnv. A key that is not valid is
+// not also reported as a duplicate.
+func validateRunnerSecrets(keys SecretKeys, ref string) ValidationErrors {
+	var errs ValidationErrors
+	seen := make(map[string]bool, len(keys))
+	for i, key := range keys {
+		field := fmt.Sprintf("runner.secrets[%d]", i)
+		switch {
+		case !validSecretKey(key):
+			errs = append(errs, &ValidationError{
+				ProjectRef: ref,
+				Field:      field,
+				Message: fmt.Sprintf(
+					`%q is not a valid Secret key: use up to %d letters, digits, "-", "_" or ".", other than "." and not starting with ".."`,
+					key, maxSecretKeyLength),
+			})
+		case seen[key]:
+			errs = append(errs, &ValidationError{
+				ProjectRef: ref,
+				Field:      field,
+				Message:    fmt.Sprintf("%q is already listed", key),
+			})
+		}
+		seen[key] = true
 	}
 	return errs
 }

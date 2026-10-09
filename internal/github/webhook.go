@@ -200,6 +200,7 @@ func issueCommentWebhookEvent(e *gh.IssueCommentEvent) (*WebhookEvent, bool) {
 
 func repositoryFrom(r *gh.Repository) Repository {
 	return Repository{
+		ID:    r.GetID(),
 		Owner: r.GetOwner().GetLogin(),
 		Name:  r.GetName(),
 		URL:   r.GetHTMLURL(),

@@ -109,7 +109,24 @@ type RunnerSpec struct {
 	// restricted (see validate.go) because the Runner reads its own
 	// configuration from TURNIP_* and finds its tool binary through PATH.
 	Env map[string]string `yaml:"env,omitempty"`
+
+	// Secrets lists keys of the repository's Secret to mount as files in
+	// the tool's container. Absent (nil) inherits the top level's list; an
+	// empty list opts out of it. Neither turnip.yaml's parse, the merge,
+	// the Operation Record's JSON nor a YAML re-marshal may turn one into
+	// the other, which is why the type is not a plain []string.
+	Secrets SecretKeys `yaml:"secrets,omitempty"`
 }
+
+// SecretKeys is a list of Secret keys whose only zero value is the absent
+// (nil) list. YAML's omitempty drops a zero value, and a plain slice
+// counts an empty one as zero, so a re-marshaled "secrets: []" would come
+// back as an absent list and silently turn an opt-out into an inherit.
+type SecretKeys []string
+
+// IsZero reports whether the list is absent. An empty, non-nil list is
+// not zero. go.yaml.in/yaml/v3 consults it for omitempty.
+func (k SecretKeys) IsZero() bool { return k == nil }
 
 // Submodule modes decide whether a clone initializes the repository's
 // submodules and how deeply. Deliberately not named "shallow": in git that

@@ -40,6 +40,12 @@ const (
 	// Project key over it. A key present with an empty value is still
 	// present, so it overrides.
 	mergePerKey
+
+	// mergeReplacedList is mergeReplaced for a slice: the Project's list
+	// when it is present (non-nil, even empty), else the top level's. The
+	// winner is copied, so Projects inheriting the top-level list never
+	// share its backing array, and nil versus empty is preserved.
+	mergeReplacedList
 )
 
 // runnerMergeRules is the merge, keyed by RunnerSpec's Go field name.
@@ -50,6 +56,7 @@ const (
 var runnerMergeRules = map[string]mergeRule{
 	"ServiceAccount": mergeReplaced,
 	"Env":            mergePerKey,
+	"Secrets":        mergeReplacedList,
 }
 
 // unruledFields returns the fields of struct type t that have no entry in
@@ -89,12 +96,32 @@ func mergeRunner(top, project RunnerSpec) RunnerSpec {
 				src = pv.Field(i)
 			}
 			ov.Field(i).Set(src)
+		case mergeReplacedList:
+			src := tv.Field(i)
+			if !pv.Field(i).IsNil() {
+				src = pv.Field(i)
+			}
+			ov.Field(i).Set(copyList(src))
 		case mergePerKey:
 			ov.Field(i).Set(mergeMaps(tv.Field(i), pv.Field(i)))
 		default:
 			panic(fmt.Sprintf("config: RunnerSpec.%s has unknown merge rule %d", name, rule))
 		}
 	}
+	return out
+}
+
+// copyList returns a copy of slice v with its own backing array. A nil
+// slice stays nil and an empty one stays empty.
+func copyList(v reflect.Value) reflect.Value {
+	if v.Kind() != reflect.Slice {
+		panic(fmt.Sprintf("config: replaced list needs a slice, got %s", v.Kind()))
+	}
+	if v.IsNil() {
+		return v
+	}
+	out := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+	reflect.Copy(out, v)
 	return out
 }
 

@@ -87,6 +87,39 @@ or nothing happens for several minutes before a timeout is reported.
   means, is on its page; for Helmfile, see
   [What to grant it](../plugins/helmfile.md#what-to-grant-it).
 
+### A Project lists keys of a Secret and the Runner never started
+
+**Symptom**: after the 5 minute start timeout, the Project's output in
+the results comment ends with this line, with the placeholders filled in:
+
+```text
+This Project mounts keys <keys> of Secret <secret> in namespace <namespace>; if that Secret or one of those keys is missing, the Pod cannot start.
+```
+
+It means the Project lists keys of
+[the repository's Secret](runner-access.md#the-repositorys-secret) in
+`runner.secrets`, and its Runner Pod was still `Pending` at the deadline.
+The kubelet cannot mount a volume whose Secret or key does not exist, so
+the Pod waits with no container started, not even the `clone` init
+container, and reports every container as waiting with reason
+`PodInitializing`. The check's title is then
+`Job <name>: container stuck (PodInitializing)`. The line is a condition, not a finding: turnip never reads
+Secrets, so it does not know the Secret is missing, and a Pod can also
+stay `Pending` for other reasons (no node fits it, for one).
+
+**Check**:
+
+- `kubectl -n <namespace> describe secret <secret>` lists the Secret's
+  keys and their sizes, not their values. A "not found" error means the
+  Secret does not exist (check the id in its name against
+  `gh api repos/OWNER/REPO --jq .id`); a key missing from the list is one
+  to add.
+- `kubectl -n <namespace> describe pod <pod>` shows `FailedMount` events
+  naming the missing Secret or key when that is the cause, for a missing
+  key `MountVolume.SetUp failed for volume "repository-secrets" :
+  references non-existent secret key: <key>`. Other events there (for
+  example `FailedScheduling`) point to the other reasons.
+
 ## Redis connection and startup errors
 
 **Symptom**: the Server exits at startup with one of these messages

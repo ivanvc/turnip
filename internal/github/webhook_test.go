@@ -77,6 +77,7 @@ func testPullRequestPayload(t *testing.T) []byte {
 			Base: &gh.PullRequestBranch{Ref: gh.Ptr("main")},
 		},
 		Repo: &gh.Repository{
+			ID:      gh.Ptr(int64(123456789)),
 			Name:    gh.Ptr("repo"),
 			Owner:   &gh.User{Login: gh.Ptr("owner")},
 			HTMLURL: gh.Ptr("https://github.com/owner/repo"),
@@ -210,6 +211,7 @@ func draftPullRequestPayload(t *testing.T, draft bool) []byte {
 			Draft: gh.Ptr(draft),
 		},
 		Repo: &gh.Repository{
+			ID:      gh.Ptr(int64(123456789)),
 			Name:    gh.Ptr("repo"),
 			Owner:   &gh.User{Login: gh.Ptr("owner")},
 			HTMLURL: gh.Ptr("https://github.com/owner/repo"),
@@ -236,6 +238,7 @@ func testIssueCommentPayload(t *testing.T, onPullRequest bool) []byte {
 			User: &gh.User{Login: gh.Ptr("alice")},
 		},
 		Repo: &gh.Repository{
+			ID:      gh.Ptr(int64(123456789)),
 			Name:    gh.Ptr("repo"),
 			Owner:   &gh.User{Login: gh.Ptr("owner")},
 			HTMLURL: gh.Ptr("https://github.com/owner/repo"),
@@ -269,6 +272,7 @@ func TestWebhookHandler_PullRequestDispatches(t *testing.T) {
 	assert.Equal(t, "opened", event.Action)
 	assert.Equal(t, "owner", event.Repository.Owner)
 	assert.Equal(t, "repo", event.Repository.Name)
+	assert.EqualValues(t, 123456789, event.Repository.ID)
 	require.NotNil(t, event.PullRequest)
 	assert.Equal(t, 42, event.PullRequest.Number)
 	assert.Equal(t, "abc123", event.PullRequest.HeadSHA)
@@ -289,6 +293,7 @@ func TestWebhookHandler_IssueCommentOnPRDispatches(t *testing.T) {
 	assert.Equal(t, 1, comment)
 
 	event := handler.lastEvent
+	assert.EqualValues(t, 123456789, event.Repository.ID)
 	require.NotNil(t, event.Comment)
 	assert.Equal(t, "/turnip plan", event.Comment.Body)
 	assert.Equal(t, "alice", event.Comment.Author)

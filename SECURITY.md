@@ -48,12 +48,15 @@ cost below, accepted by the operator.
 | `runner.serviceAccount` | `TURNIP_ALLOWED_OVERRIDES` includes `runner.serviceAccount` | not permitted: every Runner Pod runs as `TURNIP_RUNNER_SERVICE_ACCOUNT` | A pull request can pick **any ServiceAccount in the Runner namespace**, and run its code with that ServiceAccount's cluster permissions and whatever cloud role EKS Pod Identity/IRSA maps to it. The Runner namespace's most privileged ServiceAccount becomes the ceiling for every pull request. The opt-in covers `runner.serviceAccount` wherever `turnip.yaml` writes it, in the top-level `runner:` block as well as a Project's own; without it, a value at either level is refused, so moving the line does not get past the gate. |
 | `clone.submodules` | `TURNIP_ALLOWED_OVERRIDES` includes `clone.submodules` | not permitted: the clone follows the Server's `TURNIP_CLONE_SUBMODULES` | A pull request can make the clone fetch submodules recursively and at full depth. The gate is about cost more than safety: submodules are fetched with the GitHub App's installation credential, so they reach only repositories the App is already installed on. |
 | Custom tool images | `TURNIP_ALLOWED_IMAGES` lists `tool:image@glob` Entries | empty: only the built-in aliases (each tool's vendor image, full versions or digests) run | Each allowed image is **code the operator vouches for**, running with the Runner's credentials, for any pull request that names it with a tag the glob matches. A floating tag (`@latest`, `@1.*`) is safe between plan and apply, since the apply runs the digest the plan's Pod ran, but the plan runs whatever the tag means when it pulls: whoever can push that tag can run code in the next plan. |
+| The repository's Secret | none: the operator creating Secret `turnip-repository-<id>` in the Runner namespace is the opt-in | no Secret, nothing mounted | Any collaborator's pull request can mount and read **every key of its own repository's Secret** at plan time, before review, and print it into the results comment, where everyone who can read the repository sees it. It reaches no other repository's Secret. |
 
 Each opt-in's own documentation is in
 [`docs/operating/server-settings.md`](docs/operating/server-settings.md#allowed-overrides)
-(the first two) and
+(the first two),
 [`docs/operating/runner-access.md`](docs/operating/runner-access.md#running-a-custom-image)
-(custom tool images).
+(custom tool images) and
+[`docs/operating/runner-access.md`](docs/operating/runner-access.md#the-repositorys-secret)
+(the repository's Secret).
 
 ## What turnip does consider a vulnerability
 

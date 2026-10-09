@@ -81,6 +81,11 @@ type Orchestrator struct {
 	// requirementSleep waits between mergeability reads; nil waits for
 	// real. It exists so a test does not spend the bounded wait.
 	requirementSleep func(ctx context.Context, d time.Duration) error
+	// runnerNamespace is the namespace Runner Jobs are created in, which
+	// is also where a repository's Secret lives. New reads it from the
+	// Jobs client, so it cannot disagree with where Jobs actually go. Only
+	// the sweep's start-timeout hint reads it.
+	runnerNamespace string
 
 	startTimeout  time.Duration
 	sweepInterval time.Duration
@@ -105,7 +110,7 @@ func New(
 	cloneSubmodules string,
 	mutationRequirements []string,
 ) *Orchestrator {
-	return &Orchestrator{
+	o := &Orchestrator{
 		installationClient:           func(id int64) github.GitHubClient { return appAuth.InstallationClient(id) },
 		locks:                        locks,
 		jobs:                         jobsClient,
@@ -125,4 +130,8 @@ func New(
 		startTimeout:  defaultStartTimeout,
 		sweepInterval: defaultSweepInterval,
 	}
+	if jobsClient != nil {
+		o.runnerNamespace = jobsClient.Namespace()
+	}
+	return o
 }
