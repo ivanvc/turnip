@@ -4,7 +4,7 @@
 > or running a Server? See [the documentation entry page](../README.md).
 
 Notes for contributors. Build, test and lint commands, and the
-spec-driven workflow under `.kiro/specs/`, are in
+spec-driven workflow under `openspec/`, are in
 [`CLAUDE.md`](../../CLAUDE.md).
 
 ## Architecture

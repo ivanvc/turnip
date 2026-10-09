@@ -15,7 +15,10 @@ context: |
   Every turnip.yaml Runner setting is a runner: field available at the top
   level and per Project, merged by the Runner merge-rules table.
   Completed history lives in openspec/changes/archive/, including the
-  pre-OpenSpec slices archived in their original Kiro format.
+  pre-OpenSpec slices and the original platform spec and roadmap
+  (2026-10-09-multi-iac-automation-platform), archived in their Kiro
+  format. openspec/roadmap.md orders the open work; a new change is
+  added to it.
 
 rules:
   proposal:
