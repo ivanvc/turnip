@@ -152,7 +152,8 @@ them print the password.
   parameters it does not recognize. See its
   [connection URL](https://pkg.go.dev/github.com/redis/go-redis/v9#ParseURL)
   list.
-- **`MOVED` errors** in the Server's logs or in a failed check's details:
+- **`MOVED` errors** in the Server's logs or in a failed
+  operation's results comment:
   the endpoint is a clustered Redis (ElastiCache cluster mode enabled),
   which turnip does not support. Point it at a cluster-mode-disabled
   primary endpoint. See [Prerequisites](deployment.md#prerequisites).
@@ -167,15 +168,15 @@ change being planned is not the cause; the end-user side of each is under
 [Reading a failed check's title](../using/troubleshooting.md#reading-a-failed-checks-title).
 
 - **`lock could not be acquired`**: turnip could not reach Redis (or
-  Redis refused the write) while taking the project's lock; the check's
-  details carry the error. A re-plan usually succeeds; if it keeps
+  Redis refused the write) while taking the project's lock; the results
+  comment carries the error. A re-plan usually succeeds; if it keeps
   happening, check Redis and the Server's logs.
 - **`operation could not be recorded`**: the lock was taken but saving
   the Operation Record to Redis failed, so no Runner was started. If it
   recurs, check Redis and the Server's logs.
 - **`Runner Job could not be built`**: the Server could not assemble the
-  Runner Job's spec, so nothing was sent to Kubernetes. The check's
-  details carry the error. If it recurs, check the Runner settings in the
+  Runner Job's spec, so nothing was sent to Kubernetes. The results
+  comment carries the error. If it recurs, check the Runner settings in the
   Server's configuration (image, ServiceAccount, resources) that go into
   the Job spec; see [Server settings](server-settings.md) and
   [Runner access](runner-access.md).

@@ -99,7 +99,6 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 			// checks tab renders under the name.
 			Title:   resultTitle(rec, result, pr.Changes),
 			Summary: checkRunResultSummary(result.Success, pr.Changes),
-			Text:    result.Output,
 		}
 		if result.Success {
 			opts.Conclusion = "success"
@@ -112,7 +111,7 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 			// what reaches the PR, and a check run stuck at "in progress"
 			// with no explanation is worse than a noted failure
 			// (Requirement 9.5).
-			pr = appendCheckRunNote(pr, err)
+			pr = appendCheckRunNote(pr, checkComplete, err)
 		}
 	}
 
@@ -219,7 +218,7 @@ func checkRunResultSummary(success bool, changes github.ChangeCounts) string {
 	case text != "":
 		return "The operation failed. " + text
 	default:
-		return "The operation failed. See the output below."
+		return "The operation failed."
 	}
 }
 

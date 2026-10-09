@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -382,14 +384,46 @@ func TestHandleResult_FailureCheckRunTitleNamesTheFailure(t *testing.T) {
 	o, client := testResultOrchestrator(t, &fakeLockManager{})
 	createTestRecord(t, o, "op-2", "diff")
 
-	require.NoError(t, o.HandleResult(context.Background(), "op-2", rpc.OperationResult{
+	got := publishedResult(t, o, "op-2", rpc.OperationResult{
 		Success:         false,
 		Output:          "helmfile diff exited 1",
 		ExitCode:        1,
 		FailureCategory: rpc.FailureToolExited,
-	}))
+	})
 
 	assert.Equal(t, "helmfile exited 1", client.updatedCheckRun.Title)
 	assert.Contains(t, client.updatedCheckRun.Summary, "failed")
-	assert.Contains(t, client.updatedCheckRun.Text, "helmfile diff exited 1")
+	assert.Equal(t, "The operation failed.", client.updatedCheckRun.Summary, "no counts, and no pointer to output the check does not carry")
+	assert.Contains(t, got.Output, "helmfile diff exited 1", "the output reaches the comment")
+}
+
+// Scenario: a plan with very large output. The output is more than GitHub
+// accepts as a check's text; since none is sent, the check completes and
+// the whole output is in the Project's result.
+func TestHandleResult_VeryLargeOutputCompletesTheCheck(t *testing.T) {
+	o, client := testResultOrchestrator(t, &fakeLockManager{})
+	createTestRecord(t, o, "op-big", "diff")
+	output := strings.Repeat("x", 160406)
+
+	got := publishedResult(t, o, "op-big", rpc.OperationResult{Success: true, Output: output})
+
+	assert.Equal(t, 1, client.updateCheckRunCalled)
+	assert.Equal(t, "completed", client.updatedCheckRun.Status)
+	assert.Equal(t, "success", client.updatedCheckRun.Conclusion)
+	assert.Equal(t, "No changes.", client.updatedCheckRun.Summary)
+	assert.Len(t, got.Output, 160406, "the full output is in the Project's result")
+	assert.Equal(t, output, got.Output)
+}
+
+func TestHandleResult_CompletionFailureIsNotedAsInProgress(t *testing.T) {
+	o, client := testResultOrchestrator(t, &fakeLockManager{})
+	client.updateCheckRunErr = errors.New("422 too long")
+	createTestRecord(t, o, "op-3", "diff")
+
+	got := publishedResult(t, o, "op-3", rpc.OperationResult{Success: true, Output: "plan output"})
+
+	assert.True(t, got.Success)
+	assert.Contains(t, got.Output, "plan output")
+	assert.Contains(t, got.Output, "could not be completed (422 too long)")
+	assert.Contains(t, got.Output, "its check stays in progress")
 }

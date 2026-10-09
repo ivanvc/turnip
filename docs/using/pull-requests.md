@@ -223,8 +223,8 @@ Details worth knowing:
   | turnip failed before the Runner started | `lock could not be acquired`, `operation could not be recorded`, `Runner Job could not be built` |
 
   A tool's failure is reported only as its exit code: the reason is in its
-  output, one click away in the check's details, and turnip does not guess
-  at it.
+  output, which is in the results comment, and turnip does not guess at
+  it.
 
   **A mutating command's counts are what the tool itself reports acting
   on**, read from its own output rather than recomputed from the plan;

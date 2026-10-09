@@ -35,6 +35,8 @@ type sitesClient struct {
 	mu      sync.Mutex
 	created []github.CheckRunOptions
 	updated []github.CheckRunOptions
+	// createErr and updateErr fail the call after recording it.
+	createErr, updateErr error
 }
 
 func newSitesClient() *sitesClient {
@@ -45,6 +47,9 @@ func (c *sitesClient) CreateCheckRun(_ context.Context, _, _ string, opts github
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.created = append(c.created, opts)
+	if c.createErr != nil {
+		return 0, c.createErr
+	}
 	return 555, nil
 }
 
@@ -52,7 +57,7 @@ func (c *sitesClient) UpdateCheckRun(_ context.Context, _, _ string, _ int64, op
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.updated = append(c.updated, opts)
-	return nil
+	return c.updateErr
 }
 
 // projectChecks returns what was created and updated for one Target's
@@ -592,9 +597,10 @@ func TestRefusalCheck_CompletesAnExistingCheckWhateverTheKind(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			client := newSitesClient()
 
-			err := o.refusalCheck(context.Background(), client, testRepo, testPR, target, false, 555, tc.r)
+			action, err := o.refusalCheck(context.Background(), client, testRepo, testPR, target, false, 555, tc.r)
 
 			require.NoError(t, err)
+			assert.Equal(t, checkComplete, action)
 			created, updated := client.projectChecks(target)
 			assert.Empty(t, created, "a check that exists is completed, never created again")
 			require.Len(t, updated, 1, "the existing check must not be left in progress")
@@ -716,5 +722,39 @@ func TestWholeTriggerRefusals_CreateNoCheckRun(t *testing.T) {
 		_ = callHandleIssueComment(o, client, commentEvent("/turnip diff helm-a", "alice"))
 
 		assert.Eventually(t, func() bool { return client.createdCount() > 0 }, 2*time.Second, 10*time.Millisecond)
+	})
+}
+
+// The note names the call refusalCheck made, which is not the dispatch's:
+// a refused plan whose check never existed fails creating one, and one
+// whose check exists fails completing it.
+func TestRefusalCheck_ReportsWhichCallFailed(t *testing.T) {
+	o, _ := sitesOrchestrator(t, &fakeLockManager{})
+	target := testHelmfileTarget()
+	r := refusal{kind: refusalInfrastructure, reason: "boom", title: jobNotBuiltTitle()}
+
+	t.Run("create", func(t *testing.T) {
+		client := newSitesClient()
+		client.createErr = errors.New("create refused")
+
+		action, err := o.refusalCheck(context.Background(), client, testRepo, testPR, target, true, 0, r)
+
+		require.EqualError(t, err, "create refused")
+		assert.Equal(t, checkCreate, action)
+		noted := appendCheckRunNote(github.ProjectResult{}, action, err)
+		assert.Contains(t, noted.Output, "could not be created (create refused)")
+	})
+
+	t.Run("complete", func(t *testing.T) {
+		client := newSitesClient()
+		client.updateErr = errors.New("update refused")
+
+		action, err := o.refusalCheck(context.Background(), client, testRepo, testPR, target, true, 555, r)
+
+		require.EqualError(t, err, "update refused")
+		assert.Equal(t, checkComplete, action)
+		noted := appendCheckRunNote(github.ProjectResult{}, action, err)
+		assert.Contains(t, noted.Output, "could not be completed (update refused)")
+		assert.Contains(t, noted.Output, "stays in progress")
 	})
 }

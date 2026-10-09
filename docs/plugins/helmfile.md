@@ -401,12 +401,12 @@ Entries that are Helmfile-specific. Everything else is in
   Write the full version the vendor publishes, e.g. `helmfile@v1.7.4`.
   See [The `helmfile` alias](#the-helmfile-alias).
 - **`helmfile exited 1`** (or another code): Helmfile itself ran and
-  failed. The reason is in its output, in the check's details; turnip does
+  failed. The reason is in its output, in the results comment; turnip does
   not interpret it. See "Reading a failed check's title" in
   [`using/troubleshooting.md`](../using/troubleshooting.md#reading-a-failed-checks-title).
 - **`helmfile could not be started`**: the `helmfile` binary was missing
   from the image (a custom image without it on its `PATH`), or the
-  operation isn't one of `diff`, `apply` and `sync`. The details carry the
+  operation isn't one of `diff`, `apply` and `sync`. The results comment carries the
   error, including when the project's working directory could not be
   entered. See "Plugin execution errors" in
   [`using/troubleshooting.md`](../using/troubleshooting.md#plugin-execution-errors).

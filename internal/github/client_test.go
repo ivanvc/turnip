@@ -196,18 +196,26 @@ func TestToCheckRunOutput_OmittedWhenNothingToReport(t *testing.T) {
 	assert.Nil(t, toCheckRunOutput(CheckRunOptions{Name: "turnip/web/diff", HeadSHA: "abc123", Status: "in_progress"}))
 }
 
-func TestToCheckRunOutput_TextOnlyStillSuppliesRequiredFields(t *testing.T) {
-	// sweep.go's timeout update and execute.go's job-failure update.
-	out := toCheckRunOutput(CheckRunOptions{Name: "turnip/web/diff", Status: "completed", Conclusion: "failure", Text: "boom"})
+func TestToCheckRunOutput_SummaryOnlyFallsBackToNameForTitle(t *testing.T) {
+	// A completed update that carries only a summary.
+	out := toCheckRunOutput(CheckRunOptions{Name: "turnip/web/diff", Status: "completed", Conclusion: "failure", Summary: "boom"})
 	require.NotNil(t, out)
 	assert.Equal(t, "turnip/web/diff", out.GetTitle(), "falls back to the check run's name")
+	assert.Equal(t, "boom", out.GetSummary())
+}
+
+func TestToCheckRunOutput_TitleOnlyStillSuppliesASummary(t *testing.T) {
+	// GitHub requires both fields; a title alone must not send an empty
+	// summary.
+	out := toCheckRunOutput(CheckRunOptions{Name: "turnip/web/diff", Status: "completed", Conclusion: "failure", Title: "helmfile exited 1"})
+	require.NotNil(t, out)
+	assert.Equal(t, "helmfile exited 1", out.GetTitle())
 	assert.NotEmpty(t, out.GetSummary())
-	assert.Equal(t, "boom", out.GetText())
 }
 
 func TestToCheckRunOutput_SummaryWithoutTitleGetsATitle(t *testing.T) {
-	// result.go's final-result update: summary and text, no title.
-	out := toCheckRunOutput(CheckRunOptions{Name: "turnip/web/diff", Status: "completed", Summary: "1 to change", Text: "diff output"})
+	// result.go's final-result update: summary, no title.
+	out := toCheckRunOutput(CheckRunOptions{Name: "turnip/web/diff", Status: "completed", Summary: "1 to change"})
 	require.NotNil(t, out)
 	assert.Equal(t, "turnip/web/diff", out.GetTitle())
 	assert.Equal(t, "1 to change", out.GetSummary())
@@ -505,4 +513,38 @@ func isAppJWT(header string) bool {
 		return false
 	}
 	return typ.Typ == "JWT" && typ.Alg != ""
+}
+
+// A check carries no details text, whatever the caller sends: the request
+// body is what GitHub sees, so it is asserted there.
+func TestClient_CheckRunRequestsCarryNoOutputText(t *testing.T) {
+	client, mux := newTestClient(t)
+
+	bodies := map[string]map[string]any{}
+	handle := func(key string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]any
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			bodies[key] = body
+			writeJSON(t, w, map[string]int64{"id": 99})
+		}
+	}
+	mux.HandleFunc("/repos/owner/repo/check-runs", handle("create"))
+	mux.HandleFunc("/repos/owner/repo/check-runs/99", handle("update"))
+
+	opts := CheckRunOptions{
+		Name: "turnip/diff/web", HeadSHA: "abc123", Status: "completed", Conclusion: "success",
+		Title: "no changes", Summary: "No changes.",
+	}
+	_, err := client.CreateCheckRun(t.Context(), "owner", "repo", opts)
+	require.NoError(t, err)
+	require.NoError(t, client.UpdateCheckRun(t.Context(), "owner", "repo", 99, opts))
+
+	for _, key := range []string{"create", "update"} {
+		output, ok := bodies[key]["output"].(map[string]any)
+		require.True(t, ok, "%s: output object present", key)
+		assert.NotContains(t, output, "text", key)
+		assert.Equal(t, "no changes", output["title"], key)
+		assert.Equal(t, "No changes.", output["summary"], key)
+	}
 }

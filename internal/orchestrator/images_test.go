@@ -341,7 +341,8 @@ func TestSweepOnce_MutatingImagePullFailureSaysToReplan(t *testing.T) {
 	rec.Operation = "apply"
 	require.NoError(t, o.records.Create(context.Background(), rec))
 
-	o.sweepOnce(context.Background())
+	got := publishedSweep(t, o, "op-apply")
 
-	assert.Contains(t, client.updatedCheckRun.Text, "may no longer exist in the registry")
+	assert.Contains(t, got.Output, "may no longer exist in the registry", "the diagnostic reaches the comment")
+	assert.Contains(t, client.updatedCheckRun.Title, "re-plan", "and the check's title carries it")
 }

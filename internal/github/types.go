@@ -111,7 +111,9 @@ type Installation struct {
 	ID int64
 }
 
-// CheckRunOptions mirrors the global design's sketch field-for-field.
+// CheckRunOptions is what turnip sends for a check run. It has no details
+// text on purpose: GitHub refuses a check whose text exceeds 65535
+// characters, and an Operation's output is in the results comment.
 type CheckRunOptions struct {
 	Name       string
 	HeadSHA    string
@@ -119,7 +121,6 @@ type CheckRunOptions struct {
 	Conclusion string // "success", "failure", "neutral", "cancelled", ...
 	Title      string
 	Summary    string
-	Text       string
 }
 
 // TriggerCommand is one element of ParseTriggers' result — one per matched

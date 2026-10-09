@@ -96,7 +96,8 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		// deferred appendCheckRunNote; trying again here would only note the
 		// same missing check twice.
 		if !dispatched && checkRunErr == nil {
-			rejected = appendCheckRunNote(rejected, o.refusalCheck(ctx, client, repo, pr, t, isPlan, checkRunID, r))
+			action, err := o.refusalCheck(ctx, client, repo, pr, t, isPlan, checkRunID, r)
+			rejected = appendCheckRunNote(rejected, action, err)
 		}
 		if isPlan && !dispatched {
 			ref := prRef{Owner: repo.Owner, Repo: repo.Name, PRNumber: pr.Number, HeadSHA: pr.HeadSHA}
@@ -293,7 +294,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	// saying the check run is missing and why. Without it the PR shows a
 	// result comment and simply no check run, with the reason reachable
 	// only from the Server's log.
-	defer func() { result = appendCheckRunNote(result, checkRunErr) }()
+	defer func() { result = appendCheckRunNote(result, checkCreate, checkRunErr) }()
 
 	operationID := uuid.NewString()
 	rec := &OperationRecord{
@@ -479,10 +480,13 @@ func refusalEntry(t Target, r refusal) ProjectEntry {
 // kind only chooses its Title there, so a refusal added later that forgets
 // to pick one still cannot leave the check stuck.
 //
+// It returns the call it made, so a failure can be noted as a check that
+// could not be created or one that could not be completed.
+//
 // The summary carries the full reason, as the comment does: GitHub rejects
 // check-run output without one, and for a refused override it holds the
 // instruction to permit it in TURNIP_ALLOWED_OVERRIDES.
-func (o *Orchestrator) refusalCheck(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, t Target, isPlan bool, checkRunID int64, r refusal) error {
+func (o *Orchestrator) refusalCheck(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, t Target, isPlan bool, checkRunID int64, r refusal) (checkAction, error) {
 	opts := github.CheckRunOptions{
 		Name:    checkRunName(t.Project.Name, t.Operation),
 		Summary: r.reason,
@@ -502,9 +506,9 @@ func (o *Orchestrator) refusalCheck(ctx context.Context, client github.GitHubCli
 		}
 		if err := client.UpdateCheckRun(ctx, repo.Owner, repo.Name, checkRunID, opts); err != nil {
 			slog.ErrorContext(ctx, "completing check run for refused operation", "owner", repo.Owner, "repo", repo.Name, "pr_number", pr.Number, "project", t.Project.Name, "error", err)
-			return err
+			return checkComplete, err
 		}
-		return nil
+		return checkComplete, nil
 	}
 
 	switch r.kind {
@@ -515,20 +519,20 @@ func (o *Orchestrator) refusalCheck(ctx context.Context, client github.GitHubCli
 	case refusalInfrastructure:
 		opts.Status, opts.Conclusion, opts.Title = "completed", "failure", r.title
 	default:
-		return nil
+		return checkCreate, nil
 	}
 
 	// A refused Mutating_Operation ran nothing and changed nothing, so it
 	// gets no check of its own (aggregate-check-run Requirement 4.7).
 	if !isPlan {
-		return nil
+		return checkCreate, nil
 	}
 	opts.HeadSHA = pr.HeadSHA
 	if _, err := client.CreateCheckRun(ctx, repo.Owner, repo.Name, opts); err != nil {
 		slog.ErrorContext(ctx, "creating check run for refused plan", "owner", repo.Owner, "repo", repo.Name, "pr_number", pr.Number, "project", t.Project.Name, "error", err)
-		return err
+		return checkCreate, err
 	}
-	return nil
+	return checkCreate, nil
 }
 
 // deleteRecord is a best-effort cleanup for an Operation Record whose Job
@@ -540,19 +544,40 @@ func (o *Orchestrator) deleteRecord(ctx context.Context, operationID string) {
 	}
 }
 
+// checkAction is the check-run call that failed, which decides what the
+// note tells the reader the failure left behind.
+type checkAction string
+
+const (
+	// checkCreate: the check never existed, so it is missing.
+	checkCreate checkAction = "created"
+	// checkComplete: the check exists and was left in progress.
+	checkComplete checkAction = "completed"
+)
+
 // appendCheckRunNote adds a short note to a result's Output when this
-// Target's check run couldn't be created or updated. A check run that
-// never appeared is otherwise invisible on the pull request: the result
-// comment says nothing about it, and the underlying GitHub error reaches
-// only the Server log (Requirement 9.5).
-func appendCheckRunNote(result github.ProjectResult, err error) github.ProjectResult {
+// Target's check run couldn't be created or completed. Either failure is
+// otherwise invisible on the pull request: the result comment says
+// nothing about it, and the underlying GitHub error reaches only the
+// Server log (Requirement 9.5). The note says which call failed, because
+// a missing check and one stuck in progress (which can block a merge)
+// call for different reactions.
+func appendCheckRunNote(result github.ProjectResult, action checkAction, err error) github.ProjectResult {
 	if err == nil {
 		return result
 	}
+	consequence := "only its entry in the PR's checks tab is missing."
+	if action == checkComplete {
+		consequence = "but its check stays in progress in the PR's checks tab until the operation runs again."
+	}
+	joiner := "; "
+	if action == checkComplete {
+		joiner = ", "
+	}
 	result.Output += fmt.Sprintf(
-		"\n\nNote: this Project's GitHub check run could not be recorded (%v). "+
-			"The operation itself is unaffected; only its entry in the PR's checks tab is missing.",
-		err,
+		"\n\nNote: this Project's GitHub check run could not be %s (%v). "+
+			"The operation itself is unaffected%s%s",
+		action, err, joiner, consequence,
 	)
 	return result
 }

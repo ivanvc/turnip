@@ -199,6 +199,7 @@ var _ lock.LockManager = (*fakeLockManager)(nil)
 type fakeExecuteClient struct {
 	github.GitHubClient
 	createCheckRunErr error
+	updateCheckRunErr error
 	generateTokenErr  error
 	// gitmodules is served by GetFile for .gitmodules; absent means the
 	// repository declares no submodules. Read-only after construction.
@@ -238,7 +239,7 @@ func (f *fakeExecuteClient) UpdateCheckRun(ctx context.Context, owner, repo stri
 	f.updateCheckRunCalled++
 	f.updatedCheckRun = opts
 	f.mu.Unlock()
-	return nil
+	return f.updateCheckRunErr
 }
 
 // GetFile serves .gitmodules for the token-scope lookup. The embedded
@@ -751,8 +752,10 @@ func TestExecuteOne_CheckRunCreationFailureIsNotedInResult(t *testing.T) {
 
 	assert.True(t, result.Success, "a failed check run must not fail the operation")
 	assert.Contains(t, result.Output, "diff output", "the Runner's own output is kept")
-	assert.Contains(t, result.Output, "check run could not be recorded")
-	assert.Contains(t, result.Output, "422", "the underlying GitHub error is included")
+	assert.Contains(t, result.Output, `422 "summary", "title" weren't supplied`, "the underlying GitHub error is included")
+	assert.True(t, strings.HasSuffix(result.Output, "\n\nNote: this Project's GitHub check run could not be created ("+
+		`422 "summary", "title" weren't supplied`+"). The operation itself is unaffected; "+
+		"only its entry in the PR's checks tab is missing."), "the create note, exactly: %q", result.Output)
 	assert.Equal(t, 1, jobsClient.createCount(), "the Runner Job still runs")
 }
 
@@ -862,4 +865,24 @@ func TestExecuteOne_CheckRunCreatedWithRunningTitle(t *testing.T) {
 	assert.Equal(t, "running, -l name=api", client.createdCheckRun.Title)
 	assert.NotEmpty(t, client.createdCheckRun.Summary, "GitHub rejects check-run output without a summary")
 	assert.Equal(t, testPR.HeadSHA, client.createdCheckRun.HeadSHA)
+}
+
+func TestAppendCheckRunNote_CompleteNoteText(t *testing.T) {
+	got := appendCheckRunNote(github.ProjectResult{Output: "out"}, checkComplete, errors.New("boom"))
+
+	assert.Equal(t, "out\n\nNote: this Project's GitHub check run could not be completed (boom). "+
+		"The operation itself is unaffected, but its check stays in progress in the PR's checks tab until the operation runs again.", got.Output)
+}
+
+func TestAppendCheckRunNote_CreateNoteText(t *testing.T) {
+	got := appendCheckRunNote(github.ProjectResult{Output: "out"}, checkCreate, errors.New("boom"))
+
+	assert.Equal(t, "out\n\nNote: this Project's GitHub check run could not be created (boom). "+
+		"The operation itself is unaffected; only its entry in the PR's checks tab is missing.", got.Output)
+}
+
+func TestAppendCheckRunNote_NoErrorLeavesOutputAlone(t *testing.T) {
+	got := appendCheckRunNote(github.ProjectResult{Output: "out"}, checkComplete, nil)
+
+	assert.Equal(t, "out", got.Output)
 }

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -170,5 +171,43 @@ func TestSweepOnce_TimeoutCheckRunTitleIsTheDiagnostic(t *testing.T) {
 
 	assert.Contains(t, client.updatedCheckRun.Title, "Pod still Pending")
 	assert.NotEmpty(t, client.updatedCheckRun.Summary, "GitHub rejects check-run output without a summary")
-	assert.Contains(t, client.updatedCheckRun.Text, "Pending", "the diagnostic stays in the detail text")
+	assert.Equal(t, "The Runner never reported back within the start timeout.", client.updatedCheckRun.Summary)
+}
+
+func TestSweepOnce_TimeoutCompletionFailureIsNotedAsInProgress(t *testing.T) {
+	jobsClient := &fakeJobCreator{t: t, statusFn: func(ctx context.Context, jobName string) (*jobs.JobStatus, error) {
+		return &jobs.JobStatus{JobFound: true, PodPhase: "Pending"}, nil
+	}}
+	o, client := testSweepOrchestrator(t, jobsClient)
+	client.updateCheckRunErr = errors.New("503")
+	require.NoError(t, o.records.Create(context.Background(), sweepTestRecord("op-1", time.Now().Add(-time.Minute), false)))
+	got := publishedSweep(t, o, "op-1")
+
+	assert.Contains(t, got.Output, "Pending", "the diagnostic reaches the comment")
+	assert.Contains(t, got.Output, "could not be completed (503)")
+	assert.Contains(t, got.Output, "its check stays in progress")
+}
+
+// publishedSweep runs one sweep and returns the ProjectResult it published.
+func publishedSweep(t *testing.T, o *Orchestrator, operationID string) github.ProjectResult {
+	t.Helper()
+	ch := make(chan github.ProjectResult, 1)
+	go func() {
+		r, err := waitForDone(context.Background(), o.redis, operationID)
+		assert.NoError(t, err)
+		ch <- r
+	}()
+	require.Eventually(t, func() bool {
+		return o.redis.PubSubNumSub(context.Background(), doneChannel(operationID)).Val()[doneChannel(operationID)] > 0
+	}, time.Second, time.Millisecond)
+
+	o.sweepOnce(context.Background())
+
+	select {
+	case r := <-ch:
+		return r
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for published timeout result")
+		return github.ProjectResult{}
+	}
 }

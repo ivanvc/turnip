@@ -76,7 +76,8 @@ instead of a plan or apply running.
 ## Reading a failed check's title
 
 **Symptom**: a per-project check (`turnip/diff/web`) failed. Its title says
-which step failed; the full error and output are in the check's details.
+which step failed; a check carries only a title and a summary, so the full error and output
+are in the results comment.
 
 - **`helmfile exited 1`** (or another tool and code): the tool itself ran
   and failed. The reason is in its output; turnip does not interpret it.
@@ -84,7 +85,7 @@ which step failed; the full error and output are in the check's details.
   errors specific to it (for Helmfile, see
   [its troubleshooting](../plugins/helmfile.md#troubleshooting)).
 - **`clone failed`**: the Runner could not check out the pull request's
-  commit. The details carry git's message, often a merge conflict with the
+  commit. The results comment carries git's message, often a merge conflict with the
   base branch, or credentials the repository's submodules need.
 - **`workspace could not be prepared`**: the Runner could not create its
   working directory. A node or volume problem, not the change; this is
@@ -101,7 +102,7 @@ which step failed; the full error and output are in the check's details.
   the title is what turnip found when it gave up. See
   [Runner execution errors](../operating/troubleshooting.md#runner-execution-errors).
 - **`failed`** alone: the Runner reported a failure without saying which
-  step. The details have its message.
+  step. The results comment has its message.
 - **Queued, `locked by PR #5, re-plan once it's released`** (or `locked by
   another pull request, ...` when turnip couldn't tell which): not a
   failure. Another pull request holds the project's lock, so the plan
@@ -113,12 +114,37 @@ which step failed; the full error and output are in the check's details.
   not permitted`): this project's `turnip.yaml` sets an override the
   Server does not allow, so the plan was refused. Either remove the
   setting from `turnip.yaml`, or ask whoever runs turnip to add it to the
-  Server's `TURNIP_ALLOWED_OVERRIDES`. The details say which.
+  Server's `TURNIP_ALLOWED_OVERRIDES`. The results comment says which.
 - **`lock could not be acquired`**, **`operation could not be
   recorded`** or **`Runner Job could not be built`**: the Server failed
   before any Runner started, and nothing is wrong with the change.
   Re-plan; if it recurs, ask whoever runs turnip (see
   [Failed checks that are the Server's to fix](../operating/troubleshooting.md#failed-checks-that-are-the-servers-to-fix)).
+
+## A note about the check run in the results comment
+
+**Symptom**: a Project's section in the results comment ends with a note
+that its GitHub check run could not be created or completed. The
+operation itself is unaffected and its output is in the comment; the
+note says what the failure left in the PR's checks tab.
+
+- **`Note: this Project's GitHub check run could not be created (<error>).
+  The operation itself is unaffected; only its entry in the PR's checks tab
+  is missing.`**: the check was never created, so the tab has no entry for
+  this operation. Read the result in the comment.
+- **`Note: this Project's GitHub check run could not be completed (<error>).
+  The operation itself is unaffected, but its check stays in progress in
+  the PR's checks tab until the operation runs again.`**: the check exists
+  but was never finished. A plan's check is replaced by running the plan
+  again (for example `/turnip diff`), which creates a new check under the
+  same name. A successful apply's check cannot be replaced that way: the
+  apply released its lock, so running it again is refused until a new
+  plan has something to apply. If a branch protection rule requires the
+  per-Project checks, that stuck check blocks the merge; requiring the
+  `turnip` check instead avoids this (see
+  [The `turnip` check](#the-turnip-check)). The error names the cause,
+  often a GitHub rate limit or outage; if it recurs, ask whoever runs
+  turnip.
 
 ## The `turnip` check
 
@@ -156,7 +182,7 @@ something unexpected. What each state means is in
 
 ## Plugin execution errors
 
-**Symptom**: the check run/comment shows a failure with the tool's own
+**Symptom**: the results comment shows a failure with the tool's own
 stdout/stderr attached.
 
 - **Tool not installed**: the comment names the missing tool/exit code.
