@@ -20,9 +20,9 @@ In the order discussed so far; reorder here.
    limit never reaches the Server (the Runner retries for 15 minutes and
    the check stays in progress), the Runner's result log line repeats the
    whole output, and the results comment splits without bound. It needs
-   a change of its own, since `fix-check-output-size` shipped without it
-3. `fix-check-output-size`: implemented, awaiting deploy
-4. `fix-results-comment-on-replica-loss`: design next
+   a change of its own (`fix-check-output-size`, archived 2026-10-09,
+   covered only the check)
+3. `fix-results-comment-on-replica-loss`: design next
 
 ## Open changes
 
@@ -31,7 +31,6 @@ In the order discussed so far; reorder here.
 | [`redis-tls-auth`](changes/redis-tls-auth/) | TLS and AUTH to Redis (Slice 27) | implemented; archived once a deployment reports `tls=true` |
 | [`fix-results-comment-on-replica-loss`](changes/fix-results-comment-on-replica-loss/) | a trigger's results comment and later commands survive the loss of the replica that dispatched them | specs |
 | [`fix-output-order`](changes/fix-output-order/) | output in write order; each plugin decides what its output shows | proposal |
-| [`fix-check-output-size`](changes/fix-check-output-size/) | a check no longer carries the output as its details text | implemented; archived once a large plan completes its check |
 | [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized (Slice 40) | proposal |
 | [`fix-plan-survives-push`](changes/fix-plan-survives-push/) | every push marks the pull request's ready plans stale, and says so | proposal |
 | [`fix-concurrent-mutations`](changes/fix-concurrent-mutations/) | a second mutating command for a Project is refused while the first runs | proposal |
