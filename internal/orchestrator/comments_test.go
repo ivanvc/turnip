@@ -140,3 +140,23 @@ func TestPostResults_MinimizeFailure_IsSoftAndPostingProceeds(t *testing.T) {
 
 	require.Len(t, client.posted, 1)
 }
+
+func TestPostResults_UsesConfiguredPartCap(t *testing.T) {
+	// ~70 KB of lines needs 2 parts; a cap of 1 must cut it to one body.
+	var out string
+	for range 1500 {
+		out += "line of plan output that is reasonably long to fill space\n"
+	}
+	results := []github.ProjectResult{{ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: out}}
+
+	o, client := testCommentsOrchestrator(t, false)
+	o.maxCommentsPerProject = 1
+	o.postResults(context.Background(), client, testRepo, 42, results)
+	require.Len(t, client.posted, 1)
+	assert.Contains(t, client.posted[0], "earlier lines omitted")
+
+	o, client = testCommentsOrchestrator(t, false)
+	o.maxCommentsPerProject = 3
+	o.postResults(context.Background(), client, testRepo, 42, results)
+	require.Len(t, client.posted, 2)
+}

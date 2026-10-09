@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"strings"
+	"unicode/utf8"
 )
 
 const maxCommentLength = 65536 // GitHub's documented PR/issue comment cap
@@ -25,11 +26,13 @@ const minReserve = 128
 // renders that summary while the section is collapsed — so a reader scans
 // a run without expanding anything, which is the job the table used to do
 // (global Requirements 10.2 and 17.3, amended for this).
+// maxPartsPerProject caps how many parts one Project's output may take;
+// output that would need more is cut at the start (see splitDetailSection).
 // notices are command-level caveats — a selector that matched nothing —
 // rendered as a GitHub warning alert above the verdict, because they
 // change how the verdict should be read. They are variadic so that the
 // many callers with nothing to say stay unchanged.
-func BuildConsolidatedComment(results []ProjectResult, notices ...string) []string {
+func BuildConsolidatedComment(results []ProjectResult, maxPartsPerProject int, notices ...string) []string {
 	if len(results) == 0 {
 		return nil
 	}
@@ -42,7 +45,7 @@ func BuildConsolidatedComment(results []ProjectResult, notices ...string) []stri
 
 	var pieces []section
 	for _, r := range results {
-		pieces = append(pieces, splitDetailSection(r, reserve)...)
+		pieces = append(pieces, splitDetailSection(r, reserve, maxPartsPerProject)...)
 	}
 
 	groups := packSections(head, pieces)
@@ -110,7 +113,12 @@ func reserveFor(head, footer string) int {
 // own. A piece never depends on another piece within the same comment
 // body to be valid markdown: every piece opens and closes its own code
 // fence and <details> tag.
-func splitDetailSection(r ProjectResult, reserve int) []section {
+//
+// When the output would need more than maxParts pieces, the start of the
+// output after its leading run of "@@ turnip: ... @@" lines is cut, whole
+// lines at a time, so the rest fits in maxParts pieces, and the line
+// "…(<K> earlier lines omitted)" is put right after that run.
+func splitDetailSection(r ProjectResult, reserve int, maxParts int) []section {
 	budget := maxCommentLength - reserve
 
 	full := buildDetailSectionPart(r, r.Output, 1, 1)
@@ -127,16 +135,92 @@ func splitDetailSection(r ProjectResult, reserve int) []section {
 	scaffold := len(buildDetailSectionPart(r, "", 9999, 9999))
 	chunkCap := max(budget-scaffold, 1)
 
-	total := (len(r.Output) + chunkCap - 1) / chunkCap // ceil division
+	output := r.Output
+	if maxParts < 1 {
+		maxParts = 1
+	}
+	if (len(output)+chunkCap-1)/chunkCap > maxParts {
+		output = capOutput(output, maxParts*chunkCap)
+	}
+	total := (len(output) + chunkCap - 1) / chunkCap // ceil division
 
 	pieces := make([]section, 0, total)
-	output := r.Output
 	for part := 1; part <= total; part++ {
 		n := min(chunkCap, len(output))
 		pieces = append(pieces, section{result: r, chunk: output[:n], part: part, total: total})
 		output = output[n:]
 	}
 	return pieces
+}
+
+// linesOmittedFormat is the line capOutput puts after the leading
+// annotation lines. maxMarkerLen is its length with a pessimistic count.
+const (
+	linesOmittedFormat = "…(%d earlier lines omitted)\n"
+	maxMarkerLen       = len("…( earlier lines omitted)\n") + 20
+)
+
+// leadingAnnotationLen returns the length of the run of whole lines at the
+// start of output that begin "@@ turnip: " and end " @@".
+func leadingAnnotationLen(output string) int {
+	n := 0
+	for n < len(output) {
+		end := strings.IndexByte(output[n:], '\n')
+		line := output[n:]
+		next := len(output)
+		if end >= 0 {
+			line = output[n : n+end]
+			next = n + end + 1
+		}
+		if !strings.HasPrefix(line, "@@ turnip: ") || !strings.HasSuffix(line, " @@") {
+			break
+		}
+		n = next
+	}
+	return n
+}
+
+// capOutput shortens output to at most limit bytes, keeping its leading
+// annotation lines and its end, and removing whole lines from between.
+func capOutput(output string, limit int) string {
+	lead := leadingAnnotationLen(output)
+	if lead > 0 && !strings.HasSuffix(output[:lead], "\n") {
+		return output // only annotation lines, no newline to cut at
+	}
+	rest := output[lead:]
+	keep := max(limit-lead-maxMarkerLen, 0)
+	if len(rest) <= keep {
+		return output
+	}
+	cut := len(rest) - keep
+	// Advance to the start of the next whole line, unless that would
+	// leave none of the tool's output: when the cut lands in the last
+	// tool line (one longer than the whole budget), keep that line's own
+	// end instead, cut inside it at a rune boundary, as the Runner does.
+	if cut > 0 && rest[cut-1] != '\n' {
+		if i := strings.IndexByte(rest[cut:], '\n'); i >= 0 && !onlyClosingAnnotation(rest[cut+i+1:]) {
+			cut += i + 1
+		} else {
+			for cut < len(rest) && !utf8.RuneStart(rest[cut]) {
+				cut++
+			}
+		}
+	}
+	removed := strings.Count(rest[:cut], "\n")
+	if cut == len(rest) && !strings.HasSuffix(rest, "\n") {
+		removed++
+	}
+	return output[:lead] + fmt.Sprintf(linesOmittedFormat, removed) + rest[cut:]
+}
+
+// onlyClosingAnnotation reports whether s holds no tool output: nothing,
+// or a single turnip annotation line.
+func onlyClosingAnnotation(s string) bool {
+	line := strings.TrimSuffix(s, "\n")
+	if line == "" {
+		return true
+	}
+	return !strings.Contains(line, "\n") && strings.HasPrefix(line, "@@ turnip: ") && strings.HasSuffix(line, " @@")
 }
 
 // chunkOmissionMarker opens a section whose output was cut, inside its

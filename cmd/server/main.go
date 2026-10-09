@@ -86,6 +86,7 @@ func run(cfg orchestrator.Config, plugins orchestrator.PluginRegistry) error {
 		cfg.Catalog,
 		redisClient,
 		cfg.MinimizeOutdatedPlanComments,
+		cfg.MaxCommentsPerProject,
 		cfg.RunnerServerAddr,
 		cfg.RunnerImage,
 		cfg.RunnerServiceAccount,

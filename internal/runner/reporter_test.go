@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,11 +15,13 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	pb "github.com/ivanvc/turnip/internal/grpc/turnip/v1"
+	"github.com/ivanvc/turnip/internal/plugin"
 	"github.com/ivanvc/turnip/internal/rpc"
 )
 
@@ -381,4 +384,148 @@ func TestLogRingBuffer_NoMarkerWhenUnderBound(t *testing.T) {
 	snap := buf.snapshot()
 	require.Len(t, snap, 1)
 	assert.Equal(t, "hello", snap[0].Message)
+}
+
+// recordingStream is a working stream that keeps every message sent on
+// it, so a test can count what reached the wire.
+type recordingStream struct {
+	mu   sync.Mutex
+	sent []*pb.ExecuteOperationRequest
+}
+
+func (s *recordingStream) stream() pb.OperationService_ExecuteOperationClient {
+	return &fakeStream{
+		sendFunc: func(req *pb.ExecuteOperationRequest) error {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.sent = append(s.sent, req)
+			return nil
+		},
+		closeAndRecvFunc: func() (*pb.ExecuteOperationResponse, error) { return &pb.ExecuteOperationResponse{}, nil },
+	}
+}
+
+func (s *recordingStream) results() []*pb.OperationResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*pb.OperationResult
+	for _, req := range s.sent {
+		if r := req.GetResult(); r != nil {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// A result whose message would not fit the Server's limit is never sent;
+// the failed "too large to deliver" result goes instead, once.
+func TestReporter_ResultTooLargeIsNeverSent(t *testing.T) {
+	rec := &recordingStream{}
+	client := &fakeOperationClient{
+		executeFn: func(int) (pb.OperationService_ExecuteOperationClient, error) { return rec.stream(), nil },
+	}
+	clock := newFakeClock()
+	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
+	r.readToken = stubToken
+
+	require.NoError(t, r.Connect(context.Background()))
+	require.NoError(t, r.Report(context.Background(), OperationResult{
+		Success:         true,
+		Output:          "planned",
+		ExitCode:        0,
+		Changes:         plugin.ChangeSummary{Add: 2},
+		PlanData:        make([]byte, 5<<20),
+		FailureCategory: rpc.FailureUnspecified,
+	}))
+
+	results := rec.results()
+	require.Len(t, results, 1, "only the replacement is sent, once")
+	got := results[0]
+	assert.False(t, got.GetSuccess())
+	assert.Empty(t, got.GetOutput())
+	assert.Empty(t, got.GetPlanData())
+	assert.Equal(t, pb.FailureCategory_FAILURE_CATEGORY_UNSPECIFIED, got.GetFailureCategory())
+	assert.Equal(t, "the result was too large to deliver (5.0 MiB; the Server accepts at most 4 MiB)", got.GetErrorMessage())
+	assert.Equal(t, 1, client.attemptCount(), "no stream is opened beyond the first")
+}
+
+// gRPC accepts a message exactly at its limit, so one that size is sent
+// as is, and one a byte larger is replaced.
+func TestDeliverable_TheLimitIsInclusive(t *testing.T) {
+	result := OperationResult{Success: true}
+	for n := rpc.MaxResultMessageBytes - 16; ; n++ {
+		result.Output = strings.Repeat("x", n)
+		if proto.Size(resultRequest(result)) == rpc.MaxResultMessageBytes {
+			break
+		}
+		require.Less(t, proto.Size(resultRequest(result)), rpc.MaxResultMessageBytes)
+	}
+
+	got, replaced := deliverable(result)
+	assert.False(t, replaced)
+	assert.Equal(t, result, got)
+
+	result.Output += "x"
+	got, replaced = deliverable(result)
+	assert.True(t, replaced)
+	assert.Empty(t, got.Output)
+}
+
+// dialLimitedServer is dialScriptedServer with a Server that accepts
+// messages of at most maxRecv bytes, standing in for a Server configured
+// differently from the Runner's constant.
+func dialLimitedServer(t *testing.T, srv *scriptedServer, maxRecv int) pb.OperationServiceClient {
+	t.Helper()
+
+	lis := bufconn.Listen(1024 * 1024)
+	server := grpc.NewServer(grpc.MaxRecvMsgSize(maxRecv))
+	pb.RegisterOperationServiceServer(server, srv)
+	go func() { _ = server.Serve(lis) }()
+	t.Cleanup(server.Stop)
+
+	conn, err := grpc.NewClient("passthrough:///bufconn",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	return pb.NewOperationServiceClient(conn)
+}
+
+// A ResourceExhausted answer to a result is final: the original is not
+// sent again, and the failed result is delivered in its place.
+func TestReporter_ResourceExhaustedSwitchesToTheFailedResult(t *testing.T) {
+	srv := &scriptedServer{}
+	client := dialLimitedServer(t, srv, 64<<10)
+	clock := newFakeClock()
+	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
+	r.readToken = stubToken
+
+	require.NoError(t, r.Connect(context.Background()))
+	waitForStreamCount(t, srv, 1)
+	require.NoError(t, r.Report(context.Background(), OperationResult{
+		Success: true,
+		Output:  strings.Repeat("x", 100<<10),
+	}))
+
+	require.Equal(t, 2, srv.streamCount(), "one stream refused the result, one carried the replacement; none retried the original")
+	assert.Nil(t, lastResult(srv.streamAt(0)), "the oversized result never reached the handler")
+
+	got := lastResult(srv.streamAt(1))
+	require.NotNil(t, got)
+	assert.False(t, got.GetSuccess())
+	assert.Empty(t, got.GetOutput())
+	assert.Empty(t, got.GetPlanData())
+	assert.Equal(t, pb.FailureCategory_FAILURE_CATEGORY_UNSPECIFIED, got.GetFailureCategory())
+	assert.Regexp(t, `^the result was too large to deliver \(100\.\d KiB; the Server accepts at most 4 MiB\)$`, got.GetErrorMessage())
+}
+
+func lastResult(reqs []*pb.ExecuteOperationRequest) *pb.OperationResult {
+	for i := len(reqs) - 1; i >= 0; i-- {
+		if r := reqs[i].GetResult(); r != nil {
+			return r
+		}
+	}
+	return nil
 }

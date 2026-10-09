@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"os"
 	"strings"
@@ -11,8 +12,11 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	pb "github.com/ivanvc/turnip/internal/grpc/turnip/v1"
 	"github.com/ivanvc/turnip/internal/plugin"
@@ -221,14 +225,77 @@ func (r *reporter) LogLine(stream, line string) {
 // Requirement 2.4's "don't abort the subprocess" guarantee holds
 // structurally, by Report and subprocess execution never sharing a
 // cancellation path.
+//
+// A result whose message would not fit what the Server accepts is never
+// sent: the failed result deliverable returns goes in its place. A result
+// the Server refuses for its size anyway (ResourceExhausted, from a Server
+// configured differently) is not retried either; the same failed result
+// replaces it, under the same budget.
 func (r *reporter) Report(ctx context.Context, result OperationResult) error {
+	current, replaced := deliverable(result)
 	rt := retrier{base: reportBaseDelay, max: reportMaxDelay, budget: reportBudget, now: r.now, sleep: r.sleep, rnd: r.rnd}
 	if err := rt.run(func() error {
-		return r.reportOnce(ctx, result)
+		err := r.reportOnce(ctx, current)
+		if !replaced && errors.Is(err, errResultRefusedForSize) {
+			current, replaced = tooLargeResult(current, proto.Size(resultRequest(current))), true
+		}
+		return err
 	}); err != nil {
 		return fmt.Errorf("%w: %w", ErrReportFailed, err)
 	}
 	return nil
+}
+
+// errResultRefusedForSize marks a result the Server answered with
+// ResourceExhausted, which no retry of the same message can change.
+var errResultRefusedForSize = errors.New("runner: the Server refused the result for its size")
+
+// resultRequest is the message that carries result to the Server. Its
+// encoded size is what the Server's limit applies to.
+func resultRequest(result OperationResult) *pb.ExecuteOperationRequest {
+	return &pb.ExecuteOperationRequest{Payload: &pb.ExecuteOperationRequest_Result{Result: &pb.OperationResult{
+		Success:      result.Success,
+		Output:       result.Output,
+		ExitCode:     int32(result.ExitCode),
+		ErrorMessage: result.ErrorMessage,
+		Changes: &pb.ChangeSummary{
+			Add:     int32(result.Changes.Add),
+			Change:  int32(result.Changes.Change),
+			Destroy: int32(result.Changes.Destroy),
+		},
+		PlanData:        result.PlanData,
+		FailureCategory: rpc.FailureCategoryToProto(result.FailureCategory),
+	}}}
+}
+
+// deliverable returns result when its message fits rpc.MaxResultMessageBytes,
+// and otherwise the failed result that replaces it, with replaced true.
+func deliverable(result OperationResult) (OperationResult, bool) {
+	size := proto.Size(resultRequest(result))
+	if size <= rpc.MaxResultMessageBytes {
+		return result, false
+	}
+	return tooLargeResult(result, size), true
+}
+
+// tooLargeResult is the failed result delivered in place of one whose
+// message was size bytes, too large for the Server: no output, no plan
+// data, no counts and no category, only an error message saying why. The
+// tool's exit code is kept, since the tool did run.
+func tooLargeResult(result OperationResult, size int) OperationResult {
+	// A size just over the limit rounds to the limit itself ("4.0 MiB;
+	// the Server accepts at most 4 MiB"), which reads as a contradiction;
+	// the exact byte count says what the rounding hides.
+	shown := formatSize(size)
+	if shown == formatSize(rpc.MaxResultMessageBytes) {
+		shown = fmt.Sprintf("%d bytes", size)
+	}
+	return OperationResult{
+		Success:  false,
+		ExitCode: result.ExitCode,
+		ErrorMessage: fmt.Sprintf("the result was too large to deliver (%s; the Server accepts at most %d MiB)",
+			shown, rpc.MaxResultMessageBytes>>20),
+	}
 }
 
 func (r *reporter) reportOnce(ctx context.Context, result OperationResult) error {
@@ -252,30 +319,33 @@ func (r *reporter) reportOnce(ctx context.Context, result OperationResult) error
 		}
 	}
 
-	pbResult := &pb.OperationResult{
-		Success:      result.Success,
-		Output:       result.Output,
-		ExitCode:     int32(result.ExitCode),
-		ErrorMessage: result.ErrorMessage,
-		Changes: &pb.ChangeSummary{
-			Add:     int32(result.Changes.Add),
-			Change:  int32(result.Changes.Change),
-			Destroy: int32(result.Changes.Destroy),
-		},
-		PlanData:        result.PlanData,
-		FailureCategory: rpc.FailureCategoryToProto(result.FailureCategory),
-	}
-	if err := stream.Send(&pb.ExecuteOperationRequest{Payload: &pb.ExecuteOperationRequest_Result{Result: pbResult}}); err != nil {
+	if err := stream.Send(resultRequest(result)); err != nil {
 		r.clearStream(stream)
-		return err
+		// io.EOF means the Server ended the stream; its status, which
+		// says why, is only read by receiving.
+		if errors.Is(err, io.EOF) {
+			if _, recvErr := stream.CloseAndRecv(); recvErr != nil {
+				err = recvErr
+			}
+		}
+		return classifyResultError(err)
 	}
 
 	if _, err := stream.CloseAndRecv(); err != nil {
 		r.clearStream(stream)
-		return err
+		return classifyResultError(err)
 	}
 
 	return nil
+}
+
+// classifyResultError marks a ResourceExhausted answer to a result with
+// errResultRefusedForSize, leaving every other error as it is.
+func classifyResultError(err error) error {
+	if status.Code(err) == codes.ResourceExhausted {
+		return fmt.Errorf("%w: %w", errResultRefusedForSize, err)
+	}
+	return err
 }
 
 func (r *reporter) clearStream(s pb.OperationService_ExecuteOperationClient) {

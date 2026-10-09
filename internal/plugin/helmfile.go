@@ -88,10 +88,17 @@ var olderReleaseTableBanners = []string{
 //     --log-level warn and up), since Helmfile logs its Release_Tables at
 //     info level and would have printed none.
 //
-// output is the whole transcript, both streams, rather than stderr alone:
-// this is the one place that trade-off is accepted, since the older
-// banner's text inside a stdout diff body (e.g. a ConfigMap holding it)
-// can only hide a count, never invent one.
+// output is the transcript as the Server received it, both streams,
+// rather than stderr alone: this is the one place that trade-off is
+// accepted, since the older banner's text inside a stdout diff body (e.g.
+// a ConfigMap holding it) can only hide a count, never invent one.
+//
+// It is the transcript as received, not the whole one: the Server calls
+// this on the result's output, which the Runner cuts to 1 MiB, keeping
+// the end and the leading annotation lines (fix-large-output). The argv
+// annotation therefore always survives, and the banners print at the end
+// of an apply; a banner printed only in a cut start would go unseen, and
+// the run would read as reported.
 func (p *HelmfilePlugin) MutationChangesReported(output string) bool {
 	for _, line := range strings.Split(stripANSI(output), "\n") {
 		if argv, ok := commandAnnotation(line); ok && argsSilenceTables(argv) {

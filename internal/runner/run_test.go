@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -295,6 +297,26 @@ func TestRunCloneWith_FailureReportsBeforeExitingNonZero(t *testing.T) {
 	assert.Equal(t, rpc.FailureCloneFailed, rep.lastResult.FailureCategory)
 }
 
+// A clone failure is a finished Operation too, so its log carries the
+// same error line and summary line as any other.
+func TestRunCloneWith_FailureLogsTheErrorAndTheSummary(t *testing.T) {
+	rep := &fakeReporter{}
+	var stderr safeBuffer
+
+	clone := func(context.Context, string, string, string, string, string) error {
+		return errors.New("commit not found")
+	}
+
+	runCloneWith(context.Background(), testCloneConfig(), rep, clone, &stderr)
+
+	log := stderr.String()
+	require.Contains(t, log, "runner: operation error: ")
+	assert.Contains(t, log, "commit not found")
+	assert.Contains(t, log, "runner: operation result: success=false exit_code=-1 category=clone_failed ")
+	assert.Less(t, strings.Index(log, "runner: operation error: "), strings.Index(log, "runner: operation result: "),
+		"the error comes just before the summary")
+}
+
 func TestRunCloneWith_MergeConflictStaysDistinguishable(t *testing.T) {
 	rep := &fakeReporter{}
 	var stderr safeBuffer
@@ -471,4 +493,67 @@ func TestRunWith_TranscriptNeverCarriesTheEnvironment(t *testing.T) {
 
 	assert.NotContains(t, rep.lastResult.Output, "super-secret-value")
 	assert.NotContains(t, stdout.String(), "super-secret-value")
+}
+
+// The Runner's log carries the tool's output once, mirrored line by line;
+// the result line summarizes, with the whole output's size and the size
+// of what is sent, and never repeats the output.
+func TestRunWith_ResultLogLineSummarizesALargeOutput(t *testing.T) {
+	output := strings.Repeat("+  a manifest line\n", 300_000)
+	p := &fakePlugin{
+		operations: []string{"diff"},
+		script:     []outputLine{{"stdout", "+  a manifest line"}},
+		result: &plugin.ExecuteResult{
+			ExitCode:      0,
+			Output:        output,
+			ChangeSummary: plugin.ChangeSummary{Add: 4, Change: 1, Destroy: 2},
+		},
+	}
+	rep := &fakeReporter{}
+	var stdout, stderr safeBuffer
+
+	exitCode := runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), &stdout, &stderr)
+	require.Equal(t, 0, exitCode)
+
+	sent := len(rep.lastResult.Output)
+	require.Less(t, sent, len(output))
+	assert.Equal(t,
+		fmt.Sprintf("runner: operation result: success=true exit_code=0 category=none add=4 change=1 destroy=2 output_bytes=%d sent_bytes=%d\n", len(output), sent),
+		stderr.String(),
+		"one summary line, with no error line and no copy of the output")
+	assert.Equal(t, "+  a manifest line\n", stdout.String(), "the tool's output appears once, as mirrored")
+}
+
+func TestRunWith_ResultLogLineFollowsTheErrorMessage(t *testing.T) {
+	p := &fakePlugin{operations: []string{"diff"}, resultErr: errors.New(`exec: "helmfile": executable file not found in $PATH`)}
+	rep := &fakeReporter{}
+	var stdout, stderr safeBuffer
+
+	exitCode := runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), &stdout, &stderr)
+	require.Equal(t, 0, exitCode)
+
+	assert.Equal(t,
+		"runner: operation error: execute failed: exec: \"helmfile\": executable file not found in $PATH\n"+
+			"runner: operation result: success=false exit_code=-1 category=tool_not_started add=0 change=0 destroy=0 output_bytes=0 sent_bytes=0\n",
+		stderr.String())
+}
+
+// A result too large to deliver is summarized as what is sent: the
+// failed result, its error on the line before.
+func TestRunWith_ResultLogLineDescribesTheReplacement(t *testing.T) {
+	p := &fakePlugin{
+		operations: []string{"diff"},
+		result:     &plugin.ExecuteResult{ExitCode: 0, Output: "planned", PlanData: make([]byte, 5<<20)},
+	}
+	rep := &fakeReporter{}
+	var stdout, stderr safeBuffer
+
+	exitCode := runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), &stdout, &stderr)
+	require.Equal(t, 0, exitCode)
+
+	assert.False(t, rep.lastResult.Success)
+	assert.Equal(t,
+		"runner: operation error: the result was too large to deliver (5.0 MiB; the Server accepts at most 4 MiB)\n"+
+			"runner: operation result: success=false exit_code=0 category=none add=0 change=0 destroy=0 output_bytes=7 sent_bytes=0\n",
+		stderr.String())
 }

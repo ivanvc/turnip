@@ -16,7 +16,7 @@ func TestBuildConsolidatedComment_SingleBody(t *testing.T) {
 		{ProjectName: "k8s-apps", Operation: "diff", Success: false, Output: "1 changed release"},
 	}
 
-	bodies := BuildConsolidatedComment(results)
+	bodies := BuildConsolidatedComment(results, testMaxParts)
 	require.Len(t, bodies, 1)
 
 	body := bodies[0]
@@ -43,7 +43,7 @@ func TestBuildConsolidatedComment_SplitsAcrossBodiesWhenOverLimit(t *testing.T) 
 		})
 	}
 
-	bodies := BuildConsolidatedComment(results)
+	bodies := BuildConsolidatedComment(results, testMaxParts)
 	require.Greater(t, len(bodies), 1, "want more than 1 body for oversized content")
 
 	for i, body := range bodies {
@@ -96,7 +96,7 @@ func TestBuildConsolidatedComment_SplitsOversizedSingleOutputAcrossBodies(t *tes
 		{ProjectName: "huge", Operation: "plan", Success: true, Output: output},
 	}
 
-	bodies := BuildConsolidatedComment(results)
+	bodies := BuildConsolidatedComment(results, testMaxParts)
 	require.Greater(t, len(bodies), 1, "want the oversized output split across multiple bodies")
 
 	var reassembled strings.Builder
@@ -118,7 +118,7 @@ func TestSplitDetailSection_ReassemblesExactly(t *testing.T) {
 	output := numberedLines(20000)
 	r := ProjectResult{ProjectName: "huge", Operation: "plan", Success: true, Output: output}
 
-	pieces := splitDetailSection(r, minReserve)
+	pieces := splitDetailSection(r, minReserve, testMaxParts)
 	require.Greater(t, len(pieces), 1, "want the output split into multiple pieces")
 
 	var reassembled strings.Builder
@@ -137,7 +137,7 @@ func TestSplitDetailSection_ReassemblesExactly(t *testing.T) {
 func TestSplitDetailSection_FitsWithoutSplitting(t *testing.T) {
 	r := ProjectResult{ProjectName: "vpc", Operation: "plan", Success: true, Output: "no changes"}
 
-	pieces := splitDetailSection(r, minReserve)
+	pieces := splitDetailSection(r, minReserve, testMaxParts)
 	require.Len(t, pieces, 1)
 	assert.NotContains(t, pieces[0].render(), "output part")
 }
@@ -196,7 +196,7 @@ func TestClampBody_CutsWithinTheLastSectionKeepingItsEnd(t *testing.T) {
 }
 
 func TestBuildConsolidatedComment_EmptyResults(t *testing.T) {
-	bodies := BuildConsolidatedComment(nil)
+	bodies := BuildConsolidatedComment(nil, testMaxParts)
 	assert.Nil(t, bodies)
 }
 
@@ -204,7 +204,7 @@ func TestBuildConsolidatedComment_EmptyResults(t *testing.T) {
 // anything, so it carries the whole per-Project verdict. This is the line
 // that replaced the summary table.
 func TestBuildConsolidatedComment_SummaryLineCarriesStatusAndCounts(t *testing.T) {
-	bodies := BuildConsolidatedComment([]ProjectResult{
+	bodies := buildForTest([]ProjectResult{
 		{ProjectName: "infra", Operation: "diff", Success: true, Output: "x",
 			Changes: ChangeCounts{Add: 1, Change: 4, Destroy: 2}},
 	})
@@ -216,7 +216,7 @@ func TestBuildConsolidatedComment_SummaryLineCarriesStatusAndCounts(t *testing.T
 // Requirement 2.3: a Project that reported no changes says so, rather than
 // rendering three zeros that read like a measurement.
 func TestBuildConsolidatedComment_NoChangesSaysSoRatherThanZeros(t *testing.T) {
-	bodies := BuildConsolidatedComment([]ProjectResult{
+	bodies := buildForTest([]ProjectResult{
 		{ProjectName: "apps", Operation: "diff", Success: true, Output: "No changes."},
 	})
 	require.Len(t, bodies, 1)
@@ -229,7 +229,7 @@ func TestBuildConsolidatedComment_NoChangesSaysSoRatherThanZeros(t *testing.T) {
 // successful Mutating_Operation as "succeeded" in the summary line and the
 // verdict line, never as "no changes".
 func TestBuildConsolidatedComment_UnreportedRendersAsSucceeded(t *testing.T) {
-	bodies := BuildConsolidatedComment([]ProjectResult{
+	bodies := buildForTest([]ProjectResult{
 		{ProjectName: "web", Operation: "apply", Success: true, Output: "applied",
 			Changes: ChangeCounts{Unreported: true}},
 	})
@@ -244,7 +244,7 @@ func TestBuildConsolidatedComment_UnreportedRendersAsSucceeded(t *testing.T) {
 // a counted one states the total from the counted Project alone and notes
 // the unreported one separately, never folding it into "no changes".
 func TestBuildConsolidatedComment_UnreportedMixedWithCounted(t *testing.T) {
-	bodies := BuildConsolidatedComment([]ProjectResult{
+	bodies := buildForTest([]ProjectResult{
 		{ProjectName: "web", Operation: "apply", Success: true, Output: "applied",
 			Changes: ChangeCounts{Change: 3}},
 		{ProjectName: "api", Operation: "apply", Success: true, Output: "applied",
@@ -260,7 +260,7 @@ func TestBuildConsolidatedComment_UnreportedMixedWithCounted(t *testing.T) {
 // Requirement 3.1: a failed Mutating_Operation still renders as failed,
 // whatever its Plugin says about unreported counts.
 func TestBuildConsolidatedComment_FailedRendersFailedEvenWhenUnreported(t *testing.T) {
-	bodies := BuildConsolidatedComment([]ProjectResult{
+	bodies := buildForTest([]ProjectResult{
 		{ProjectName: "web", Operation: "apply", Success: false, Output: "boom",
 			Changes: ChangeCounts{Unreported: true}},
 	})
@@ -275,7 +275,7 @@ func TestBuildConsolidatedComment_FailedRendersFailedEvenWhenUnreported(t *testi
 // presenting its zeroes would make a run that never completed look like
 // one that planned nothing.
 func TestBuildConsolidatedComment_FailureShowsNoCounts(t *testing.T) {
-	bodies := BuildConsolidatedComment([]ProjectResult{
+	bodies := buildForTest([]ProjectResult{
 		{ProjectName: "edge", Operation: "diff", Success: false, Output: "boom",
 			Changes: ChangeCounts{Add: 9, Change: 9, Destroy: 9}},
 	})
@@ -289,7 +289,7 @@ func TestBuildConsolidatedComment_FailureShowsNoCounts(t *testing.T) {
 // Requirement 3.4. The assertion whose absence would let turnip invite a
 // reader to apply a plan that never finished.
 func TestBuildConsolidatedComment_FailedProjectIsNeverInvitedToApply(t *testing.T) {
-	bodies := BuildConsolidatedComment([]ProjectResult{
+	bodies := buildForTest([]ProjectResult{
 		{ProjectName: "edge", Operation: "diff", Success: false, Output: "boom",
 			PlanOperation: "diff", ApplyOperation: "apply", Locked: true},
 	})
@@ -305,7 +305,7 @@ func TestBuildConsolidatedComment_FailedProjectIsNeverInvitedToApply(t *testing.
 // hold Locks after a failed plan — the renderer reports Locked rather than
 // inferring from Success.
 func TestBuildConsolidatedComment_UnlockOnlyWhereALockIsHeld(t *testing.T) {
-	bodies := BuildConsolidatedComment([]ProjectResult{
+	bodies := buildForTest([]ProjectResult{
 		{ProjectName: "held", Operation: "diff", Success: true, Output: "x",
 			Changes: ChangeCounts{Change: 1}, PlanOperation: "diff", ApplyOperation: "apply", Locked: true},
 		{ProjectName: "free", Operation: "diff", Success: true, Output: "x",
@@ -322,7 +322,7 @@ func TestBuildConsolidatedComment_UnlockOnlyWhereALockIsHeld(t *testing.T) {
 // Requirement 5: a contended Lock names the blocking pull request and
 // links to it, rather than leaving the reader to search.
 func TestBuildConsolidatedComment_ContentionLinksTheBlockingPullRequest(t *testing.T) {
-	bodies := BuildConsolidatedComment([]ProjectResult{
+	bodies := buildForTest([]ProjectResult{
 		{ProjectName: "infra", Operation: "diff", Success: false, Output: "locked by PR #42",
 			BlockedBy: &BlockingPullRequest{Number: 42, URL: "https://example.invalid/pull/42"}},
 	})
@@ -335,7 +335,7 @@ func TestBuildConsolidatedComment_ContentionLinksTheBlockingPullRequest(t *testi
 // Requirement 5.3: an unidentifiable holder is reported without inventing
 // a reference.
 func TestBuildConsolidatedComment_ContentionWithoutURLInventsNothing(t *testing.T) {
-	bodies := BuildConsolidatedComment([]ProjectResult{
+	bodies := buildForTest([]ProjectResult{
 		{ProjectName: "infra", Operation: "diff", Success: false, Output: "locked",
 			BlockedBy: &BlockingPullRequest{Number: 42}},
 	})
@@ -432,13 +432,13 @@ func TestBuildVerdictLine(t *testing.T) {
 // message, and diff highlighting would color every line beginning with
 // "-" red for no reason.
 func TestBuildConsolidatedComment_DiffFenceOnSuccessPlainOnFailure(t *testing.T) {
-	success := BuildConsolidatedComment([]ProjectResult{
+	success := buildForTest([]ProjectResult{
 		{ProjectName: "ok", Operation: "diff", Success: true, Output: "- old\n+ new"},
 	})
 	require.Len(t, success, 1)
 	assert.Contains(t, success[0], "```diff\n- old\n+ new\n```")
 
-	failure := BuildConsolidatedComment([]ProjectResult{
+	failure := buildForTest([]ProjectResult{
 		{ProjectName: "bad", Operation: "diff", Success: false, Output: "- could not connect"},
 	})
 	require.Len(t, failure, 1)
@@ -451,7 +451,7 @@ func TestBuildConsolidatedComment_DiffFenceOnSuccessPlainOnFailure(t *testing.T)
 // styled as tool output and is carried away by output splitting.
 func TestBuildConsolidatedComment_LockNoteRendersOutsideTheFence(t *testing.T) {
 	const note = "Lock released: the plan failed, so nothing was recorded."
-	parts := BuildConsolidatedComment([]ProjectResult{{
+	parts := buildForTest([]ProjectResult{{
 		ProjectName: "web",
 		Tool:        "helmfile",
 		Operation:   "diff",
@@ -472,7 +472,7 @@ func TestBuildConsolidatedComment_LockNoteRendersOutsideTheFence(t *testing.T) {
 }
 
 func TestBuildConsolidatedComment_NoLockNoteRendersNothing(t *testing.T) {
-	parts := BuildConsolidatedComment([]ProjectResult{{
+	parts := buildForTest([]ProjectResult{{
 		ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: "no changes",
 	}})
 	require.Len(t, parts, 1)
@@ -494,7 +494,7 @@ func TestBuildConsolidatedComment_OutputCannotEscapeItsFence(t *testing.T) {
 		{"a longer run than the fence", "before\n`````\nafter"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			parts := BuildConsolidatedComment([]ProjectResult{{
+			parts := buildForTest([]ProjectResult{{
 				ProjectName: "web", Tool: "helmfile", Operation: "diff",
 				Success: true, Output: tc.output,
 			}})
@@ -527,7 +527,7 @@ func TestBuildConsolidatedComment_OutputCannotEscapeItsFence(t *testing.T) {
 // error message, and diff highlighting would redden any line starting with
 // "-" for no reason.
 func TestBuildConsolidatedComment_FailureKeepsAPlainFence(t *testing.T) {
-	parts := BuildConsolidatedComment([]ProjectResult{{
+	parts := buildForTest([]ProjectResult{{
 		ProjectName: "web", Tool: "helmfile", Operation: "diff",
 		Success: false, Output: "Error: release not found\n-  some detail",
 	}})
@@ -540,7 +540,7 @@ func TestBuildConsolidatedComment_FailureKeepsAPlainFence(t *testing.T) {
 // to survive the same hazards the fenced block does.
 func TestBuildConsolidatedComment_ScopeMarker(t *testing.T) {
 	t.Run("absent when the Operation took no arguments", func(t *testing.T) {
-		parts := BuildConsolidatedComment([]ProjectResult{{
+		parts := buildForTest([]ProjectResult{{
 			ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: "no changes",
 		}})
 		require.Len(t, parts, 1)
@@ -548,7 +548,7 @@ func TestBuildConsolidatedComment_ScopeMarker(t *testing.T) {
 	})
 
 	t.Run("verbatim, uninterpreted", func(t *testing.T) {
-		parts := BuildConsolidatedComment([]ProjectResult{{
+		parts := buildForTest([]ProjectResult{{
 			ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: "x",
 			ScopeArgs: []string{"-l", "name=api"},
 		}})
@@ -566,7 +566,7 @@ func TestBuildConsolidatedComment_ScopeMarker(t *testing.T) {
 	})
 
 	t.Run("an argument carrying markup is escaped, not rendered", func(t *testing.T) {
-		parts := BuildConsolidatedComment([]ProjectResult{{
+		parts := buildForTest([]ProjectResult{{
 			ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: "x",
 			ScopeArgs: []string{"-l", "name=</code></summary><a href=x>`&`"},
 		}})
@@ -587,7 +587,7 @@ func TestBuildConsolidatedComment_ScopeMarker(t *testing.T) {
 
 // A Project name comes from turnip.yaml and lands in the same <summary>.
 func TestBuildConsolidatedComment_ProjectNameIsEscapedInTheSummary(t *testing.T) {
-	parts := BuildConsolidatedComment([]ProjectResult{{
+	parts := buildForTest([]ProjectResult{{
 		ProjectName: "a<b>&c", Tool: "helmfile", Operation: "diff", Success: true, Output: "x",
 	}})
 	require.Len(t, parts, 1)
@@ -607,8 +607,8 @@ func TestBuildConsolidatedComment_FooterIsScopeAware(t *testing.T) {
 		Locked: true,
 	}}
 
-	withScope := BuildConsolidatedComment(scoped)[0]
-	withoutScope := BuildConsolidatedComment(unscoped)[0]
+	withScope := BuildConsolidatedComment(scoped, testMaxParts)[0]
+	withoutScope := BuildConsolidatedComment(unscoped, testMaxParts)[0]
 
 	assert.Contains(t, withScope, "replays the scope")
 	assert.NotContains(t, withoutScope, "replays the scope",
@@ -625,7 +625,7 @@ func TestBuildConsolidatedComment_FooterIsScopeAware(t *testing.T) {
 // marker per comment would attribute a scope to Projects it may not be
 // meaningful for.
 func TestBuildConsolidatedComment_ScopeMarkerIsPerProject(t *testing.T) {
-	parts := BuildConsolidatedComment([]ProjectResult{
+	parts := buildForTest([]ProjectResult{
 		{ProjectName: "web", Tool: "helmfile", Operation: "diff", Success: true, Output: "x",
 			ScopeArgs: []string{"-l", "name=api"}},
 		{ProjectName: "api", Tool: "helmfile", Operation: "diff", Success: true, Output: "y",
@@ -634,4 +634,114 @@ func TestBuildConsolidatedComment_ScopeMarkerIsPerProject(t *testing.T) {
 	require.Len(t, parts, 1)
 	assert.Equal(t, 2, strings.Count(parts[0], "-l name=api"),
 		"both Projects the trigger fanned out to carry the marker")
+}
+
+// testMaxParts is large enough that no test output is cut by the cap.
+const testMaxParts = 1000
+
+func buildForTest(results []ProjectResult, notices ...string) []string {
+	return BuildConsolidatedComment(results, testMaxParts, notices...)
+}
+
+func partsOf(t *testing.T, pieces []section) string {
+	t.Helper()
+	var b strings.Builder
+	for _, p := range pieces {
+		b.WriteString(p.chunk)
+	}
+	return b.String()
+}
+
+func TestSplitDetailSection_CapsPartsAndKeepsTheEnd(t *testing.T) {
+	output := numberedLines(500000) // roughly 80 parts
+	r := ProjectResult{ProjectName: "huge", Operation: "plan", Success: true, Output: output}
+	require.Greater(t, len(splitDetailSection(r, minReserve, testMaxParts)), 60, "precondition: many parts")
+
+	for _, cap := range []int{3, 5} {
+		pieces := splitDetailSection(r, minReserve, cap)
+		require.Len(t, pieces, cap)
+		for i, p := range pieces {
+			assert.LessOrEqualf(t, len(p.render()), maxCommentLength-minReserve, "piece %d", i)
+			assert.Equal(t, cap, p.total)
+		}
+		got := partsOf(t, pieces)
+		assert.True(t, strings.HasPrefix(got, "…("), "no leading run, so the marker opens the output")
+		assert.True(t, strings.HasSuffix(got, "line-499999\n"), "the end survives")
+	}
+}
+
+// A last tool line longer than the whole cap keeps its own end, cut
+// inside it, rather than leaving only the annotation lines and the
+// marker: the reader must still see the end of the output.
+func TestSplitDetailSection_OversizedLastLineKeepsItsEnd(t *testing.T) {
+	head := "@@ turnip: web, helmfile v1.7.4 @@\n@@ turnip: helmfile diff @@\n"
+	long := "data: " + strings.Repeat("é", 125000) + "END" // 250,009 bytes, multi-byte runes
+	for name, tail := range map[string]string{
+		"with a closing annotation":    "\n@@ turnip: exit 0 in 3s @@\n",
+		"without a closing annotation": "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			output := head + numberedLines(100) + long + tail
+			r := ProjectResult{ProjectName: "web", Operation: "plan", Success: true, Output: output}
+
+			got := partsOf(t, splitDetailSection(r, minReserve, 3))
+
+			assert.True(t, strings.HasPrefix(got, head), "the leading annotation lines survive")
+			assert.True(t, strings.HasSuffix(got, "END"+tail), "the long line's own end survives")
+			assert.True(t, utf8.ValidString(got), "the cut falls on a rune boundary")
+			assert.Contains(t, got, "…(100 earlier lines omitted)\n", "only the whole lines before it are counted, not the long line it cut into")
+			assert.Greater(t, len(got), 100000, "most of the cap is the long line's end, not just the marker")
+		})
+	}
+}
+
+func TestSplitDetailSection_MarkerCountsRemovedLinesExactly(t *testing.T) {
+	output := numberedLines(500000)
+	r := ProjectResult{ProjectName: "huge", Operation: "plan", Success: true, Output: output}
+
+	got := partsOf(t, splitDetailSection(r, minReserve, 3))
+
+	var k int
+	_, err := fmt.Sscanf(got, "…(%d earlier lines omitted)\n", &k)
+	require.NoError(t, err)
+	require.Positive(t, k)
+	marker := fmt.Sprintf("…(%d earlier lines omitted)\n", k)
+	kept := strings.TrimPrefix(got, marker)
+	assert.Equal(t, output[len(output)-len(kept):], kept, "the kept text is a suffix of the output")
+	assert.Equal(t, 500000, k+strings.Count(kept, "\n"), "removed plus kept lines is every line")
+	assert.True(t, strings.HasPrefix(kept, "line-"), "the cut falls on a whole line")
+}
+
+func TestSplitDetailSection_RunnerOmissionLineSurvivesTheCut(t *testing.T) {
+	lead := "@@ turnip: 12 earlier lines omitted (3.0 MiB) @@\n@@ turnip: started @@\n"
+	output := lead + numberedLines(500000)
+	r := ProjectResult{ProjectName: "huge", Operation: "plan", Success: true, Output: output}
+
+	got := partsOf(t, splitDetailSection(r, minReserve, 3))
+
+	assert.True(t, strings.HasPrefix(got, lead+"…("), "marker follows the leading run")
+	assert.Contains(t, got, " earlier lines omitted)\n")
+	assert.True(t, strings.HasSuffix(got, "line-499999\n"))
+}
+
+func TestSplitDetailSection_OutputThatFitsIsUntouched(t *testing.T) {
+	output := numberedLines(100)
+	r := ProjectResult{ProjectName: "vpc", Operation: "plan", Success: true, Output: output}
+	pieces := splitDetailSection(r, minReserve, 3)
+	require.Len(t, pieces, 1)
+	assert.Equal(t, output, pieces[0].chunk)
+
+	// Several parts, but within the cap.
+	big := numberedLines(20000)
+	r.Output = big
+	pieces = splitDetailSection(r, minReserve, 50)
+	assert.Equal(t, big, partsOf(t, pieces))
+}
+
+func TestBuildConsolidatedComment_CapsOutputAtThreeComments(t *testing.T) {
+	bodies := BuildConsolidatedComment([]ProjectResult{
+		{ProjectName: "huge", Operation: "plan", Success: true, Output: numberedLines(500000)},
+	}, 3)
+	assert.Len(t, bodies, 3)
+	assert.Contains(t, strings.Join(bodies, ""), " earlier lines omitted)")
 }

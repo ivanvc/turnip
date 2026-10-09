@@ -86,7 +86,7 @@ func TestProperty_ConsolidatedCommentPerPR(t *testing.T) {
 			}
 		}
 
-		bodies := BuildConsolidatedComment(results)
+		bodies := BuildConsolidatedComment(results, testMaxParts)
 		require.Len(t, bodies, 1, "total content stays well under maxCommentLength")
 	})
 }
@@ -105,7 +105,7 @@ func TestProperty_CommentContainsAllProjectResults(t *testing.T) {
 			}
 		}
 
-		all := strings.Join(BuildConsolidatedComment(results), "")
+		all := strings.Join(BuildConsolidatedComment(results, testMaxParts), "")
 		for _, r := range results {
 			require.Containsf(t, all, r.ProjectName, "project missing from concatenated bodies")
 		}

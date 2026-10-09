@@ -38,7 +38,7 @@ func TestHandleResult_MutationChangeSummary_Counted(t *testing.T) {
 	assert.Equal(t, "+0 ~3 -0", client.updatedCheckRun.Title, "Project_Check Title")
 	assert.Equal(t, "add: 0, change: 3, destroy: 0", client.updatedCheckRun.Summary, "Project_Check Summary")
 
-	bodies := github.BuildConsolidatedComment([]github.ProjectResult{got})
+	bodies := github.BuildConsolidatedComment([]github.ProjectResult{got}, 3)
 	require.Len(t, bodies, 1)
 	assert.Contains(t, bodies[0], "+0 ~3 -0", "comment summary line")
 	assert.NotContains(t, bodies[0], "no changes")
@@ -92,7 +92,7 @@ func TestHandleResult_MutationChangeSummary_Unreported(t *testing.T) {
 		assert.Equal(t, "succeeded", client.updatedCheckRun.Title, "Project_Check Title")
 		assertNoCounts(t, client.updatedCheckRun.Summary)
 
-		bodies := github.BuildConsolidatedComment([]github.ProjectResult{got})
+		bodies := github.BuildConsolidatedComment([]github.ProjectResult{got}, 3)
 		require.Len(t, bodies, 1)
 		body := bodies[0]
 
@@ -115,7 +115,7 @@ func TestHandleResult_MutationChangeSummary_Unreported(t *testing.T) {
 		assert.Equal(t, "+0 ~3 -0", client.updatedCheckRun.Title)
 		assert.Equal(t, "add: 0, change: 3, destroy: 0", client.updatedCheckRun.Summary)
 
-		bodies := github.BuildConsolidatedComment([]github.ProjectResult{got})
+		bodies := github.BuildConsolidatedComment([]github.ProjectResult{got}, 3)
 		require.Len(t, bodies, 1)
 		assert.Contains(t, bodies[0], "+0 ~3 -0")
 		assert.NotContains(t, bodies[0], "no changes")
@@ -138,7 +138,7 @@ func TestHandleResult_MutationChangeSummary_Unreported(t *testing.T) {
 		assert.Equal(t, "helmfile exited 1", client.updatedCheckRun.Title)
 		assert.Contains(t, client.updatedCheckRun.Summary, "failed")
 
-		bodies := github.BuildConsolidatedComment([]github.ProjectResult{got})
+		bodies := github.BuildConsolidatedComment([]github.ProjectResult{got}, 3)
 		require.Len(t, bodies, 1)
 		body := bodies[0]
 
@@ -164,7 +164,7 @@ func TestHandleResult_MutationChangeSummary_ZeroIsStillNoChanges(t *testing.T) {
 	assert.Equal(t, "no changes", client.updatedCheckRun.Title)
 	assert.Equal(t, "No changes.", client.updatedCheckRun.Summary)
 
-	bodies := github.BuildConsolidatedComment([]github.ProjectResult{got})
+	bodies := github.BuildConsolidatedComment([]github.ProjectResult{got}, 3)
 	require.Len(t, bodies, 1)
 	assert.Contains(t, bodies[0], "no changes")
 }
@@ -200,7 +200,7 @@ func TestHandleResult_OlderHelmfileRendersSucceeded(t *testing.T) {
 	assert.Equal(t, "succeeded", client.updatedCheckRun.Title, "Project_Check Title")
 	assertNoCounts(t, client.updatedCheckRun.Summary)
 
-	bodies := github.BuildConsolidatedComment([]github.ProjectResult{got})
+	bodies := github.BuildConsolidatedComment([]github.ProjectResult{got}, 3)
 	require.Len(t, bodies, 1)
 	assert.Contains(t, bodies[0], "Succeeded in", "headline")
 	assert.NotContains(t, bodies[0], "no changes")

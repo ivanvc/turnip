@@ -61,8 +61,11 @@ type Orchestrator struct {
 	records                      *recordStore
 	redis                        *redis.Client
 	minimizeOutdatedPlanComments bool
-	runnerServerAddr             string
-	runnerImage                  string
+	// maxCommentsPerProject caps the parts one Project's output takes in a
+	// results comment; zero (an unset test fixture) means the default.
+	maxCommentsPerProject int
+	runnerServerAddr      string
+	runnerImage           string
 	// runnerServiceAccount/allowedOverrides come from
 	// Config.RunnerServiceAccount and Config.AllowedOverrides;
 	// serviceaccount.go and overrides.go turn them plus a Project into the
@@ -103,6 +106,7 @@ func New(
 	catalog config.Catalog,
 	redisClient *redis.Client,
 	minimizeOutdatedPlanComments bool,
+	maxCommentsPerProject int,
 	runnerServerAddr string,
 	runnerImage string,
 	runnerServiceAccount string,
@@ -119,6 +123,7 @@ func New(
 		records:                      newRecordStore(redisClient),
 		redis:                        redisClient,
 		minimizeOutdatedPlanComments: minimizeOutdatedPlanComments,
+		maxCommentsPerProject:        maxCommentsPerProject,
 		runnerServerAddr:             runnerServerAddr,
 		runnerImage:                  runnerImage,
 
@@ -134,4 +139,13 @@ func New(
 		o.runnerNamespace = jobsClient.Namespace()
 	}
 	return o
+}
+
+// maxParts returns the per-Project comment cap to hand to
+// github.BuildConsolidatedComment.
+func (o *Orchestrator) maxParts() int {
+	if o.maxCommentsPerProject < 1 {
+		return defaultMaxCommentsPerProject
+	}
+	return o.maxCommentsPerProject
 }

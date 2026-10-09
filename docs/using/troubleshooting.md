@@ -214,6 +214,31 @@ stdout/stderr attached.
   this case. When a tool's counts can't be trusted is on its page (for
   Helmfile, see [Change counts](../plugins/helmfile.md#change-counts)).
 
+## Output with "earlier lines omitted"
+
+**Symptom**: a project's output in the results comment has a line saying
+earlier lines were omitted. There are two such notes, and each counts
+something different:
+
+- `@@ turnip: <K> earlier lines omitted (<size>) @@` is written by the
+  Runner before it sends the result, when the tool's output is too large
+  to deliver. `<K>` counts the tool's lines it removed from the start,
+  and `<size>` is how much that was.
+- `…(<K> earlier lines omitted)` is written when the comment is built,
+  when the output would take more comments than the operator allows per
+  project (5 by default). `<K>` counts the lines of the output, as
+  received, that were removed from its start. It appears after any
+  `@@ turnip:` lines the output opens with, so both notes can show in
+  one section.
+
+In both cases the end of the output is kept, which is where a plan's
+summary and a failure's last error are. If you need the lines that were
+cut, ask the operator quickly: they are in the Runner Pod's log only
+until its Job is deleted, 15 minutes after it finishes, and a very long
+output may have lost its start there too. Running the plan again, with
+helmfile's `--selector` to limit it to the releases you care about,
+gives a shorter output that fits.
+
 ## A Project that lists `runner.secrets` never started
 
 **Symptom**: the check fails with a title like `Job <name>: container

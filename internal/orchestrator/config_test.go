@@ -232,3 +232,20 @@ func TestConfigFromEnv_MissingPrivateKey(t *testing.T) {
 	var missing *MissingEnvVarsError
 	require.ErrorAs(t, err, &missing)
 }
+
+func TestConfigFromEnv_MaxCommentsPerProject(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(nil), NewPluginRegistry())
+	require.NoError(t, err)
+	assert.Equal(t, 5, cfg.MaxCommentsPerProject, "unset")
+
+	cfg, err = ConfigFromEnv(envMap(map[string]string{"TURNIP_MAX_COMMENTS_PER_PROJECT": "8"}), NewPluginRegistry())
+	require.NoError(t, err)
+	assert.Equal(t, 8, cfg.MaxCommentsPerProject)
+
+	for _, bad := range []string{"0", "x", "-2"} {
+		_, err = ConfigFromEnv(envMap(map[string]string{"TURNIP_MAX_COMMENTS_PER_PROJECT": bad}), NewPluginRegistry())
+		require.Error(t, err, bad)
+		assert.Contains(t, err.Error(), "TURNIP_MAX_COMMENTS_PER_PROJECT")
+		assert.Contains(t, err.Error(), `"`+bad+`"`)
+	}
+}

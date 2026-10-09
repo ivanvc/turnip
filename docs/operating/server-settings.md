@@ -23,6 +23,7 @@ one restart-and-discover-the-next-one at a time.
 | `TURNIP_RUNNER_IMAGE` | yes, preset by `deploy/base` (`ghcr.io/ivanvc/turnip-runner:latest`) | | the Runner container image a deployed Server creates Jobs with |
 | `TURNIP_LOG_LEVEL` | no | `info` | [the Server's own log level](#log-level): `debug`, `info`, `warn` or `error`, case-insensitive; unset or unrecognized defaults to `info` |
 | `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` | no | `false` | collapse an older plan comment on the same pull request once a newer one supersedes it |
+| `TURNIP_MAX_COMMENTS_PER_PROJECT` | no | `5` | [the most comment bodies one project's output may take](#comment-size) in a results comment; a positive integer |
 | `TURNIP_RUNNER_SERVICE_ACCOUNT` | no | unset | [ServiceAccount every Runner Pod runs as](runner-access.md#which-serviceaccount): how a Runner gets cloud credentials (EKS Pod Identity/IRSA) and in-cluster API permissions. Unset leaves Pods on the namespace's `default` ServiceAccount, which normally has neither |
 | `TURNIP_CLONE_SUBMODULES` | no | `top-level` | [how far the clone initializes submodules](#clone-submodules): `none`, `top-level`, or `recursive` |
 | `TURNIP_ALLOWED_OVERRIDES` | no | permits nothing | [comma-separated list of the fields a repository's own config file may set](#allowed-overrides) |
@@ -97,6 +98,17 @@ images `TURNIP_ALLOWED_IMAGES` allows.
 
 Each path is an opt-in whose cost [`SECURITY.md`](../../SECURITY.md)
 states; see [Runner access](runner-access.md) for what each grants.
+
+## Comment size
+
+GitHub caps a comment at 65536 characters, so turnip splits a project's
+output across several comment bodies when it is long. Each body is a
+**part**, and `TURNIP_MAX_COMMENTS_PER_PROJECT` is the most parts one
+project's output may take in a results comment. It defaults to `5`. When
+the output would need more, turnip keeps the end and cuts the start,
+saying how many earlier lines it omitted. The value must be a positive
+integer; anything else stops the Server at startup with an error naming
+the setting and the value. A repository cannot change it.
 
 ## Mutation requirements
 

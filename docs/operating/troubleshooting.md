@@ -87,6 +87,48 @@ or nothing happens for several minutes before a timeout is reported.
   means, is on its page; for Helmfile, see
   [What to grant it](../plugins/helmfile.md#what-to-grant-it).
 
+### Reading a Runner's log
+
+`kubectl -n <namespace> logs <pod> -c runner` shows, in order:
+
+1. **The tool's output, once**, every line as the tool printed it,
+   unredacted and with the Pod's absolute paths intact. turnip cuts
+   nothing here, but the node rotates a container's log when it grows
+   past its size limit (10 MiB by default), and `kubectl logs` shows only
+   the newest file, so a very long output loses its start here too.
+2. **`runner: operation error: <message>`**, only when the result
+   carries an error message: why the tool could not start, say, or why
+   the result could not be delivered.
+3. **One summary line** for the result, which never repeats the output:
+
+```text
+runner: operation result: success=true exit_code=0 category=none add=12 change=0 destroy=0 output_bytes=5069133 sent_bytes=1048502
+```
+
+| Field | Meaning |
+|---|---|
+| `success` | whether the result reports success |
+| `exit_code` | the tool's exit code; `-1` when no tool process ran |
+| `category` | which step failed (`tool_exited`, `tool_not_started`, `workspace_failed`, `clone_failed`), `none` on success or an uncategorized failure |
+| `add`, `change`, `destroy` | the change counts, read from the whole output |
+| `output_bytes` | the size of the whole output |
+| `sent_bytes` | the size of the output sent with the result |
+
+The Runner sends at most 1 MiB of output. When `sent_bytes` is smaller
+than `output_bytes`, the start of the output was cut, and what the pull
+request shows has a `@@ turnip: <K> earlier lines omitted (<size>) @@`
+line right after its opening `@@ turnip:` lines (what end users see is
+under
+[Output with "earlier lines omitted"](../using/troubleshooting.md#output-with-earlier-lines-omitted)).
+The lines that were cut are in this log only while the Pod exists: its
+Job is deleted 15 minutes after it finishes.
+
+**`the result was too large to deliver (<size>; the Server accepts at
+most 4 MiB)`**: the result's message, plan data included, did not fit
+what the Server accepts, so the Runner sent a failed result with that
+message instead, with no output and no plan data. The output alone never
+causes this (it is cut first); a tool's plan data that large does.
+
 ### A Project lists keys of a Secret and the Runner never started
 
 **Symptom**: after the 5 minute start timeout, the Project's output in

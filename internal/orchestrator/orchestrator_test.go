@@ -31,7 +31,7 @@ func TestNew_ConstructsOrchestratorWithDefaults(t *testing.T) {
 	appAuth, err := github.NewAppAuth(1, []byte(testPEMKey))
 	require.NoError(t, err)
 
-	o := New(appAuth, (lock.LockManager)(nil), nil, NewPluginRegistry(), NewCatalog(NewPluginRegistry(), nil), client, true, "turnip-server:9090", "ghcr.io/ivanvc/turnip-runner:test", "turnip-runner", defaultAllowedOverrides(), "top-level", []string{MutationRequirementApproved})
+	o := New(appAuth, (lock.LockManager)(nil), nil, NewPluginRegistry(), NewCatalog(NewPluginRegistry(), nil), client, true, 3, "turnip-server:9090", "ghcr.io/ivanvc/turnip-runner:test", "turnip-runner", defaultAllowedOverrides(), "top-level", []string{MutationRequirementApproved})
 	require.NotNil(t, o)
 	assert.Equal(t, defaultStartTimeout, o.startTimeout)
 	assert.Equal(t, defaultSweepInterval, o.sweepInterval)
@@ -52,7 +52,7 @@ func TestNew_RunnerNamespaceComesFromTheJobsClient(t *testing.T) {
 	require.NoError(t, err)
 
 	jobsClient := jobs.NewClient(fake.NewSimpleClientset(), "turnip-runners")
-	o := New(appAuth, (lock.LockManager)(nil), jobsClient, NewPluginRegistry(), NewCatalog(NewPluginRegistry(), nil), client, true, "turnip-server:9090", "ghcr.io/ivanvc/turnip-runner:test", "turnip-runner", defaultAllowedOverrides(), "top-level", []string{MutationRequirementApproved})
+	o := New(appAuth, (lock.LockManager)(nil), jobsClient, NewPluginRegistry(), NewCatalog(NewPluginRegistry(), nil), client, true, 3, "turnip-server:9090", "ghcr.io/ivanvc/turnip-runner:test", "turnip-runner", defaultAllowedOverrides(), "top-level", []string{MutationRequirementApproved})
 	assert.Equal(t, "turnip-runners", o.runnerNamespace)
 }
 

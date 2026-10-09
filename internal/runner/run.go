@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ivanvc/turnip/internal/plugin"
 	"github.com/ivanvc/turnip/internal/rpc"
@@ -115,13 +116,16 @@ func runCloneWith(ctx context.Context, cfg Config, rep resultReporter, clone clo
 // Server cannot be reached, the start-deadline sweep remains the backstop
 // it already is, so a reporting failure must not mask the clone failure.
 func reportCloneFailure(ctx context.Context, rep resultReporter, message string, stderr io.Writer) int {
-	_, _ = fmt.Fprintf(stderr, "runner: %s\n", message)
+	result := OperationResult{Success: false, ExitCode: -1, ErrorMessage: message, FailureCategory: rpc.FailureCloneFailed}
+	// The same two lines every finished Operation logs: the error, then
+	// the summary. A clone failure has no output.
+	logResultSummary(stderr, result, 0)
 
 	if err := rep.Connect(ctx); err != nil {
 		_, _ = fmt.Fprintf(stderr, "runner: connect to server: %v\n", err)
 		return 1
 	}
-	if err := rep.Report(ctx, OperationResult{Success: false, ExitCode: -1, ErrorMessage: message, FailureCategory: rpc.FailureCloneFailed}); err != nil {
+	if err := rep.Report(ctx, result); err != nil {
 		_, _ = fmt.Fprintf(stderr, "runner: report result: %v\n", err)
 	}
 	return 1
@@ -143,13 +147,17 @@ func runWith(ctx context.Context, cfg Config, rep resultReporter, selectPlugin p
 		return 1
 	}
 
-	opResult := execute(ctx, cfg, p, rep, stdout, stderr)
+	opResult, outputBytes := execute(ctx, cfg, p, rep, stdout, stderr)
 
-	// Logged unconditionally, in addition to (not instead of) the
-	// real-time mirroring OnOutput already did throughout execution, so a
-	// `kubectl logs` is never empty-handed even if the Server never
-	// acknowledged the result (Requirement 4.5).
-	_, _ = fmt.Fprintf(stderr, "runner: operation result: %+v\n", opResult)
+	// Checked here as well as in Report, so the summary below describes
+	// the result that is sent, not one that never will be.
+	opResult, _ = deliverable(opResult)
+
+	// Logged unconditionally, before reporting, so a `kubectl logs` is
+	// never empty-handed even if the Server never acknowledges the result
+	// (Requirement 4.5). A summary, never the output: OnOutput already
+	// mirrored every line of it as it arrived.
+	logResultSummary(stderr, opResult, outputBytes)
 
 	if err := rep.Report(ctx, opResult); err != nil {
 		_, _ = fmt.Fprintf(stderr, "runner: report result: %v\n", err)
@@ -190,10 +198,13 @@ func resolveWorkspace(dir string) (string, func(), error) {
 // workspace before this container started (see RunClone). What remains
 // here is resolving the path, which still falls back to a temporary
 // directory for tests and hand-runs outside a turnip-built Job.
-func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporter, stdout, stderr io.Writer) OperationResult {
+//
+// The second return value is the size of the whole output, before
+// cutOutput shortened the copy in the result.
+func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporter, stdout, stderr io.Writer) (OperationResult, int) {
 	dir, cleanup, err := resolveWorkspace(cfg.WorkspaceDir)
 	if err != nil {
-		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: fmt.Sprintf("create workdir: %v", err), FailureCategory: rpc.FailureWorkspaceFailed}
+		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: fmt.Sprintf("create workdir: %v", err), FailureCategory: rpc.FailureWorkspaceFailed}, 0
 	}
 	defer cleanup()
 
@@ -251,12 +262,16 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 	if err != nil {
 		// No tool process produced an exit code: the binary is missing, or
 		// the Plugin refused the Operation before running anything.
-		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: clean(fmt.Sprintf("execute failed: %v", err)), FailureCategory: rpc.FailureToolNotStarted}
+		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: clean(fmt.Sprintf("execute failed: %v", err)), FailureCategory: rpc.FailureToolNotStarted}, 0
 	}
 
+	// Cut after the plugin, which has read its change counts from the
+	// whole output, and after cleaning, so the limit applies to what the
+	// Server receives. PlanData is never cut.
+	output := clean(result.Output)
 	opResult := OperationResult{
 		Success:  result.ExitCode == 0,
-		Output:   clean(result.Output),
+		Output:   cutOutput(output),
 		ExitCode: result.ExitCode,
 		Changes:  result.ChangeSummary,
 		PlanData: result.PlanData,
@@ -267,5 +282,25 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 	if result.ExitCode != 0 {
 		opResult.FailureCategory = rpc.FailureToolExited
 	}
-	return opResult
+	return opResult, len(output)
+}
+
+// logResultSummary writes the Runner's one line about its result, with the
+// result's error message on a line of its own just before it when there is
+// one. outputBytes is the whole output's size; sent_bytes is the size of
+// the output the result carries.
+func logResultSummary(w io.Writer, result OperationResult, outputBytes int) {
+	if result.ErrorMessage != "" {
+		_, _ = fmt.Fprintf(w, "runner: operation error: %s\n", result.ErrorMessage)
+	}
+	// The wire enum's name without its prefix: "tool_exited", say.
+	category := "none"
+	if result.FailureCategory != rpc.FailureUnspecified {
+		name := rpc.FailureCategoryToProto(result.FailureCategory).String()
+		category = strings.ToLower(strings.TrimPrefix(name, "FAILURE_CATEGORY_"))
+	}
+	_, _ = fmt.Fprintf(w, "runner: operation result: success=%t exit_code=%d category=%s add=%d change=%d destroy=%d output_bytes=%d sent_bytes=%d\n",
+		result.Success, result.ExitCode, category,
+		result.Changes.Add, result.Changes.Change, result.Changes.Destroy,
+		outputBytes, len(result.Output))
 }

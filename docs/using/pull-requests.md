@@ -324,10 +324,14 @@ is what stops another PR planning the same project underneath you.
 `/turnip unlock` gives it up without applying.
 
 A single project's output that's too long for one GitHub comment splits
-across multiple comments rather than getting truncated. If even that
-isn't enough, the **earliest** sections are dropped first and the
-comment says how many. The end is kept, because that's where the errors
-and the summary are.
+across multiple comments rather than getting truncated. A project's
+output takes at most 5 comments by default (the operator can change
+that; see [Server settings](../operating/server-settings.md)). Beyond
+that, turnip cuts the **start** of the output and keeps the end, and puts
+`…(<K> earlier lines omitted)` where the cut was, after any `@@ turnip:`
+lines the output opens with. The end is kept because that's where the
+errors and the summary are. If even that isn't enough, the earliest
+sections are dropped first and the comment says how many.
 
 If something fails partway (a lock conflict, a GitHub API hiccup, a tool
 error, a Job that never started), see

@@ -40,6 +40,9 @@ type Config struct {
 	// Server process itself binds to.
 	RunnerServerAddr             string
 	MinimizeOutdatedPlanComments bool
+	// MaxCommentsPerProject is the most comment bodies one Project's output
+	// may take in a results comment (TURNIP_MAX_COMMENTS_PER_PROJECT).
+	MaxCommentsPerProject int
 	// RunnerImage is the Runner Job's container image, threaded into
 	// internal/jobs.OperationParams.RunnerImage (Decision 3).
 	RunnerImage string
@@ -131,6 +134,10 @@ func (e *MissingEnvVarsError) Error() string {
 	return fmt.Sprintf("orchestrator: missing required environment variable(s): %s", strings.Join(e.Names, ", "))
 }
 
+// defaultMaxCommentsPerProject is the cap used when
+// TURNIP_MAX_COMMENTS_PER_PROJECT is unset.
+const defaultMaxCommentsPerProject = 5
+
 // ConfigFromEnv builds a Config from env, an injectable lookup function
 // (mirroring internal/runner.ConfigFromEnv's testability-seam convention)
 // rather than calling os.Getenv directly. plugins is the registry the
@@ -218,6 +225,15 @@ func ConfigFromEnv(env func(string) string, plugins PluginRegistry) (Config, err
 			return Config{}, fmt.Errorf("orchestrator: parsing TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS: %w", err)
 		}
 		cfg.MinimizeOutdatedPlanComments = enabled
+	}
+
+	cfg.MaxCommentsPerProject = defaultMaxCommentsPerProject
+	if raw := env("TURNIP_MAX_COMMENTS_PER_PROJECT"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			return Config{}, fmt.Errorf("orchestrator: TURNIP_MAX_COMMENTS_PER_PROJECT must be a positive integer, got %q", raw)
+		}
+		cfg.MaxCommentsPerProject = n
 	}
 
 	allowedOverrides, err := parseAllowedOverrides(env("TURNIP_ALLOWED_OVERRIDES"))

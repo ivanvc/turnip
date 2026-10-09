@@ -15,14 +15,20 @@ Slice numbers on this page refer to its `roadmap.md`.
 
 In the order discussed so far; reorder here.
 
-1. `fix-output-order`: proposal under review
-2. Large output, not yet a change: a result over gRPC's 4 MiB message
-   limit never reaches the Server (the Runner retries for 15 minutes and
-   the check stays in progress), the Runner's result log line repeats the
-   whole output, and the results comment splits without bound. It needs
-   a change of its own (`fix-check-output-size`, archived 2026-10-09,
-   covered only the check)
-3. `fix-results-comment-on-replica-loss`: design next
+1. `fix-output-order`: proposal approved (with `--no-color`); specs next
+2. `fix-large-output`: implemented, awaiting deploy
+3. Invalid UTF-8 in output, not yet a change: a byte the protobuf string
+   fields refuse makes every delivery attempt fail, so the Runner
+   retries for 15 minutes and the check stays in progress (found by the
+   review of `fix-large-output`)
+4. `fix-results-comment-on-replica-loss`: design next
+5. Comment parts split mid-line, not yet a change: a Project's output
+   too long for one comment is split into `output part N/M` pieces at an
+   exact byte count, so a line (or a multi-byte character) can be cut
+   across two comments. Parts should end at the last whole line that
+   fits, splitting inside a line, at a character boundary, only for a
+   line longer than a part (found 2026-10-09; present since the first
+   comment code)
 
 ## Open changes
 
@@ -30,6 +36,7 @@ In the order discussed so far; reorder here.
 |---|---|---|
 | [`fix-results-comment-on-replica-loss`](changes/fix-results-comment-on-replica-loss/) | a trigger's results comment and later commands survive the loss of the replica that dispatched them | specs |
 | [`fix-output-order`](changes/fix-output-order/) | output in write order; each plugin decides what its output shows | proposal |
+| [`fix-large-output`](changes/fix-large-output/) | a large result is cut to fit and delivered, and the comment caps each Project's output | implemented; archived once a deployment delivers a first-install plan |
 | [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized (Slice 40) | proposal |
 | [`fix-plan-survives-push`](changes/fix-plan-survives-push/) | every push marks the pull request's ready plans stale, and says so | proposal |
 | [`fix-concurrent-mutations`](changes/fix-concurrent-mutations/) | a second mutating command for a Project is refused while the first runs | proposal |
@@ -47,7 +54,8 @@ only open work; every other slice they depend on is complete.
 |---|---|---|---|
 | 7: Terraform and Pulumi plugins | the remaining IaC tools | | |
 | 22: Refuse tool arguments that name an executable | a comment's trailing arguments cannot choose the binary the Runner runs | | |
-| 26: Real-time operation output | watch a long plan or apply while it runs | | the Runner already streams every line, and `fix-output-order` keeps it streaming; the large-output fix may need its durable copy of the full output |
+| 26: Real-time operation output | watch a plan or apply while it runs, from its first line, however late the viewer arrives | | the full log, never capped: every line in a Redis stream per Operation, purged by a TTL (supersedes the archived entry's capped stream, 2026-10-09); the Runner already streams every line and `fix-output-order` keeps it lossless; the replay after a broken stream (today the last 256 KiB) must resume from the last line stored |
+| new: Long-term operation output | an operator opts into blob storage (S3, a GCS bucket, Azure Blob), and a finished Operation's log is flushed there at once, kept by the bucket's own lifecycle rules, and linked from the comment through turnip's UI | 26 | written by the Server, never the Runner, which runs pull request code; who may read it is the same question 26 raises |
 | 28: Seeing and dropping Locks | every held Lock on one page, releasable from there | | |
 | 30: Scheduling: concurrency and dependencies | a repository controls how many Operations run at once and in what order | | requirements drafted in `.kiro/specs/operation-scheduling/` |
 | 31: Runner Pod placement | node selectors and tolerations for Runner Pods | | |

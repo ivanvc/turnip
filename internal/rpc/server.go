@@ -62,6 +62,13 @@ type CloneCredential struct {
 	ExpiresAt time.Time
 }
 
+// MaxResultMessageBytes is the largest message the Server accepts on
+// ExecuteOperation, 4 MiB (gRPC's own default, made explicit). The Runner
+// checks its serialized result against it before sending, so an oversized
+// result is reported as a failure the user can read rather than retried
+// until the delivery budget runs out.
+const MaxResultMessageBytes = 4 << 20
+
 // Option configures a Server. NewServer took no options before Slice 25,
 // which is precisely why the interceptor goes here: there is exactly one
 // place to add it, and it then applies to every RPC registered
@@ -99,6 +106,7 @@ func NewServer(handler OperationHandler, opts ...Option) *grpc.Server {
 	// authorizes fetching that Operation's GitHub credential until it
 	// expires.
 	s := grpc.NewServer(
+		grpc.MaxRecvMsgSize(MaxResultMessageBytes),
 		grpc.StreamInterceptor(streamAuthInterceptor(o.auth)),
 		// Both kinds, so "an RPC added later is authenticated" is true
 		// whichever kind its author reaches for. Installing only one is

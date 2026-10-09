@@ -69,7 +69,7 @@ func (o *Orchestrator) postPlanResults(ctx context.Context, client github.GitHub
 		// Requirement 10.6. No fallback scan is performed.
 	}
 
-	bodies := github.BuildConsolidatedComment(results, notices...)
+	bodies := github.BuildConsolidatedComment(results, o.maxParts(), notices...)
 	nodeIDs := postBodies(ctx, client, repo, prNumber, bodies)
 
 	if o.minimizeOutdatedPlanComments {
@@ -84,7 +84,7 @@ func (o *Orchestrator) postPlanResults(ctx context.Context, client github.GitHub
 // record of what happened to real infrastructure, not a superseded
 // prediction the way an older plan is.
 func (o *Orchestrator) postApplyResults(ctx context.Context, client github.GitHubClient, repo github.Repository, prNumber int, results []github.ProjectResult, notices ...string) {
-	bodies := github.BuildConsolidatedComment(results, notices...)
+	bodies := github.BuildConsolidatedComment(results, o.maxParts(), notices...)
 	postBodies(ctx, client, repo, prNumber, bodies)
 }
 

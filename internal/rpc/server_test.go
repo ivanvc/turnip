@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/stretchr/testify/assert"
@@ -183,4 +186,54 @@ func TestExecuteOperation_ChangeSummaryPropagated(t *testing.T) {
 	defer handler.mu.Unlock()
 	require.Len(t, handler.calls, 1)
 	assert.Equal(t, ChangeSummary{Add: 1, Change: 2, Destroy: 3}, handler.calls[0].result.Changes)
+}
+
+// sendResultOfSize sends a start message and then a result whose Output
+// makes the message roughly size bytes, and returns the stream's close
+// error.
+func sendResultOfSize(t *testing.T, client pb.OperationServiceClient, operationID string, size int) error {
+	t.Helper()
+
+	stream, err := client.ExecuteOperation(authedContext(operationID))
+	require.NoError(t, err)
+	require.NoError(t, stream.Send(&pb.ExecuteOperationRequest{
+		Payload: &pb.ExecuteOperationRequest_Start{Start: &pb.OperationStart{OperationId: operationID}},
+	}))
+	// A refused message can surface on Send or on CloseAndRecv, so only
+	// the final error is asserted on.
+	_ = stream.Send(&pb.ExecuteOperationRequest{
+		Payload: &pb.ExecuteOperationRequest_Result{Result: &pb.OperationResult{
+			Success: true,
+			Output:  strings.Repeat("a", size),
+		}},
+	})
+	_, err = stream.CloseAndRecv()
+	return err
+}
+
+func TestExecuteOperation_ResultOverLimitIsResourceExhausted(t *testing.T) {
+	handler := &fakeHandler{}
+	client := dialServer(t, handler)
+
+	err := sendResultOfSize(t, client, "op-big", MaxResultMessageBytes+1)
+	require.Error(t, err)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	assert.Empty(t, handler.calls)
+}
+
+func TestExecuteOperation_ResultUnderLimitIsAccepted(t *testing.T) {
+	handler := &fakeHandler{}
+	client := dialServer(t, handler)
+
+	// Leave room for the field tags and length prefixes around Output.
+	err := sendResultOfSize(t, client, "op-fits", MaxResultMessageBytes-1024)
+	require.NoError(t, err)
+
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	require.Len(t, handler.calls, 1)
+	assert.Equal(t, "result", handler.calls[0].kind)
 }
