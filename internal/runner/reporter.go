@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -33,9 +34,10 @@ const (
 	reportMaxDelay  = 60 * time.Second
 	reportBudget    = 15 * time.Minute
 
-	// logBufferMaxBytes bounds the reporter's log ring buffer (Requirement
-	// 4.3).
-	logBufferMaxBytes = 256 * 1024
+	// replayMaxBytes bounds what is replayed on a stream that replaces a
+	// broken one: the most recent log lines of the record up to this
+	// size (Requirement 4.3).
+	replayMaxBytes = 256 * 1024
 )
 
 // ErrReportFailed wraps the error returned by Report when its retry budget
@@ -78,7 +80,14 @@ type reporter struct {
 	// A function rather than a path so a test can count the reads.
 	readToken func() (string, error)
 
-	buf *logRingBuffer
+	// rec is the record of the tool's output the sender follows, clean
+	// what each line passes through before it leaves for the Server, and
+	// sent is closed when the sender has stopped: it sent the record's
+	// last line, or a send failed. All three are set by Follow and nil
+	// for a reporter that has no output to send (the clone container's).
+	rec   *plugin.Record
+	clean func(string) string
+	sent  chan struct{}
 
 	mu       sync.Mutex
 	stream   pb.OperationService_ExecuteOperationClient
@@ -113,7 +122,6 @@ func newReporter(client pb.OperationServiceClient, cfg Config, now func() time.T
 		now:    now,
 		sleep:  sleep,
 		rnd:    rnd,
-		buf:    newLogRingBuffer(logBufferMaxBytes),
 		readToken: func() (string, error) {
 			raw, err := os.ReadFile(cfg.TokenFile)
 			if err != nil {
@@ -186,41 +194,106 @@ func (r *reporter) startMessage(resumed bool) *pb.OperationStart {
 	}
 }
 
-// LogLine buffers one log line and, if a stream is currently open, makes
-// one best-effort attempt to send it immediately. A send failure here does
-// not itself retry or reconnect — it just marks the stream not-open and
-// leaves the line in the buffer for the next successful stream (opened by
-// Report) to carry. This may block briefly on the gRPC send; callers that
-// also need an unconditional, non-blocking local echo must do that before
-// calling this (Requirement 4.7 — see run.go).
-func (r *reporter) LogLine(stream, line string) {
-	level := "info"
-	if stream == "stderr" {
-		level = "error"
-	}
-	pbLine := &pb.LogLine{Timestamp: r.now().Format(time.RFC3339Nano), Level: level, Message: line}
-	r.buf.add(pbLine)
+// Follow starts sending rec's lines to the Server as log lines, each
+// passed through clean first, and returns at once. It is called once,
+// after Connect and before the tool runs.
+//
+// The sender reads the record through a cursor of its own, so it takes as
+// long as the Server takes without holding anything else up: the tool, the
+// record and the Runner's own log never wait on it. It sends every line
+// once, in the record's order, until it has sent the last line of the
+// closed record or a send fails. It does not reconnect: without an
+// acknowledgment per line there is no knowing which lines a broken stream
+// delivered, so what follows a break is Report's replay.
+func (r *reporter) Follow(rec *plugin.Record, clean func(string) string) {
+	r.rec, r.clean = rec, clean
+	r.sent = make(chan struct{})
+	go r.send()
+}
 
-	r.mu.Lock()
-	s := r.stream
-	r.mu.Unlock()
-	if s == nil {
-		return
-	}
+func (r *reporter) send() {
+	defer close(r.sent)
 
-	if err := s.Send(&pb.ExecuteOperationRequest{Payload: &pb.ExecuteOperationRequest_Log{Log: pbLine}}); err != nil {
-		r.clearStream(s)
+	from := 0
+	for {
+		lines, done := r.rec.Next(context.Background(), from)
+		for _, line := range lines {
+			r.mu.Lock()
+			s := r.stream
+			r.mu.Unlock()
+			if s == nil {
+				return
+			}
+			if err := s.Send(logRequest(r.logLine(line))); err != nil {
+				r.clearStream(s)
+				return
+			}
+		}
+		from += len(lines)
+		if done {
+			return
+		}
 	}
 }
 
+// logLine is line as the Server receives it: stamped with when the tool
+// wrote it, not when it is sent, so a line delivered late still says when
+// it happened.
+func (r *reporter) logLine(line plugin.Line) *pb.LogLine {
+	level := "info"
+	if line.Stream == plugin.Stderr {
+		level = "error"
+	}
+	return &pb.LogLine{Timestamp: line.At.Format(time.RFC3339Nano), Level: level, Message: r.clean(line.Text)}
+}
+
+func logRequest(line *pb.LogLine) *pb.ExecuteOperationRequest {
+	return &pb.ExecuteOperationRequest{Payload: &pb.ExecuteOperationRequest_Log{Log: line}}
+}
+
+// replay is what a stream that replaces a broken one carries before the
+// result: the record's most recent log lines, as many as fit
+// replayMaxBytes counting back from the end, preceded by a "N lines
+// dropped" marker when the record has more.
+func (r *reporter) replay() []*pb.LogLine {
+	if r.rec == nil {
+		return nil
+	}
+	all, _ := r.rec.Next(context.Background(), 0)
+
+	var tail []*pb.LogLine
+	size := 0
+	first := len(all)
+	for first > 0 {
+		line := r.logLine(all[first-1])
+		if n := logLineSize(line); size+n > replayMaxBytes {
+			break
+		} else {
+			size += n
+		}
+		tail = append(tail, line)
+		first--
+	}
+	slices.Reverse(tail)
+
+	if first == 0 {
+		return tail
+	}
+	marker := &pb.LogLine{Level: "warn", Message: fmt.Sprintf("%d lines dropped", first)}
+	return append([]*pb.LogLine{marker}, tail...)
+}
+
 // Report is the top-level driver of delivering an Operation's final
-// result: it opens a stream if one isn't already open, resends the entire
-// buffered log content (there is no per-message ack, so there's no way to
-// know how much of a broken stream's content already arrived), sends the
-// result, and waits for the Server's acknowledgment. Any failure at any
-// point retries the whole sequence from a fresh stream, applying the
-// "reconnection"/"final result delivery" backoff row (Requirement 2.4,
-// 2.5, 4.4). Report is only ever called once Plugin.Execute has already
+// result. It first waits for the sender Follow started to stop, so the
+// result follows every log line on the stream. On a stream that never
+// broke it then sends the result and waits for the Server's
+// acknowledgment: every line was sent once, and nothing is replayed. When
+// the stream broke, it opens a new one and replays the record's most
+// recent lines before the result (there is no per-message ack, so there's
+// no way to know how much of a broken stream's content already arrived).
+// Any failure at any point retries from a fresh stream, replay included,
+// applying the "reconnection"/"final result delivery" backoff row
+// (Requirement 2.4, 2.5, 4.4). Report is only ever called once Plugin.Execute has already
 // returned, so nothing here ever touches or cancels the subprocess —
 // Requirement 2.4's "don't abort the subprocess" guarantee holds
 // structurally, by Report and subprocess execution never sharing a
@@ -232,6 +305,16 @@ func (r *reporter) LogLine(stream, line string) {
 // configured differently) is not retried either; the same failed result
 // replaces it, under the same budget.
 func (r *reporter) Report(ctx context.Context, result OperationResult) error {
+	if r.sent != nil {
+		// Outside the retry budget: this is the Server reading the log
+		// lines, not a delivery failing.
+		select {
+		case <-r.sent:
+		case <-ctx.Done():
+			return fmt.Errorf("%w: %w", ErrReportFailed, ctx.Err())
+		}
+	}
+
 	current, replaced := deliverable(result)
 	rt := retrier{base: reportBaseDelay, max: reportMaxDelay, budget: reportBudget, now: r.now, sleep: r.sleep, rnd: r.rnd}
 	if err := rt.run(func() error {
@@ -304,18 +387,20 @@ func (r *reporter) reportOnce(ctx context.Context, result OperationResult) error
 	r.mu.Unlock()
 
 	if stream == nil {
+		// The stream the log lines went out on is gone: the sender's, or
+		// an earlier attempt's here. Its replacement replays.
 		if err := r.openStream(ctx); err != nil {
 			return err
 		}
 		r.mu.Lock()
 		stream = r.stream
 		r.mu.Unlock()
-	}
 
-	for _, line := range r.buf.snapshot() {
-		if err := stream.Send(&pb.ExecuteOperationRequest{Payload: &pb.ExecuteOperationRequest_Log{Log: line}}); err != nil {
-			r.clearStream(stream)
-			return err
+		for _, line := range r.replay() {
+			if err := stream.Send(logRequest(line)); err != nil {
+				r.clearStream(stream)
+				return err
+			}
 		}
 	}
 
@@ -356,50 +441,7 @@ func (r *reporter) clearStream(s pb.OperationService_ExecuteOperationClient) {
 	r.mu.Unlock()
 }
 
-// logRingBuffer accumulates LogLines up to a bounded byte size, dropping
-// the oldest entries and tracking a count once that bound is exceeded
-// (Requirement 4.3).
-type logRingBuffer struct {
-	mu           sync.Mutex
-	maxBytes     int
-	lines        []*pb.LogLine
-	size         int
-	droppedCount int
-}
-
-func newLogRingBuffer(maxBytes int) *logRingBuffer {
-	return &logRingBuffer{maxBytes: maxBytes}
-}
-
-func (b *logRingBuffer) add(line *pb.LogLine) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	entrySize := logLineSize(line)
-	for b.size+entrySize > b.maxBytes && len(b.lines) > 0 {
-		dropped := b.lines[0]
-		b.lines = b.lines[1:]
-		b.size -= logLineSize(dropped)
-		b.droppedCount++
-	}
-	b.lines = append(b.lines, line)
-	b.size += entrySize
-}
-
-// snapshot returns every line currently buffered, prefixed with a
-// synthetic "N lines dropped" marker if any have been evicted.
-func (b *logRingBuffer) snapshot() []*pb.LogLine {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	out := make([]*pb.LogLine, 0, len(b.lines)+1)
-	if b.droppedCount > 0 {
-		out = append(out, &pb.LogLine{Level: "warn", Message: fmt.Sprintf("%d lines dropped", b.droppedCount)})
-	}
-	out = append(out, b.lines...)
-	return out
-}
-
+// logLineSize is what a log line counts for against replayMaxBytes.
 func logLineSize(l *pb.LogLine) int {
 	return len(l.GetTimestamp()) + len(l.GetLevel()) + len(l.GetMessage())
 }

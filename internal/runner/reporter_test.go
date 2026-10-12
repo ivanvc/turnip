@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 
 	pb "github.com/ivanvc/turnip/internal/grpc/turnip/v1"
 	"github.com/ivanvc/turnip/internal/plugin"
@@ -288,7 +290,100 @@ func TestReporter_ReportReturnsSentinelWhenBudgetExhausted(t *testing.T) {
 	assert.ErrorIs(t, err, ErrReportFailed)
 }
 
-func TestReporter_ReportReconnectsAndResendsFullBufferWithResumedTrue(t *testing.T) {
+// logsOf returns the log lines among reqs, in order.
+func logsOf(reqs []*pb.ExecuteOperationRequest) []*pb.LogLine {
+	var out []*pb.LogLine
+	for _, req := range reqs {
+		if l := req.GetLog(); l != nil {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func messagesOf(logs []*pb.LogLine) []string {
+	out := make([]string, len(logs))
+	for i, l := range logs {
+		out[i] = l.GetMessage()
+	}
+	return out
+}
+
+func noClean(s string) string { return s }
+
+// On a stream that never broke every line of the record is sent once, in
+// order, with the level its stream gives it and the time it was recorded,
+// and the result follows the last of them. Nothing is replayed.
+func TestReporter_AnUnbrokenStreamCarriesEachLineOnceThenTheResult(t *testing.T) {
+	srv := &scriptedServer{}
+	client := dialScriptedServer(t, srv)
+	clock := newFakeClock()
+	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
+	r.readToken = stubToken
+
+	require.NoError(t, r.Connect(context.Background()))
+	rec := plugin.NewRecord()
+	r.Follow(rec, func(s string) string { return strings.ReplaceAll(s, "/turnip/src/", "") })
+	rec.Append(plugin.Turnip, "@@ turnip: helmfile --no-color diff @@")
+	rec.Append(plugin.Stdout, "reading /turnip/src/infra/web/values.yaml")
+	rec.Append(plugin.Stderr, "a warning")
+	rec.Close()
+
+	require.NoError(t, r.Report(context.Background(), OperationResult{Success: true, Output: "done"}))
+	require.Equal(t, 1, srv.streamCount(), "no second stream: nothing broke")
+
+	sent := srv.streamAt(0)
+	require.Len(t, sent, 5, "the start, three log lines, the result")
+	require.NotNil(t, sent[0].GetStart())
+	logs := logsOf(sent)
+	assert.Equal(t, []string{
+		"@@ turnip: helmfile --no-color diff @@",
+		"reading infra/web/values.yaml",
+		"a warning",
+	}, messagesOf(logs), "each line once, cleaned, in the record's order")
+	assert.Equal(t, []string{"info", "info", "error"}, []string{logs[0].GetLevel(), logs[1].GetLevel(), logs[2].GetLevel()})
+
+	recorded, _ := rec.Next(context.Background(), 0)
+	for i, l := range logs {
+		assert.Equal(t, recorded[i].At.Format(time.RFC3339Nano), l.GetTimestamp(), "stamped when the tool wrote it")
+	}
+	require.NotNil(t, sent[4].GetResult(), "the result is the last message")
+	assert.Equal(t, "done", sent[4].GetResult().GetOutput())
+}
+
+// More output than a replay would carry, on a stream that never broke:
+// every line arrives and nothing is reported as dropped.
+func TestReporter_AVerboseUnbrokenStreamDropsNothing(t *testing.T) {
+	srv := &scriptedServer{}
+	client := dialScriptedServer(t, srv)
+	clock := newFakeClock()
+	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
+	r.readToken = stubToken
+
+	require.NoError(t, r.Connect(context.Background()))
+	rec := plugin.NewRecord()
+	r.Follow(rec, noClean)
+	const lines = 6000 // about 600 KiB, more than twice replayMaxBytes
+	for i := range lines {
+		rec.Append(plugin.Stdout, fmt.Sprintf("%05d %s", i, strings.Repeat("x", 94)))
+	}
+	rec.Close()
+
+	require.NoError(t, r.Report(context.Background(), OperationResult{Success: true}))
+	require.Equal(t, 1, srv.streamCount())
+
+	logs := logsOf(srv.streamAt(0))
+	require.Len(t, logs, lines)
+	for i, l := range logs {
+		require.True(t, strings.HasPrefix(l.GetMessage(), fmt.Sprintf("%05d ", i)), "line %d in its place", i)
+		require.NotEqual(t, "warn", l.GetLevel(), "no lines dropped marker")
+	}
+}
+
+// After the stream breaks mid-run, its replacement is marked resumed and
+// replays the record from the start (it fits), lines written after the
+// break included, then carries the result.
+func TestReporter_ABrokenStreamIsReplacedAndReplayed(t *testing.T) {
 	srv := &scriptedServer{}
 	client := dialScriptedServer(t, srv)
 	clock := newFakeClock()
@@ -301,45 +396,260 @@ func TestReporter_ReportReconnectsAndResendsFullBufferWithResumedTrue(t *testing
 	// assertions below inspect the wrong stream.
 	waitForStreamCount(t, srv, 1)
 
-	r.LogLine("stdout", "line one")
-	r.LogLine("stderr", "line two")
+	rec := plugin.NewRecord()
+	r.Follow(rec, noClean)
+	rec.Append(plugin.Stdout, "line one")
+	rec.Append(plugin.Stderr, "line two")
+	require.Eventually(t, func() bool { return len(logsOf(srv.streamAt(0))) == 2 }, 5*time.Second, time.Millisecond)
 
 	// Simulate the connection dropping mid-Operation: the stream is no
-	// longer usable, but nothing buffered is lost.
+	// longer usable, but the record keeps everything.
 	r.mu.Lock()
 	r.stream = nil
 	r.mu.Unlock()
 
-	r.LogLine("stdout", "line three") // buffered only; no stream to send on
+	rec.Append(plugin.Stdout, "line three") // recorded; no stream to send on
+	rec.Close()
 
 	require.NoError(t, r.Report(context.Background(), OperationResult{Success: true, Output: "done"}))
 	require.Equal(t, 2, srv.streamCount(), "expected the initial stream plus one reconnect")
 
 	first := srv.streamAt(0)
 	require.NotEmpty(t, first)
-	firstStart := first[0].GetStart()
-	require.NotNil(t, firstStart)
-	assert.False(t, firstStart.GetResumed())
+	require.NotNil(t, first[0].GetStart())
+	assert.False(t, first[0].GetStart().GetResumed())
 
 	second := srv.streamAt(1)
 	require.NotEmpty(t, second)
-	secondStart := second[0].GetStart()
-	require.NotNil(t, secondStart)
-	assert.True(t, secondStart.GetResumed(), "every stream after the first must resume, not start over")
+	require.NotNil(t, second[0].GetStart())
+	assert.True(t, second[0].GetStart().GetResumed(), "every stream after the first must resume, not start over")
 
-	var gotLogs []string
-	for _, req := range second {
-		if log := req.GetLog(); log != nil {
-			gotLogs = append(gotLogs, log.Message)
-		}
-	}
-	assert.Equal(t, []string{"line one", "line two", "line three"}, gotLogs,
-		"the entire buffered log history must be resent, not only lines produced after the drop")
+	assert.Equal(t, []string{"line one", "line two", "line three"}, messagesOf(logsOf(second)),
+		"the record is replayed, not only the lines written after the drop")
 
 	result := second[len(second)-1].GetResult()
 	require.NotNil(t, result)
 	assert.True(t, result.Success)
 	assert.Equal(t, "done", result.Output)
+}
+
+// A replay carries the most recent 256 KiB of the record, and says how
+// many lines came before them.
+func TestReporter_AReplayCarriesTheRecordsTailAndCountsTheRest(t *testing.T) {
+	recording := &recordingStream{}
+	client := &fakeOperationClient{executeFn: func(int) (pb.OperationService_ExecuteOperationClient, error) {
+		return recording.stream(), nil
+	}}
+	clock := newFakeClock()
+	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
+	r.readToken = stubToken
+
+	// No stream when the sender starts, as after a break before the
+	// first line: it stops at once, and everything is left to the replay.
+	rec := plugin.NewRecord()
+	r.Follow(rec, noClean)
+	const lines = 6000
+	for i := range lines {
+		rec.Append(plugin.Stdout, fmt.Sprintf("%05d %s", i, strings.Repeat("x", 94)))
+	}
+	rec.Close()
+
+	require.NoError(t, r.Report(context.Background(), OperationResult{Success: true}))
+
+	recording.mu.Lock()
+	logs := logsOf(recording.sent)
+	recording.mu.Unlock()
+	require.NotEmpty(t, logs)
+
+	replayed := len(logs) - 1
+	assert.Equal(t, "warn", logs[0].GetLevel())
+	assert.Equal(t, fmt.Sprintf("%d lines dropped", lines-replayed), logs[0].GetMessage())
+
+	size := 0
+	for _, l := range logs[1:] {
+		size += logLineSize(l)
+	}
+	assert.LessOrEqual(t, size, replayMaxBytes)
+	assert.Greater(t, size+logLineSize(logs[1]), replayMaxBytes, "as many lines as fit, no fewer")
+	assert.True(t, strings.HasPrefix(logs[1].GetMessage(), fmt.Sprintf("%05d ", lines-replayed)), "the tail starts where the dropped lines end")
+	assert.True(t, strings.HasPrefix(logs[len(logs)-1].GetMessage(), fmt.Sprintf("%05d ", lines-1)), "and ends with the record's last line")
+	require.Len(t, recording.results(), 1)
+}
+
+// A replacement stream that fails in turn is replaced again, and the next
+// one replays again: the Server may have seen none of the earlier attempt.
+func TestReporter_EveryReplacementStreamReplays(t *testing.T) {
+	failing := &fakeStream{
+		sendFunc: func(req *pb.ExecuteOperationRequest) error {
+			if req.GetResult() != nil {
+				return status.Error(codes.Unavailable, "gone")
+			}
+			return nil
+		},
+		closeAndRecvFunc: func() (*pb.ExecuteOperationResponse, error) { return nil, status.Error(codes.Unavailable, "gone") },
+	}
+	recording := &recordingStream{}
+	client := &fakeOperationClient{executeFn: func(attempt int) (pb.OperationService_ExecuteOperationClient, error) {
+		if attempt == 0 {
+			return failing, nil
+		}
+		return recording.stream(), nil
+	}}
+	clock := newFakeClock()
+	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
+	r.readToken = stubToken
+
+	rec := plugin.NewRecord()
+	r.Follow(rec, noClean) // no stream yet: the sender stops, the replay carries everything
+	rec.Append(plugin.Stdout, "one")
+	rec.Append(plugin.Stdout, "two")
+	rec.Close()
+
+	require.NoError(t, r.Report(context.Background(), OperationResult{Success: true}))
+	assert.Equal(t, 2, client.attemptCount())
+
+	recording.mu.Lock()
+	defer recording.mu.Unlock()
+	assert.Equal(t, []string{"one", "two"}, messagesOf(logsOf(recording.sent)))
+}
+
+// A Server that stops reading holds up only its own copy of the output.
+// The record still takes every line and closes, as it would with the tool
+// writing to it; once the stream moves again every line is sent, once.
+func TestReporter_ABlockedStreamHoldsUpNothingButItself(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	var mu sync.Mutex
+	var sent []*pb.ExecuteOperationRequest
+	blocking := &fakeStream{
+		sendFunc: func(req *pb.ExecuteOperationRequest) error {
+			if req.GetLog() != nil {
+				select {
+				case entered <- struct{}{}:
+				default:
+				}
+				<-release
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			sent = append(sent, req)
+			return nil
+		},
+		closeAndRecvFunc: func() (*pb.ExecuteOperationResponse, error) { return &pb.ExecuteOperationResponse{}, nil },
+	}
+	client := &fakeOperationClient{executeFn: func(int) (pb.OperationService_ExecuteOperationClient, error) { return blocking, nil }}
+	clock := newFakeClock()
+	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
+	r.readToken = stubToken
+
+	require.NoError(t, r.Connect(context.Background()))
+	rec := plugin.NewRecord()
+	r.Follow(rec, noClean)
+
+	const lines = 500
+	rec.Append(plugin.Stdout, "line 0")
+	<-entered // the sender is now stuck on the first line
+	for i := 1; i < lines; i++ {
+		rec.Append(plugin.Stdout, fmt.Sprintf("line %d", i))
+	}
+	rec.Close()
+	require.Equal(t, lines, rec.Len(), "the record took every line while the stream was blocked")
+
+	reported := make(chan error, 1)
+	go func() { reported <- r.Report(context.Background(), OperationResult{Success: true}) }()
+	select {
+	case <-reported:
+		require.Fail(t, "the result was sent before the log lines")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(release)
+	require.NoError(t, <-reported)
+
+	mu.Lock()
+	defer mu.Unlock()
+	logs := logsOf(sent)
+	require.Len(t, logs, lines, "every line, once")
+	for i, l := range logs {
+		require.Equal(t, fmt.Sprintf("line %d", i), l.GetMessage())
+	}
+	require.NotNil(t, sent[len(sent)-1].GetResult(), "and the result after the last of them")
+	assert.Equal(t, 1, client.attemptCount(), "on the one stream")
+}
+
+// Report gives up waiting for the log lines when its context ends.
+func TestReporter_ReportStopsWaitingWhenItsContextEnds(t *testing.T) {
+	client := &fakeOperationClient{executeFn: func(int) (pb.OperationService_ExecuteOperationClient, error) { return workingStream(), nil }}
+	clock := newFakeClock()
+	r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
+	r.readToken = stubToken
+
+	require.NoError(t, r.Connect(context.Background()))
+	rec := plugin.NewRecord() // still open: the sender has not finished
+	defer rec.Close()
+	r.Follow(rec, noClean)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := r.Report(ctx, OperationResult{Success: true})
+	require.ErrorIs(t, err, ErrReportFailed)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// Feature: fix-output-order, Property 3: An unbroken stream carries the record once, in order
+func TestProperty_AnUnbrokenStreamCarriesTheRecordOnceInOrder(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		recording := &recordingStream{}
+		client := &fakeOperationClient{executeFn: func(int) (pb.OperationService_ExecuteOperationClient, error) {
+			return recording.stream(), nil
+		}}
+		clock := newFakeClock()
+		r := newReporter(client, testCfg(), clock.Now, clock.Sleep, func() float64 { return 0 })
+		r.readToken = stubToken
+		require.NoError(t, r.Connect(context.Background()))
+
+		type want struct{ level, message string }
+		var wants []want
+		rec := plugin.NewRecord()
+		appendLine := func() {
+			stream := rapid.SampledFrom([]plugin.Stream{plugin.Stdout, plugin.Stderr, plugin.Turnip}).Draw(t, "stream")
+			text := rapid.StringMatching(`[a-z @:]{0,20}`).Draw(t, "text")
+			level := "info"
+			if stream == plugin.Stderr {
+				level = "error"
+			}
+			wants = append(wants, want{level, text})
+			rec.Append(stream, text)
+		}
+
+		// Lines recorded before the sender starts, while it runs (it may
+		// be ahead, level or behind at each append), and none at all.
+		for range rapid.IntRange(0, 20).Draw(t, "before") {
+			appendLine()
+		}
+		r.Follow(rec, noClean)
+		for range rapid.IntRange(0, 40).Draw(t, "during") {
+			if rapid.Bool().Draw(t, "yield") {
+				runtime.Gosched()
+			}
+			appendLine()
+		}
+		rec.Close()
+
+		require.NoError(t, r.Report(context.Background(), OperationResult{Success: true}))
+
+		recording.mu.Lock()
+		defer recording.mu.Unlock()
+		require.Len(t, recording.sent, 1+len(wants)+1, "the start, each line once, the result")
+		require.NotNil(t, recording.sent[0].GetStart())
+		for i, w := range wants {
+			log := recording.sent[1+i].GetLog()
+			require.NotNil(t, log, "message %d is a log line", 1+i)
+			require.Equal(t, w.message, log.GetMessage())
+			require.Equal(t, w.level, log.GetLevel())
+		}
+		require.NotNil(t, recording.sent[len(recording.sent)-1].GetResult(), "the result is last")
+	})
 }
 
 // The failure category the Runner sets reaches the wire, so the Server
@@ -359,31 +669,6 @@ func TestReporter_ReportSendsTheFailureCategory(t *testing.T) {
 	result := sent[len(sent)-1].GetResult()
 	require.NotNil(t, result)
 	assert.Equal(t, pb.FailureCategory_FAILURE_CATEGORY_TOOL_EXITED, result.GetFailureCategory())
-}
-
-func TestLogRingBuffer_DropsOldestPastBoundWithMarker(t *testing.T) {
-	buf := newLogRingBuffer(64)
-	for i := range 50 {
-		buf.add(&pb.LogLine{Level: "info", Message: fmt.Sprintf("line-%02d", i)})
-	}
-
-	snap := buf.snapshot()
-	require.NotEmpty(t, snap)
-	assert.Equal(t, "warn", snap[0].Level)
-	assert.Contains(t, snap[0].Message, "dropped")
-
-	for _, line := range snap[1:] {
-		assert.NotContains(t, line.Message, "dropped")
-	}
-}
-
-func TestLogRingBuffer_NoMarkerWhenUnderBound(t *testing.T) {
-	buf := newLogRingBuffer(logBufferMaxBytes)
-	buf.add(&pb.LogLine{Level: "info", Message: "hello"})
-
-	snap := buf.snapshot()
-	require.Len(t, snap, 1)
-	assert.Equal(t, "hello", snap[0].Message)
 }
 
 // recordingStream is a working stream that keeps every message sent on

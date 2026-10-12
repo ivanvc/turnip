@@ -19,8 +19,10 @@ func TestProperty_PluginResultStructureCompleteness(t *testing.T) {
 		exitCode := rapid.IntRange(0, 255).Draw(t, "exitCode")
 
 		p := &HelmfilePlugin{
-			run: func(ctx context.Context, dir, name string, args []string, version string, onOutput func(stream, line string)) ([]OutputLine, int, error) {
-				return []OutputLine{{Stream: "stdout", Text: stdout}, {Stream: "stderr", Text: stderr}}, exitCode, nil
+			run: func(ctx context.Context, dir, name string, args []string, version string, rec *Record) (int, error) {
+				rec.Append(Stdout, stdout)
+				rec.Append(Stderr, stderr)
+				return exitCode, nil
 			},
 		}
 
@@ -40,15 +42,15 @@ func TestProperty_HelmfilePluginCommandExecution(t *testing.T) {
 		var gotName string
 		var gotArgs []string
 		p := &HelmfilePlugin{
-			run: func(ctx context.Context, dir, name string, args []string, version string, onOutput func(stream, line string)) ([]OutputLine, int, error) {
+			run: func(ctx context.Context, dir, name string, args []string, version string, rec *Record) (int, error) {
 				gotName = name
 				gotArgs = args
-				return nil, 0, nil
+				return 0, nil
 			},
 		}
 
 		opts := ExecuteOptions{}
-		wantArgs := []string{}
+		wantArgs := []string{"--no-color"}
 		if environment != "" {
 			opts.Config = map[string]string{"environment": environment}
 			wantArgs = append(wantArgs, "--environment", environment)

@@ -42,11 +42,13 @@ type OperationResult struct {
 	FailureCategory FailureCategory
 }
 
-// OperationHandler reacts to a Runner's incremental log lines and final
-// result for one Operation, identified by operationID. Implementations
-// decide what a log line or result *means* (e.g. releasing a lock, posting
-// a GitHub comment) — that's Slice 6's responsibility, not this package's.
+// OperationHandler reacts to a Runner's log lines and final result for one
+// Operation, identified by operationID. Implementations decide what a log
+// line or result *means* (e.g. releasing a lock, posting a GitHub
+// comment); that's Slice 6's responsibility, not this package's.
 type OperationHandler interface {
+	// HandleLog is called for the first log line of each stream, and for
+	// no other line (see ExecuteOperation).
 	HandleLog(ctx context.Context, operationID string, line LogLine) error
 	HandleResult(ctx context.Context, operationID string, result OperationResult) error
 	// CloneCredential returns the GitHub credential operationID's clone
@@ -175,7 +177,8 @@ func (s *operationServer) FetchCloneCredential(ctx context.Context, _ *pb.FetchC
 }
 
 // ExecuteOperation receives a Runner's start/log/result stream and
-// dispatches each message to the configured OperationHandler. A "start"
+// dispatches its messages to the configured OperationHandler: the first
+// log line of the stream, and the result. A "start"
 // message is a no-op at this layer beyond recording the Operation ID —
 // nothing in this slice's scope reacts to an Operation merely starting. A
 // handler error aborts the loop and is returned as the RPC's status, so
@@ -201,6 +204,14 @@ func (s *operationServer) ExecuteOperation(stream pb.OperationService_ExecuteOpe
 	// failed clone, the runner container the tool's result. The
 	// interceptor has already refused a caller with neither.
 
+	// The handler hears of a stream's first log line only. That line is
+	// what marks the Operation started; the Server has no use yet for
+	// the rest, and a call per line was a Redis round trip per line of a
+	// tool's output. Per stream rather than per Operation, because a
+	// resumed stream can land on another replica, which keeps no memory
+	// of the first.
+	sawLog := false
+
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -224,6 +235,10 @@ func (s *operationServer) ExecuteOperation(stream pb.OperationService_ExecuteOpe
 			}
 
 		case *pb.ExecuteOperationRequest_Log:
+			if sawLog {
+				continue
+			}
+			sawLog = true
 			log := payload.Log
 			if err := s.handler.HandleLog(ctx, operationID, LogLine{
 				Timestamp: log.GetTimestamp(),

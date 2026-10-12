@@ -40,8 +40,9 @@ replay the scope the `diff` recorded. See "Plan commands and mutating
 commands" in [`using/commands.md`](../using/commands.md#plan-commands-and-mutating-commands).
 
 turnip runs Helmfile as
-`helmfile [--environment <environment>] <operation> [arguments...]`, in
-the project's `directory`.
+`helmfile --no-color [--environment <environment>] <operation> [arguments...]`,
+in the project's `directory`. Color is always off: a comment cannot
+render it, and its codes would show up as text such as `[1;34m`.
 
 #### `sync` acts even when the diff is empty
 
@@ -97,7 +98,7 @@ if the Server's operator allows it; see
 
 | Key | Meaning |
 |---|---|
-| `environment` | Helmfile's own `--environment` flag, passed before the operation (`helmfile --environment staging diff`) |
+| `environment` | Helmfile's own `--environment` flag, passed before the operation (`helmfile --no-color --environment staging diff`) |
 
 Omitted, no `--environment` is passed and Helmfile uses its own default.
 Other keys under `with:` are accepted and ignored.
@@ -348,6 +349,50 @@ If an apply or sync that changed something reads `no changes`, the image
 may be silencing Helmfile's summary through its environment; see
 [Gotchas for operators](#gotchas-for-operators).
 
+#### A failed operation shows Helmfile's messages, not the diffs
+
+When a `diff`, `apply` or `sync` fails, its output in the comment is
+what Helmfile wrote to standard error alone: its progress, its release
+tables and every error. What it wrote to standard output, the diffs, is
+left out, and a line says how much:
+
+```diff
+@@ turnip: infra/web, helmfile v1.7.4 @@
+@@ turnip: helmfile --no-color diff @@
+@@ turnip: 30000 lines of standard output omitted because the operation failed @@
+...Helmfile's messages and errors...
+@@ turnip: exit 1 in 41s @@
+```
+
+The diffs of a plan that failed cannot be applied, and on a first
+install they are megabytes with the errors somewhere after them. Fix
+what the errors name and plan again to see the diffs. An operator can
+read the omitted lines in the Runner's log while its Pod exists; see
+[Reading a Runner's log](../operating/troubleshooting.md#reading-a-runners-log).
+
+A successful operation shows everything, in the order Helmfile wrote it.
+
+#### `--color` is refused
+
+turnip always passes `--no-color`, and Helmfile refuses the two flags
+together (`--color and --no-color cannot be specified at the same
+time`). A command that adds `--color` fails with that message.
+
+#### `--detailed-exitcode` makes a plan with changes fail
+
+With `--detailed-exitcode`, Helmfile exits 2 when a diff found changes.
+turnip reads any exit code but 0 as a failure, so such a plan shows as
+failed, cannot be applied, and shows no diffs (see above). Leave the
+flag off.
+
+#### Several files in `helmfile.d` are written at once
+
+Helmfile processes the files of a `helmfile.d` directory in parallel, so
+one file's diffs and another's messages are written at the same moment.
+In a successful operation's output those lines can land either way
+round, as they do in a terminal. Pass `--sequential-helmfiles` to have
+Helmfile process the files one at a time.
+
 #### Don't use helmfile hooks
 
 A helmfile hook runs a command of the helmfile's choosing inside turnip's
@@ -401,8 +446,10 @@ Entries that are Helmfile-specific. Everything else is in
   Write the full version the vendor publishes, e.g. `helmfile@v1.7.4`.
   See [The `helmfile` alias](#the-helmfile-alias).
 - **`helmfile exited 1`** (or another code): Helmfile itself ran and
-  failed. The reason is in its output, in the results comment; turnip does
-  not interpret it. See "Reading a failed check's title" in
+  failed. The reason is in its output, in the results comment, which for
+  a failed operation is Helmfile's messages without the diffs (see
+  [A failed operation shows Helmfile's messages, not the diffs](#a-failed-operation-shows-helmfiles-messages-not-the-diffs));
+  turnip does not interpret it. See "Reading a failed check's title" in
   [`using/troubleshooting.md`](../using/troubleshooting.md#reading-a-failed-checks-title).
 - **`helmfile could not be started`**: the `helmfile` binary was missing
   from the image (a custom image without it on its `PATH`), or the

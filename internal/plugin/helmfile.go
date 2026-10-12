@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -182,41 +183,75 @@ func (p *HelmfilePlugin) Execute(ctx context.Context, operation string, opts Exe
 		}
 	}
 
-	var args []string
+	// --no-color, so the codes of Helmfile's colored banners (the release
+	// tables after apply and sync) do not reach the comment and the logs as
+	// text. A flag rather than NO_COLOR in the environment, so the command
+	// line turnip annotates shows why the output has no color. It comes
+	// first: Helmfile refuses --color beside it, with its own message.
+	args := []string{"--no-color"}
 	if env := opts.Config["environment"]; env != "" {
 		args = append(args, "--environment", env)
 	}
 	args = append(args, operation)
 	args = append(args, opts.ExtraArgs...)
 
-	lines, exitCode, err := p.run(ctx, opts.WorkingDir, "helmfile", args, opts.ToolVersion, opts.OnOutput)
+	rec := opts.Record
+	if rec == nil {
+		rec = NewRecord()
+	}
+	exitCode, err := p.run(ctx, opts.WorkingDir, "helmfile", args, opts.ToolVersion, rec)
+	rec.Close()
 	if err != nil {
 		return nil, err
 	}
 
+	// Counts are read from the record, one stream at a time, whatever the
+	// output below shows.
 	var summary ChangeSummary
 	if operation == p.GetPlanOperation() {
 		// stdout only. Helmfile writes "Comparing release=" and each
-		// release's diff there, and its progress and errors ("Building
-		// dependency", "Adding repo", a failed helm diff) to stderr — which,
-		// interleaved into the record, would otherwise read as the body of
-		// whichever release preceded it and count an unchanged one as
-		// changed.
-		summary.Change = parseChangedReleases(strings.TrimRight(streamText(lines, "stdout"), "\n"))
+		// release's diff there, and everything it says itself ("Building
+		// dependency", "Adding repo", a failed helm diff) to stderr, which
+		// would otherwise read as the body of whichever release it landed
+		// after and count an unchanged one as changed.
+		summary.Change = parseChangedReleases(strings.TrimRight(rec.StreamText(Stdout), "\n"))
 	} else {
 		// Every other operation (apply, sync) actually mutates, and
 		// Helmfile prints its own account of what it changed as
 		// Release_Tables on stderr; stdout carries arbitrary diff bodies
 		// and manifest content that must not be read as one (see
 		// parseReleaseTables and the design's Decision 1).
-		summary = parseReleaseTables(streamText(lines, "stderr"))
+		summary = parseReleaseTables(rec.StreamText(Stderr))
+	}
+
+	// The whole record when the operation succeeded. When it failed,
+	// standard error alone: that is where Helmfile reports its progress
+	// and every error, while standard output holds the diffs of a plan
+	// that cannot be applied, megabytes of them on a first install, with
+	// the errors somewhere after.
+	output := rec.Text()
+	if exitCode != 0 {
+		output = rec.Select(Stderr, omittedStdoutNote)
 	}
 
 	return &ExecuteResult{
-		Output:        outputText(lines),
+		Output:        output,
 		ChangeSummary: summary,
 		PlanData:      nil,
 		ExitCode:      exitCode,
 		Error:         nil,
 	}, nil
+}
+
+// omittedStdoutNote words the line a failed operation's output carries in
+// place of its standard output; no line when there was none to omit.
+func omittedStdoutNote(omitted int) string {
+	switch omitted {
+	case 0:
+		return ""
+	case 1:
+		return "1 line of standard output omitted because the operation failed"
+	default:
+		return fmt.Sprintf("%d lines of standard output omitted because the operation failed", omitted)
+	}
 }

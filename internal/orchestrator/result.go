@@ -26,10 +26,14 @@ var _ rpc.OperationHandler = (*Orchestrator)(nil)
 // Slice 26, a real-time output view; the Runner streams every line now so
 // the Server has something to accumulate when it exists.
 //
-// A dead-code sweep will flag this parameter, rpc.LogLine's three fields,
-// and the Runner's 256 KiB ring buffer together. Deleting any of them
-// forecloses that feature, which is why this note is here rather than the
-// obvious tidy-up.
+// Until then the lines stop in rpc's stream loop: it calls this for the
+// first log line of each stream and drops the rest, so a verbose tool
+// costs one Redis call per stream rather than one per line. Slice 26 adds
+// its own per-line path there.
+//
+// A dead-code sweep will flag this parameter and rpc.LogLine's three
+// fields together. Deleting them forecloses that feature, which is why
+// this note is here rather than the obvious tidy-up.
 func (o *Orchestrator) HandleLog(ctx context.Context, operationID string, line rpc.LogLine) error {
 	justStarted, createdAt, err := o.records.MarkStarted(ctx, operationID)
 	if err != nil {

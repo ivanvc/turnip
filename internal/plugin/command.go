@@ -2,162 +2,190 @@ package plugin
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
 )
-
-// OutputLine is one line of a command's output, tagged with the stream
-// ("stdout" or "stderr") it arrived on. The execution transcript's own
-// lines are tagged "stdout", as they are when mirrored through onOutput.
-type OutputLine struct {
-	Stream string
-	Text   string
-}
 
 // commandRunner abstracts subprocess execution so tests can substitute a
 // fake without invoking a real tool binary.
 //
-// lines is the command's whole record, in the order the lines arrived:
-// stdout and stderr interleaved as the tool wrote them, opened by the
-// transcript header and closed by its trailer. onOutput, when non-nil, is
-// called once per line in that same order, as each is produced.
-type commandRunner func(ctx context.Context, dir, name string, args []string, version string, onOutput func(stream, line string)) (lines []OutputLine, exitCode int, err error)
+// It appends the command's whole record to rec, in the order the lines were
+// read: stdout and stderr interleaved as the tool wrote them, opened by the
+// transcript header and closed by its trailer, after which it closes rec.
+// Whoever follows rec while the command runs sees each line as it is
+// recorded.
+type commandRunner func(ctx context.Context, dir, name string, args []string, version string, rec *Record) (exitCode int, err error)
 
-// outputText joins every line of a record, in order, as the text a reader
-// sees.
-func outputText(lines []OutputLine) string {
-	texts := make([]string, len(lines))
-	for i, l := range lines {
-		texts[i] = l.Text
-	}
-	return strings.Join(texts, "\n")
-}
-
-// streamText joins only the lines that arrived on stream, in order. For a
-// consumer that derives a value from the tool's result and must not be
-// swayed by what the tool writes on its other stream.
-func streamText(lines []OutputLine, stream string) string {
-	var texts []string
-	for _, l := range lines {
-		if l.Stream == stream {
-			texts = append(texts, l.Text)
-		}
-	}
-	return strings.Join(texts, "\n")
-}
+// maxLineBytes is the longest line the capture records; a longer one fails
+// the command's capture with bufio.ErrTooLong.
+const maxLineBytes = 1024 * 1024
 
 // execCommand is the default commandRunner, backed by os/exec.
 //
 // When the subprocess starts and runs — even to a non-zero exit — its
-// record and exit code are returned with a nil error: that's a normal tool
-// failure, not an execution error. err is only non-nil when the subprocess
-// could not be started at all (binary not found, invalid working
-// directory), in which case exitCode is -1 and there is no record.
+// exit code is returned with a nil error: that's a normal tool failure,
+// not an execution error. err is only non-nil when the subprocess could
+// not be started at all (binary not found, invalid working directory), in
+// which case exitCode is -1 and rec is left empty.
 //
-// The two pipes are scanned concurrently, one goroutine each, and both feed
-// a single consumer — this goroutine — which appends each line to the
-// record and then hands it to onOutput. One consumer is what gives the
-// comment and the live stream the same order by construction; it holds no
-// lock across onOutput, whose Runner implementation may block on the
-// Server.
+// The tool writes to two pipes this function creates, one per stream, and
+// one reader takes from both (see readStreams). The only thing that
+// reader does with a line is append it to rec, which takes rec's lock for
+// the append and calls nothing: it never waits on whoever consumes the
+// output (the Runner's log, the Server), so a slow consumer cannot change
+// the order lines are recorded in.
 //
-// Arrival order is exact within a stream and near-exact across them: two
-// lines written on different streams within the same instant can land
-// either way round. A single shared pipe would be exact, and would lose
-// which stream each line came from — which the change count needs.
-func execCommand(ctx context.Context, dir, name string, args []string, version string, onOutput func(stream, line string)) (lines []OutputLine, exitCode int, err error) {
+// The order is exact within a stream. Across the two it is the order the
+// tool wrote in when it writes to one stream and then to the other,
+// however much it wrote to the first; lines written to both at the same
+// moment, or within the time it takes to read one, can land either way
+// round. A single shared pipe would be exact there too, and would lose
+// which stream each line came from, which a Plugin's output and its
+// change count may both need. Which of the two suits a tool is its
+// Plugin's choice; this is the capture that keeps the streams apart.
+func execCommand(ctx context.Context, dir, name string, args []string, version string, rec *Record) (exitCode int, err error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 
-	stdoutPipe, err := cmd.StdoutPipe()
+	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
-		return nil, -1, err
+		return -1, err
 	}
-	stderrPipe, err := cmd.StderrPipe()
+	stderrR, stderrW, err := os.Pipe()
 	if err != nil {
-		return nil, -1, err
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		return -1, err
 	}
+	// Small pipes: the tool can then never be more than a page ahead of
+	// the reader on either stream, which bounds how far a line can land
+	// from where it was written when both streams have data at once.
+	shrinkPipe(stdoutW)
+	shrinkPipe(stderrW)
+	cmd.Stdout, cmd.Stderr = stdoutW, stderrW
 
-	if err := cmd.Start(); err != nil {
-		return nil, -1, err
-	}
+	// The reader is already waiting on the pipes when the tool starts. It
+	// decides the order of what it reads the moment it reads it, so
+	// starting it only after Start returned would leave the tool's first
+	// lines, on both streams, sitting in the pipes together with nothing
+	// to say which came first. It holds the first of them until header
+	// is closed, so the transcript's header still opens the record.
+	header := make(chan struct{})
+	read := make(chan error, 1)
+	go func() { read <- readStreams(rec, stdoutR, stderrR, header) }()
 
-	emit := func(stream, text string) {
-		lines = append(lines, OutputLine{Stream: stream, Text: text})
-		if onOutput != nil {
-			onOutput(stream, text)
-		}
+	err = cmd.Start()
+	// The child holds its own copies of the write ends; ours must go, or
+	// the pipes never report their end.
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
+	if err != nil {
+		// Nothing was written, so the reader finds both pipes at their end.
+		close(header)
+		<-read
+		return -1, err
 	}
+	defer rec.Close()
 
 	// The execution transcript, written here rather than by each Plugin so
 	// that a Plugin cannot forget it and one added later is covered by
-	// existing code.
-	//
-	// It goes into the record *and* through onOutput. Those are two
-	// different destinations: the record becomes ExecuteResult.Output and
-	// reaches the pull request comment, while onOutput feeds the live log
-	// stream. Writing to only the callback would put the transcript in a
-	// future live view and leave it out of every comment.
+	// existing code. Its lines are the Turnip stream of the record, so
+	// they reach everything that follows the record (the Runner's log, the
+	// live log stream) and every output a Plugin composes from it.
 	//
 	// After cmd.Start() returned nil, so a command that never started
-	// reports nothing; and before the scanners run, so the header is in the
-	// record ahead of anything the tool writes.
+	// reports nothing; and before the reader records anything, so the
+	// header is in the record ahead of anything the tool writes.
 	started := time.Now()
 	for _, line := range transcriptHeader(dir, name, args, version) {
-		emit("stdout", line)
+		rec.Append(Turnip, line)
 	}
+	close(header)
 
-	scanned := make(chan OutputLine)
-	var (
-		wg                   sync.WaitGroup
-		stdoutErr, stderrErr error
-	)
-	wg.Add(2)
-	go func() { defer wg.Done(); stdoutErr = scanLines(stdoutPipe, "stdout", scanned) }()
-	go func() { defer wg.Done(); stderrErr = scanLines(stderrPipe, "stderr", scanned) }()
-	go func() { wg.Wait(); close(scanned) }()
-	for line := range scanned {
-		emit(line.Stream, line.Text)
-	}
+	readErr := <-read
 
-	// Both pipes are drained before Wait, as os/exec requires, and the
-	// channel's close orders both scanners' errors before these reads.
+	// Both pipes are read to their end before Wait.
 	runErr := cmd.Wait()
 
 	// The trailer closes the record: appended only once both streams are
 	// exhausted, so no line of either can follow it.
-	emit("stdout", transcriptTrailer(started, cmd.ProcessState))
+	rec.Append(Turnip, transcriptTrailer(started, cmd.ProcessState))
 
 	if runErr == nil {
-		if scanErr := errors.Join(stdoutErr, stderrErr); scanErr != nil {
-			return nil, -1, scanErr
+		if readErr != nil {
+			return -1, readErr
 		}
-		return lines, 0, nil
+		return 0, nil
 	}
 
 	if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
-		return lines, exitErr.ExitCode(), nil
+		return exitErr.ExitCode(), nil
 	}
 
-	return nil, -1, runErr
+	return -1, runErr
 }
 
-// scanLines reads r line-by-line, sending each line to out tagged with
-// stream.
-func scanLines(r io.Reader, stream string, out chan<- OutputLine) error {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		out <- OutputLine{Stream: stream, Text: scanner.Text()}
+// lineSplitter turns the bytes read from one stream into that stream's
+// lines in rec. A line is recorded when its newline arrives, without the
+// newline or a carriage return before it; flush records a last line that
+// had none.
+type lineSplitter struct {
+	stream  Stream
+	rec     *Record
+	partial []byte
+	// err is set once a line exceeds maxLineBytes. Nothing more of the
+	// stream is recorded after that, though it is still read, so the tool
+	// cannot block on a pipe nobody empties.
+	err error
+}
+
+func (s *lineSplitter) feed(data []byte) {
+	if s.err != nil {
+		return
 	}
-	return scanner.Err()
+	for len(data) > 0 {
+		i := bytes.IndexByte(data, '\n')
+		if i < 0 {
+			s.partial = append(s.partial, data...)
+			break
+		}
+		line := data[:i]
+		if len(s.partial) > 0 {
+			s.partial = append(s.partial, line...)
+			line = s.partial
+		}
+		if len(line) >= maxLineBytes {
+			break
+		}
+		s.rec.Append(s.stream, string(dropCR(line)))
+		s.partial = s.partial[:0]
+		data = data[i+1:]
+	}
+	if len(s.partial) >= maxLineBytes {
+		s.err = bufio.ErrTooLong
+		s.partial = nil
+	}
+}
+
+func (s *lineSplitter) flush() {
+	if s.err == nil && len(s.partial) > 0 {
+		s.rec.Append(s.stream, string(dropCR(s.partial)))
+	}
+	s.partial = nil
+}
+
+// dropCR removes one trailing carriage return, as bufio.ScanLines does.
+func dropCR(line []byte) []byte {
+	if n := len(line); n > 0 && line[n-1] == '\r' {
+		return line[:n-1]
+	}
+	return line
 }
 
 // transcriptPrefix and transcriptSuffix enclose every line turnip writes

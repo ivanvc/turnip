@@ -284,19 +284,28 @@ highlights them the way it highlights a diff's hunk headers:
 
 ```diff
 @@ turnip: infra/web, helmfile v1.7.4 @@
-@@ turnip: helmfile --environment staging diff -l name=api @@
+@@ turnip: helmfile --no-color --environment staging diff -l name=api @@
 Comparing release=api, chart=charts/api
 ...
 @@ turnip: exit 0 in 4.2s @@
 ```
 
-In between is the tool's output exactly as it was written: its standard
-output and standard error interleaved in the order they arrived, not one
+In between is the tool's output as it was written: its standard output
+and standard error together, in the order the tool wrote them, not one
 after the other, so a warning appears where it happened, not at the end.
+Each of the two is always in its own order. When a tool writes to both
+at the very same moment, those lines can land either way round, close to
+where they were written.
+
+What a tool's output shows is decided per tool. Helmfile's is everything
+it wrote when the operation succeeds; when it fails, it is Helmfile's
+messages and errors alone, with a line saying how many lines of diffs
+were left out (see
+[A failed operation shows Helmfile's messages, not the diffs](../plugins/helmfile.md#a-failed-operation-shows-helmfiles-messages-not-the-diffs)).
 
 They record what actually ran, including arguments turnip supplies that
-you never typed: `--environment` above comes from the project's own
-configuration. Reconstructing that later from `turnip.yaml` at that commit
+you never typed: `--no-color` above is turnip's, and `--environment`
+comes from the project's own configuration. Reconstructing that later from `turnip.yaml` at that commit
 is exactly the thing that goes wrong during an incident, so turnip writes
 it down at the time. The version is the tool version the run used, which
 is usually the answer when a diff changes and nobody touched the code.

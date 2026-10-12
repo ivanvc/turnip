@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,8 +41,17 @@ func (b *safeBuffer) String() string {
 
 type outputLine struct{ stream, line string }
 
-// fakePlugin produces a scripted sequence of OnOutput calls before
-// returning a fixed result.
+// streamOf maps a script's stream name to the Record's.
+func streamOf(name string) plugin.Stream {
+	if name == "stderr" {
+		return plugin.Stderr
+	}
+	return plugin.Stdout
+}
+
+// fakePlugin records a scripted sequence of lines before returning a fixed
+// result. It leaves the Record open, as a Plugin that ran no command does,
+// so these tests also cover run.go closing it.
 type fakePlugin struct {
 	operations []string
 	script     []outputLine
@@ -61,8 +71,8 @@ func (p *fakePlugin) ImageTags() []string                 { return []string{"v*.
 func (p *fakePlugin) MutationChangesReported(string) bool { return true }
 func (p *fakePlugin) Execute(_ context.Context, _ string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
 	for _, l := range p.script {
-		if opts.OnOutput != nil {
-			opts.OnOutput(l.stream, l.line)
+		if opts.Record != nil {
+			opts.Record.Append(streamOf(l.stream), l.line)
 		}
 	}
 	return p.result, p.resultErr
@@ -72,9 +82,10 @@ func fakeSelector(p plugin.Plugin) pluginSelector {
 	return func(tool string) (plugin.Plugin, error) { return p, nil }
 }
 
-// fakeReporter records every call run.go makes, and can be told to block
-// LogLine for one specific line, signaling entry via entered so a test can
-// synchronize deterministically without polling.
+// fakeReporter records every call run.go makes. Its Follow reads the
+// Record as the real sender does, and can be told to block on one specific
+// line, signaling entry via entered so a test can synchronize
+// deterministically without polling.
 type fakeReporter struct {
 	mu           sync.Mutex
 	connectCalls int
@@ -82,6 +93,9 @@ type fakeReporter struct {
 	logLines     []outputLine
 	reportErr    error
 	lastResult   OperationResult
+	// followed is closed once the Record Follow was given has been read
+	// to its end; nil when Follow was never called.
+	followed chan struct{}
 
 	blockOn string
 	entered chan struct{}
@@ -95,18 +109,40 @@ func (r *fakeReporter) Connect(context.Context) error {
 	return r.connectErr
 }
 
-func (r *fakeReporter) LogLine(stream, line string) {
-	r.mu.Lock()
-	r.logLines = append(r.logLines, outputLine{stream, line})
-	r.mu.Unlock()
+func (r *fakeReporter) Follow(rec *plugin.Record, clean func(string) string) {
+	r.followed = make(chan struct{})
+	go func() {
+		defer close(r.followed)
+		from := 0
+		for {
+			lines, done := rec.Next(context.Background(), from)
+			for _, l := range lines {
+				stream := "stdout"
+				if l.Stream == plugin.Stderr {
+					stream = "stderr"
+				}
+				r.mu.Lock()
+				r.logLines = append(r.logLines, outputLine{stream, clean(l.Text)})
+				r.mu.Unlock()
 
-	if r.blockOn != "" && line == r.blockOn {
-		r.entered <- struct{}{}
-		<-r.release
-	}
+				if r.blockOn != "" && l.Text == r.blockOn {
+					r.entered <- struct{}{}
+					<-r.release
+				}
+			}
+			from += len(lines)
+			if done {
+				return
+			}
+		}
+	}()
 }
 
 func (r *fakeReporter) Report(_ context.Context, result OperationResult) error {
+	// As the real reporter does: the result follows every log line.
+	if r.followed != nil {
+		<-r.followed
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.lastResult = result
@@ -157,7 +193,7 @@ func TestResolveWorkspace_NoDirectoryCreatesATemporaryOneAndRemovesIt(t *testing
 	assert.NoDirExists(t, got, "a directory turnip created is turnip's to clean up")
 }
 
-func TestRunWith_OnOutputWritesToMatchingLocalStreamInOrder(t *testing.T) {
+func TestRunWith_OutputReachesTheMatchingLocalStreamAndTheReporterInOrder(t *testing.T) {
 	p := &fakePlugin{
 		operations: []string{"diff"},
 		script: []outputLine{
@@ -180,12 +216,11 @@ func TestRunWith_OnOutputWritesToMatchingLocalStreamInOrder(t *testing.T) {
 }
 
 // TestRunWith_LocalWriteNeverWaitsOnReporter proves Requirement 4.7's
-// ordering guarantee deterministically: the local stdout/stderr write for
-// a line happens even while the reporter's LogLine call for that same
-// line is still blocked, never having returned. If run.go's OnOutput
-// wiring ever called LogLine before writing locally (or made the write
-// depend on LogLine returning), this test would hang forever instead of
-// observing the write.
+// guarantee deterministically: the Runner's own log has every line the
+// tool wrote, the ones after it included, while the reporter is still
+// blocked sending one of them to the Server. If the mirror ever waited on
+// the reporter (as it did when both were fed by one callback), this test
+// would hang forever instead of observing the writes.
 func TestRunWith_LocalWriteNeverWaitsOnReporter(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -207,8 +242,12 @@ func TestRunWith_LocalWriteNeverWaitsOnReporter(t *testing.T) {
 		done <- runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), &stdout, &stderr)
 	}()
 
-	<-entered // LogLine("stdout", "blocking-line") has been entered and is now blocked
-	assert.Contains(t, stdout.String(), "blocking-line", "the local write must complete before LogLine, not after it returns")
+	<-entered // the reporter is now blocked sending "blocking-line"
+	require.Eventually(t, func() bool { return strings.Contains(stderr.String(), "runner: operation result:") },
+		5*time.Second, time.Millisecond,
+		"the tool ran to its end and the Runner logged its result while the reporter was still blocked")
+	assert.Equal(t, "before\nblocking-line\nafter\n", stdout.String(),
+		"every line reached the Runner's own log without waiting on the reporter")
 	close(release)
 
 	exitCode := <-done
@@ -443,8 +482,8 @@ func (p *echoWorkingDirPlugin) Provisioning() provisioning.Spec {
 func (p *echoWorkingDirPlugin) ImageTags() []string                 { return []string{"v*.*.*", "sha256:*"} }
 func (p *echoWorkingDirPlugin) MutationChangesReported(string) bool { return true }
 func (p *echoWorkingDirPlugin) Execute(_ context.Context, _ string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
-	if opts.OnOutput != nil {
-		opts.OnOutput("stdout", "reading "+opts.WorkingDir+"/values.yaml")
+	if opts.Record != nil {
+		opts.Record.Append(plugin.Stdout, "reading "+opts.WorkingDir+"/values.yaml")
 	}
 	return &plugin.ExecuteResult{
 		Output:   `failed to read "` + opts.WorkingDir + `/values.yaml"`,
@@ -556,4 +595,42 @@ func TestRunWith_ResultLogLineDescribesTheReplacement(t *testing.T) {
 		"runner: operation error: the result was too large to deliver (5.0 MiB; the Server accepts at most 4 MiB)\n"+
 			"runner: operation result: success=false exit_code=0 category=none add=0 change=0 destroy=0 output_bytes=7 sent_bytes=0\n",
 		stderr.String())
+}
+
+// The summary line comes after the last line of the tool's output in the
+// Runner's log, both streams included: the mirror is waited for before
+// anything is said about the result.
+func TestRunWith_ResultSummaryFollowsTheWholeOutput(t *testing.T) {
+	var script []outputLine
+	for i := range 2000 {
+		script = append(script, outputLine{"stderr", fmt.Sprintf("line %d", i)})
+	}
+	p := &fakePlugin{operations: []string{"diff"}, script: script, result: &plugin.ExecuteResult{ExitCode: 0}}
+	rep := &fakeReporter{}
+	var stdout, stderr safeBuffer
+
+	require.Equal(t, 0, runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), &stdout, &stderr))
+
+	log := stderr.String()
+	last := strings.Index(log, "line 1999\n")
+	require.GreaterOrEqual(t, last, 0)
+	assert.Greater(t, strings.Index(log, "runner: operation result:"), last)
+	assert.Len(t, rep.logLines, 2000, "and the reporter was handed every line")
+}
+
+// A Plugin that refuses the Operation before running anything leaves the
+// Record open and empty; the Runner closes it, so neither reader hangs,
+// and still logs the error and the summary.
+func TestRunWith_AToolThatCannotStartStillEndsAndLogs(t *testing.T) {
+	p := &fakePlugin{operations: []string{"diff"}, resultErr: errors.New("exec: \"helmfile\": executable file not found in $PATH")}
+	rep := &fakeReporter{}
+	var stdout, stderr safeBuffer
+
+	require.Equal(t, 0, runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), &stdout, &stderr))
+
+	assert.Empty(t, stdout.String())
+	assert.Contains(t, stderr.String(), "runner: operation error: execute failed:")
+	assert.Contains(t, stderr.String(), "runner: operation result: success=false")
+	assert.Empty(t, rep.logLines)
+	assert.Equal(t, rpc.FailureToolNotStarted, rep.lastResult.FailureCategory)
 }

@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -16,34 +17,39 @@ type recordedCall struct {
 	args []string
 }
 
-// fakeRunner returns lines as the command's record. Fixtures state their
+// fakeRunner records lines as the command's record. Fixtures state their
 // interleaving explicitly, because the order of the two streams is part of
 // what a Plugin is handed.
-func fakeRunner(t *testing.T, calls *[]recordedCall, lines []OutputLine, exitCode int, err error) commandRunner {
+func fakeRunner(t *testing.T, calls *[]recordedCall, lines []Line, exitCode int, err error) commandRunner {
 	t.Helper()
-	return func(ctx context.Context, dir, name string, args []string, version string, onOutput func(stream, line string)) ([]OutputLine, int, error) {
+	return func(ctx context.Context, dir, name string, args []string, version string, rec *Record) (int, error) {
 		*calls = append(*calls, recordedCall{dir: dir, name: name, args: args})
-		return lines, exitCode, err
+		for _, l := range lines {
+			rec.Append(l.Stream, l.Text)
+		}
+		rec.Close()
+		return exitCode, err
 	}
 }
 
-func stdoutLine(text string) OutputLine { return OutputLine{Stream: "stdout", Text: text} }
-func stderrLine(text string) OutputLine { return OutputLine{Stream: "stderr", Text: text} }
+func stdoutLine(text string) Line { return Line{Stream: Stdout, Text: text} }
+func stderrLine(text string) Line { return Line{Stream: Stderr, Text: text} }
+func turnipLine(text string) Line { return Line{Stream: Turnip, Text: text} }
 
 func TestHelmfilePlugin_ExecuteInvokesCorrectCommand(t *testing.T) {
 	tests := []struct {
 		operation string
 		wantArgs  []string
 	}{
-		{"diff", []string{"diff"}},
-		{"apply", []string{"apply"}},
-		{"sync", []string{"sync"}},
+		{"diff", []string{"--no-color", "diff"}},
+		{"apply", []string{"--no-color", "apply"}},
+		{"sync", []string{"--no-color", "sync"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.operation, func(t *testing.T) {
 			var calls []recordedCall
-			p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{stdoutLine("out")}, 0, nil)}
+			p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{stdoutLine("out")}, 0, nil)}
 
 			_, err := p.Execute(context.Background(), tt.operation, ExecuteOptions{WorkingDir: "/work"})
 			require.NoError(t, err)
@@ -74,7 +80,20 @@ func TestHelmfilePlugin_EnvironmentFlag(t *testing.T) {
 		Config: map[string]string{"environment": "staging"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"--environment", "staging", "diff"}, calls[0].args)
+	assert.Equal(t, []string{"--no-color", "--environment", "staging", "diff"}, calls[0].args)
+}
+
+// A key under with: that Helmfile's Plugin does not know has no effect on
+// the command line, a `color` key included: --no-color is turnip's, always.
+func TestHelmfilePlugin_UnknownWithKeyChangesNothing(t *testing.T) {
+	var calls []recordedCall
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, nil, 0, nil)}
+
+	_, err := p.Execute(context.Background(), "diff", ExecuteOptions{
+		Config: map[string]string{"environment": "staging", "color": "blue"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--no-color", "--environment", "staging", "diff"}, calls[0].args)
 }
 
 func TestHelmfilePlugin_NoEnvironmentFlagWhenAbsent(t *testing.T) {
@@ -83,7 +102,7 @@ func TestHelmfilePlugin_NoEnvironmentFlagWhenAbsent(t *testing.T) {
 
 	_, err := p.Execute(context.Background(), "diff", ExecuteOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"diff"}, calls[0].args)
+	assert.Equal(t, []string{"--no-color", "diff"}, calls[0].args)
 }
 
 func TestHelmfilePlugin_ExtraArgsAppended(t *testing.T) {
@@ -95,11 +114,11 @@ func TestHelmfilePlugin_ExtraArgsAppended(t *testing.T) {
 		ExtraArgs: []string{"--quiet"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"--environment", "staging", "diff", "--quiet"}, calls[0].args)
+	assert.Equal(t, []string{"--no-color", "--environment", "staging", "diff", "--quiet"}, calls[0].args)
 }
 
 func TestHelmfilePlugin_ChangeSummaryOnlyForDiff(t *testing.T) {
-	diffOutput := []OutputLine{stdoutLine("Comparing release=a, chart=charts/a"), stdoutLine("something changed")}
+	diffOutput := []Line{stdoutLine("Comparing release=a, chart=charts/a"), stdoutLine("something changed")}
 
 	for _, operation := range []string{"apply", "sync"} {
 		t.Run(operation, func(t *testing.T) {
@@ -124,7 +143,7 @@ func TestHelmfilePlugin_ChangeSummaryOnlyForDiff(t *testing.T) {
 
 func TestHelmfilePlugin_PlanDataAlwaysNil(t *testing.T) {
 	var calls []recordedCall
-	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{stdoutLine("out")}, 0, nil)}
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{stdoutLine("out")}, 0, nil)}
 
 	result, err := p.Execute(context.Background(), "apply", ExecuteOptions{PlanData: []byte("ignored")})
 	require.NoError(t, err)
@@ -141,35 +160,175 @@ func TestHelmfilePlugin_RunnerErrorPropagates(t *testing.T) {
 	assert.ErrorIs(t, err, wantErr)
 }
 
-func TestHelmfilePlugin_StderrAppendedToOutput(t *testing.T) {
+// The command annotation is built from the arguments Execute passes, so it
+// shows --no-color and the environment turnip supplied.
+func TestHelmfilePlugin_TheAnnotationShowsTheCommandLineAsRun(t *testing.T) {
 	var calls []recordedCall
-	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{stdoutLine("out"), stderrLine("err")}, 1, nil)}
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, nil, 0, nil)}
+
+	_, err := p.Execute(context.Background(), "diff", ExecuteOptions{
+		Config:    map[string]string{"environment": "staging"},
+		ExtraArgs: []string{"-l", "name=api"},
+	})
+	require.NoError(t, err)
+	require.Len(t, calls, 1)
+
+	assert.Equal(t, []string{
+		"@@ turnip: infra/web, helmfile v1.7.4 @@",
+		"@@ turnip: helmfile --no-color --environment staging diff -l name=api @@",
+	}, transcriptHeader("infra/web", calls[0].name, calls[0].args, "v1.7.4"))
+}
+
+// A failed operation's output is its standard error alone, between
+// turnip's lines, with a line saying how much standard output was left
+// out. Helmfile reports every error on standard error; standard output
+// holds the diffs of a plan that cannot be applied.
+func TestHelmfilePlugin_AFailedOperationShowsStandardErrorAlone(t *testing.T) {
+	lines := []Line{
+		turnipLine("@@ turnip: infra/web, helmfile v1.7.4 @@"),
+		turnipLine("@@ turnip: helmfile --no-color diff @@"),
+		stderrLine("Building dependency release=web, chart=charts/web"),
+		stdoutLine("Comparing release=web, chart=charts/web"),
+		stdoutLine("web, Deployment (apps) has changed:"),
+		stdoutLine("+  replicas: 2"),
+		stdoutLine("Comparing release=api, chart=charts/api"),
+		stderrLine("in ./helmfile.yaml: failed processing release api"),
+		stderrLine("Error: plugin \"diff\" exited with error"),
+		turnipLine("@@ turnip: exit 1 in 4.2s @@"),
+	}
+
+	for _, operation := range []string{"diff", "apply", "sync"} {
+		t.Run(operation, func(t *testing.T) {
+			var calls []recordedCall
+			p := &HelmfilePlugin{run: fakeRunner(t, &calls, lines, 1, nil)}
+
+			result, err := p.Execute(context.Background(), operation, ExecuteOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, 1, result.ExitCode)
+			require.NoError(t, result.Error)
+			assert.Equal(t, strings.Join([]string{
+				"@@ turnip: infra/web, helmfile v1.7.4 @@",
+				"@@ turnip: helmfile --no-color diff @@",
+				"@@ turnip: 4 lines of standard output omitted because the operation failed @@",
+				"Building dependency release=web, chart=charts/web",
+				"in ./helmfile.yaml: failed processing release api",
+				"Error: plugin \"diff\" exited with error",
+				"@@ turnip: exit 1 in 4.2s @@",
+			}, "\n"), result.Output)
+		})
+	}
+}
+
+// The spec's scenario: 30,000 lines of diffs, errors for two releases.
+func TestHelmfilePlugin_AFailedDiffOmitsThirtyThousandLines(t *testing.T) {
+	lines := []Line{
+		turnipLine("@@ turnip: ., helmfile v1.7.4 @@"),
+		turnipLine("@@ turnip: helmfile --no-color diff @@"),
+	}
+	for i := range 30000 {
+		lines = append(lines, stdoutLine(fmt.Sprintf("+ manifest line %d", i)))
+	}
+	lines = append(lines,
+		stderrLine("release \"web\" failed"),
+		stderrLine("release \"api\" failed"),
+		turnipLine("@@ turnip: exit 1 in 9s @@"),
+	)
+	var calls []recordedCall
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, lines, 1, nil)}
+
+	result, err := p.Execute(context.Background(), "diff", ExecuteOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, strings.Join([]string{
+		"@@ turnip: ., helmfile v1.7.4 @@",
+		"@@ turnip: helmfile --no-color diff @@",
+		"@@ turnip: 30000 lines of standard output omitted because the operation failed @@",
+		"release \"web\" failed",
+		"release \"api\" failed",
+		"@@ turnip: exit 1 in 9s @@",
+	}, "\n"), result.Output)
+	assert.NotContains(t, result.Output, "manifest line", "no line of a diff among the errors")
+}
+
+func TestHelmfilePlugin_AFailureWithNoStandardOutputHasNoOmissionLine(t *testing.T) {
+	var calls []recordedCall
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{
+		turnipLine("@@ turnip: helmfile --no-color diff @@"),
+		stderrLine("err: no releases found"),
+		turnipLine("@@ turnip: exit 1 in 1s @@"),
+	}, 1, nil)}
+
+	result, err := p.Execute(context.Background(), "diff", ExecuteOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "@@ turnip: helmfile --no-color diff @@\nerr: no releases found\n@@ turnip: exit 1 in 1s @@", result.Output)
+	assert.NotContains(t, result.Output, "omitted")
+}
+
+func TestHelmfilePlugin_OneOmittedLineIsSingular(t *testing.T) {
+	var calls []recordedCall
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{stdoutLine("out"), stderrLine("err")}, 1, nil)}
 
 	result, err := p.Execute(context.Background(), "apply", ExecuteOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, 1, result.ExitCode)
-	assert.Equal(t, "out\nerr", result.Output)
-	assert.NoError(t, result.Error)
+	assert.Equal(t, "@@ turnip: 1 line of standard output omitted because the operation failed @@\nerr", result.Output)
 }
 
-func TestHelmfilePlugin_OnOutputReachesCommandRunnerUnchanged(t *testing.T) {
+// A failed apply keeps Helmfile's own account of what failed, which it
+// prints on standard error, without the diffs it printed before trying.
+func TestHelmfilePlugin_AFailedApplyKeepsItsTables(t *testing.T) {
 	var calls []recordedCall
-	var gotOnOutput func(stream, line string)
-	p := &HelmfilePlugin{run: func(ctx context.Context, dir, name string, args []string, version string, onOutput func(stream, line string)) ([]OutputLine, int, error) {
-		calls = append(calls, recordedCall{dir: dir, name: name, args: args})
-		gotOnOutput = onOutput
-		return []OutputLine{stdoutLine("out")}, 0, nil
-	}}
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{
+		stdoutLine("Comparing release=web, chart=charts/web"),
+		stdoutLine("web, Deployment (apps) has changed:"),
+		stderrLine("Upgrading release=web, chart=charts/web"),
+		stderrLine(fixedBanner("Failed Releases")),
+		stderrLine("NAME   NAMESPACE   CHART   VERSION   DURATION"),
+		stderrLine("web    default     charts/web          3s"),
+		stderrLine("Error: UPGRADE FAILED: timed out waiting for the condition"),
+	}, 1, nil)}
 
-	var got []string
-	wantOnOutput := func(stream, line string) { got = append(got, stream+":"+line) }
-
-	_, err := p.Execute(context.Background(), "diff", ExecuteOptions{OnOutput: wantOnOutput})
+	result, err := p.Execute(context.Background(), "apply", ExecuteOptions{})
 	require.NoError(t, err)
-	require.NotNil(t, gotOnOutput)
+	assert.Contains(t, result.Output, fixedBanner("Failed Releases"))
+	assert.Contains(t, result.Output, "Error: UPGRADE FAILED")
+	assert.NotContains(t, result.Output, "has changed:", "the diffs are standard output")
+	assert.Contains(t, result.Output, "@@ turnip: 2 lines of standard output omitted because the operation failed @@")
+}
 
-	gotOnOutput("stdout", "a line")
-	assert.Equal(t, []string{"stdout:a line"}, got)
+// Counts come from the record, not from the output: a failed diff still
+// reports the releases it found changed, though its output shows none of
+// their diffs.
+func TestHelmfilePlugin_AFailedDiffStillCountsItsChangedReleases(t *testing.T) {
+	var calls []recordedCall
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{
+		stdoutLine("Comparing release=web, chart=charts/web"),
+		stdoutLine("web, Deployment (apps) has changed:"),
+		stdoutLine("Comparing release=api, chart=charts/api"),
+		stdoutLine("api, ConfigMap (v1) has changed:"),
+		stdoutLine("Comparing release=db, chart=charts/db"),
+		stderrLine("Error: release db failed"),
+	}, 1, nil)}
+
+	result, err := p.Execute(context.Background(), "diff", ExecuteOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.ChangeSummary.Change)
+	assert.NotContains(t, result.Output, "Comparing release=")
+}
+
+// The caller's Record is the one the command is recorded into, so whoever
+// follows it sees the output while the command runs.
+func TestHelmfilePlugin_RecordsIntoTheCallersRecord(t *testing.T) {
+	var calls []recordedCall
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{stdoutLine("out")}, 0, nil)}
+
+	rec := NewRecord()
+	result, err := p.Execute(context.Background(), "diff", ExecuteOptions{Record: rec})
+	require.NoError(t, err)
+
+	lines, done := rec.Next(context.Background(), 0)
+	require.Len(t, lines, 1)
+	assert.Equal(t, "out", lines[0].Text)
+	assert.True(t, done, "the Record is closed once the command has ended")
+	assert.Equal(t, "out", result.Output)
 }
 
 func TestHelmfilePlugin_NameAndOperations(t *testing.T) {
@@ -197,13 +356,13 @@ func TestHelmfile_ActsWithoutChanges(t *testing.T) {
 // run.
 func TestHelmfilePlugin_OutputKeepsTheRecordsInterleaving(t *testing.T) {
 	var calls []recordedCall
-	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{
-		stdoutLine("@@ turnip: env, helmfile v1 @@"),
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{
+		turnipLine("@@ turnip: env, helmfile v1 @@"),
 		stderrLine("Adding repo stable https://example.test/charts"),
 		stdoutLine("Comparing release=web, chart=charts/web"),
 		stderrLine("Building dependency release=api, chart=charts/api"),
 		stdoutLine("Comparing release=api, chart=charts/api"),
-		stdoutLine("@@ turnip: exit 0 in 1s @@"),
+		turnipLine("@@ turnip: exit 0 in 1s @@"),
 	}, 0, nil)}
 
 	result, err := p.Execute(context.Background(), "diff", ExecuteOptions{})
@@ -224,7 +383,7 @@ func TestHelmfilePlugin_OutputKeepsTheRecordsInterleaving(t *testing.T) {
 // Mutation check: counting from the whole record reports 2 here.
 func TestHelmfilePlugin_ChangeCountIgnoresStderrAfterTheLastRelease(t *testing.T) {
 	var calls []recordedCall
-	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{
 		stdoutLine("Comparing release=web, chart=charts/web"),
 		stdoutLine("web, Deployment (apps) has changed:"),
 		stdoutLine("Comparing release=api, chart=charts/api"),
@@ -246,7 +405,7 @@ func TestHelmfilePlugin_ExecuteReadsMutationCountsFromStderr(t *testing.T) {
 	for _, operation := range []string{"apply", "sync"} {
 		t.Run(operation, func(t *testing.T) {
 			var calls []recordedCall
-			p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{
+			p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{
 				stdoutLine("this line names Updated Releases but is stdout, not the table"),
 				stderrLine(fixedBanner("Updated Releases")),
 				stderrLine(updatedHeader),
@@ -261,7 +420,7 @@ func TestHelmfilePlugin_ExecuteReadsMutationCountsFromStderr(t *testing.T) {
 
 	t.Run("diff still counts from stdout", func(t *testing.T) {
 		var calls []recordedCall
-		p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{
+		p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{
 			stdoutLine("Comparing release=web, chart=charts/web"),
 			stdoutLine("web, Deployment (apps) has changed:"),
 			stderrLine(stderrTable),
@@ -278,7 +437,7 @@ func TestHelmfilePlugin_ExecuteReadsMutationCountsFromStderr(t *testing.T) {
 // once, from the table, never again from stdout (Requirement 4.1).
 func TestHelmfilePlugin_ExecuteCountsSuppressedDiffReleaseOnce(t *testing.T) {
 	var calls []recordedCall
-	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{
 		stdoutLine("Comparing release=web, chart=example.com/web"),
 		stdoutLine("default, web, Deployment (apps) has changed:"),
 		stdoutLine("-  replicas: 1"),
@@ -305,7 +464,7 @@ func TestHelmfilePlugin_ExecuteCountsSuppressedDiffReleaseOnce(t *testing.T) {
 // or sync's count: Execute reads stderr only for those operations.
 func TestHelmfilePlugin_ExecuteIgnoresTableTextOnStdout(t *testing.T) {
 	var calls []recordedCall
-	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{
 		stdoutLine(fixedBanner("Updated Releases")),
 		stdoutLine(updatedHeader),
 		stdoutLine("web   default   example.com/web   1.2.3   1s"),
@@ -335,6 +494,21 @@ func TestHelmfilePlugin_MutationChangesReported(t *testing.T) {
 		{
 			name:   "no table at all",
 			output: "Upgraded release=web\n",
+			want:   true,
+		},
+		{
+			name:   "--no-color, which turnip always passes, silences nothing",
+			output: "@@ turnip: helmfile --no-color apply @@\n",
+			want:   true,
+		},
+		{
+			name:   "--no-color before a quiet plan's replayed -q",
+			output: "@@ turnip: helmfile --no-color apply -q @@\n",
+			want:   false,
+		},
+		{
+			name:   "--debug still overrides --quiet behind --no-color",
+			output: "@@ turnip: helmfile --no-color apply --quiet --debug @@\n",
 			want:   true,
 		},
 		{
@@ -404,7 +578,7 @@ func TestHelmfilePlugin_MutationChangesReported(t *testing.T) {
 // Mutation check: counting from the whole record reports 2 here.
 func TestHelmfilePlugin_ChangeCountIgnoresStderrBetweenReleases(t *testing.T) {
 	var calls []recordedCall
-	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []OutputLine{
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{
 		stdoutLine("Comparing release=web, chart=charts/web"),
 		stderrLine("Building dependency release=api, chart=charts/api"),
 		stdoutLine("Comparing release=api, chart=charts/api"),

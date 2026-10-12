@@ -82,6 +82,29 @@ Implement `plugin.Plugin` (`internal/plugin/plugin.go`):
 than calling `os/exec` directly, so the Plugin's tests can fake the
 subprocess without a real binary or cluster (see `helmfile_test.go`).
 
+The command's output is a `plugin.Record` (`record.go`): every line the
+tool wrote, in the order it was read, each marked `Stdout` or `Stderr`,
+between turnip's own annotation lines, which are marked `Turnip`. The
+Runner follows the same Record while the command runs, for its own log
+and for the lines it sends to the Server, so a Plugin does nothing for
+either. Two things are the Plugin's to decide:
+
+- **What the Operation's output is.** `Record.Text()` is the whole
+  Record. `Record.Select(stream, note)` is one stream alone, with a line
+  of the Plugin's wording saying how much was left out. Both keep
+  turnip's annotation lines; return one of them as
+  `ExecuteResult.Output`. Read change counts from the Record
+  (`Record.StreamText(stream)`), never from the output you return.
+- **How the tool's streams are captured.** `execCommand` gives each
+  stream a pipe of its own, which is what lets a Plugin tell them apart.
+  The order within a stream is exact; across the two it is the order
+  written when the tool writes to one and then the other, and can be off
+  by a little when it writes to both at the same moment. A tool that
+  uses its streams conventionally, and whose Plugin needs neither `Select`
+  nor a count read from one stream, is better served by one pipe for
+  both, which is exact in every case. That capture does not exist yet:
+  add it beside `execCommand` when a Plugin wants it.
+
 ### 2. Declare its provisioning
 
 `Provisioning()` returns a `provisioning.Spec` (`internal/provisioning`):
@@ -224,13 +247,30 @@ failure you'd expect: `exec: "helm": executable file not found in $PATH`.
 `apply` alone would answer false: it diffs first and syncs only the
 releases that changed.
 
+**The command line** is `helmfile --no-color [--environment <env>]
+<operation> [arguments...]`. `--no-color` is a flag rather than
+`NO_COLOR` in the environment so the command line turnip annotates shows
+why the output has no color.
+
+**The output** is `Record.Text()` when Helmfile exits 0 and
+`Record.Select(Stderr, ...)` otherwise. Helmfile's logger writes to
+standard error: its progress, its release tables, its errors, and what
+`helm upgrade` prints. Standard output carries only the diffs, which
+`helmfile diff` holds in memory per release and prints in one burst once
+the last release is done. A failed operation's errors are therefore all
+on standard error, and its diffs are megabytes nobody can apply. That
+burst is also why the capture reads both pipes from one loop (see
+`readStreams`): a reader per pipe recorded the errors that follow the
+burst in the middle of it.
+
 **Counting a `diff`** reads standard output only. Each
 `Comparing release=<name>, chart=<chart>` header followed by at least one
 non-blank line before the next header (or the end) is one changed
-release, reported as `Change`. Standard error carries Helmfile's progress
-and errors ("Building dependency", "Adding repo", a failed helm diff),
-which, interleaved, would read as the body of the preceding release.
-turnip's own `@@ turnip: … @@` annotation lines are skipped.
+release, reported as `Change`. Standard error carries everything
+Helmfile says itself ("Building dependency", "Adding repo", a failed
+helm diff), which would otherwise read as the body of whichever release
+it landed after. turnip's own annotation lines are a stream of their
+own in the Record, so they are not in what is counted.
 
 **Counting an `apply` or `sync`** reads standard error only, where
 Helmfile prints its Release_Tables when it finishes; standard output

@@ -183,7 +183,7 @@ something unexpected. What each state means is in
 ## Plugin execution errors
 
 **Symptom**: the results comment shows a failure with the tool's own
-stdout/stderr attached.
+output attached.
 
 - **Tool not installed**: the comment names the missing tool/exit code.
   A tag the alias or the Server's `TURNIP_ALLOWED_IMAGES` does not allow
@@ -203,8 +203,12 @@ stdout/stderr attached.
   custom image, check it provides what the tool's page lists (for
   Helmfile,
   [What a custom Helmfile image must provide](../plugins/helmfile.md#what-a-custom-helmfile-image-must-provide)).
-- **Tool command failed** (e.g. `helmfile exited 1`): the
-  full stdout/stderr is in the PR comment. This is the tool telling you
+- **Tool command failed** (e.g. `helmfile exited 1`): the tool's
+  output is in the PR comment. What a failed operation's output shows is
+  the tool's choice; Helmfile's is its messages and errors without the
+  diffs (see
+  [A failed operation shows Helmfile's messages, not the diffs](../plugins/helmfile.md#a-failed-operation-shows-helmfiles-messages-not-the-diffs)).
+  This is the tool telling you
   something real about your infrastructure code, not a turnip failure.
   Fix what the tool reports and push again.
 - **Output parsing failed, but the comment shows zero changes**: the

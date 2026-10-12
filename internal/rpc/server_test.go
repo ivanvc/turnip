@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -31,6 +32,7 @@ type recordedHandlerCall struct {
 type fakeHandler struct {
 	mu            sync.Mutex
 	calls         []recordedHandlerCall
+	logErr        error
 	resultErr     error
 	credentialErr error
 	// credentialFor records the Operation each credential request was
@@ -42,7 +44,7 @@ func (h *fakeHandler) HandleLog(ctx context.Context, operationID string, line Lo
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.calls = append(h.calls, recordedHandlerCall{kind: "log", operationID: operationID, log: line})
-	return nil
+	return h.logErr
 }
 
 // CloneCredential records what it was asked for and answers with a
@@ -132,16 +134,90 @@ func TestExecuteOperation_FullStreamDispatchesInOrder(t *testing.T) {
 
 	handler.mu.Lock()
 	defer handler.mu.Unlock()
-	require.Len(t, handler.calls, 3)
+	require.Len(t, handler.calls, 2, "the stream's first log line, then the result")
 	assert.Equal(t, "log", handler.calls[0].kind)
 	assert.Equal(t, "op-1", handler.calls[0].operationID)
 	assert.Equal(t, "first", handler.calls[0].log.Message)
-	assert.Equal(t, "log", handler.calls[1].kind)
-	assert.Equal(t, "second", handler.calls[1].log.Message)
-	assert.Equal(t, "result", handler.calls[2].kind)
-	assert.Equal(t, "op-1", handler.calls[2].operationID)
-	assert.True(t, handler.calls[2].result.Success)
-	assert.Equal(t, "done", handler.calls[2].result.Output)
+	assert.Equal(t, "result", handler.calls[1].kind)
+	assert.Equal(t, "op-1", handler.calls[1].operationID)
+	assert.True(t, handler.calls[1].result.Success)
+	assert.Equal(t, "done", handler.calls[1].result.Output)
+}
+
+// sendLogStream opens a stream for operationID, sends lines log lines and a
+// result, and waits for the Server's answer.
+func sendLogStream(t *testing.T, client pb.OperationServiceClient, operationID string, lines int) {
+	t.Helper()
+
+	stream, err := client.ExecuteOperation(authedContext(operationID))
+	require.NoError(t, err)
+	require.NoError(t, stream.Send(&pb.ExecuteOperationRequest{
+		Payload: &pb.ExecuteOperationRequest_Start{Start: &pb.OperationStart{OperationId: operationID}},
+	}))
+	for i := range lines {
+		require.NoError(t, stream.Send(&pb.ExecuteOperationRequest{
+			Payload: &pb.ExecuteOperationRequest_Log{Log: &pb.LogLine{Level: "info", Message: fmt.Sprintf("line %d", i)}},
+		}))
+	}
+	require.NoError(t, stream.Send(&pb.ExecuteOperationRequest{
+		Payload: &pb.ExecuteOperationRequest_Result{Result: &pb.OperationResult{Success: true}},
+	}))
+	_, err = stream.CloseAndRecv()
+	require.NoError(t, err)
+}
+
+func (h *fakeHandler) logCalls() []recordedHandlerCall {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []recordedHandlerCall
+	for _, c := range h.calls {
+		if c.kind == "log" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// A verbose plan costs the handler one call, not one per line: the first
+// line marks the Operation started and the Server has no use for the rest.
+func TestExecuteOperation_HandlerHearsOnlyAStreamsFirstLogLine(t *testing.T) {
+	handler := &fakeHandler{}
+	client := dialServer(t, handler)
+
+	sendLogStream(t, client, "op-1", 20000)
+
+	logs := handler.logCalls()
+	require.Len(t, logs, 1)
+	assert.Equal(t, "line 0", logs[0].log.Message)
+}
+
+// Once per stream, not once per Operation: a resumed stream may reach a
+// replica that never saw the first, so it marks the Operation again.
+func TestExecuteOperation_ASecondStreamIsHeardOnceMore(t *testing.T) {
+	handler := &fakeHandler{}
+	client := dialServer(t, handler)
+
+	sendLogStream(t, client, "op-1", 50)
+	sendLogStream(t, client, "op-1", 50)
+
+	logs := handler.logCalls()
+	require.Len(t, logs, 2)
+	assert.Equal(t, "op-1", logs[0].operationID)
+	assert.Equal(t, "op-1", logs[1].operationID)
+}
+
+func TestExecuteOperation_HandleLogErrorAbortsRPC(t *testing.T) {
+	handler := &fakeHandler{logErr: errors.New("redis is down")}
+	client := dialServer(t, handler)
+
+	stream, err := client.ExecuteOperation(authedContext("op-1"))
+	require.NoError(t, err)
+	require.NoError(t, stream.Send(&pb.ExecuteOperationRequest{
+		Payload: &pb.ExecuteOperationRequest_Log{Log: &pb.LogLine{Level: "info", Message: "first"}},
+	}))
+
+	_, err = stream.CloseAndRecv()
+	require.Error(t, err, "a failure to mark the Operation started ends the stream")
 }
 
 func TestExecuteOperation_HandleResultErrorAbortsRPC(t *testing.T) {

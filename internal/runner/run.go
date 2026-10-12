@@ -17,7 +17,9 @@ import (
 // connection.
 type resultReporter interface {
 	Connect(ctx context.Context) error
-	LogLine(stream, line string)
+	// Follow starts sending rec's lines to the Server, each passed
+	// through clean first, and returns at once.
+	Follow(rec *plugin.Record, clean func(string) string)
 	Report(ctx context.Context, result OperationResult) error
 }
 
@@ -155,8 +157,8 @@ func runWith(ctx context.Context, cfg Config, rep resultReporter, selectPlugin p
 
 	// Logged unconditionally, before reporting, so a `kubectl logs` is
 	// never empty-handed even if the Server never acknowledges the result
-	// (Requirement 4.5). A summary, never the output: OnOutput already
-	// mirrored every line of it as it arrived.
+	// (Requirement 4.5). A summary, never the output: execute already
+	// mirrored every line of it, and waited for the last.
 	logResultSummary(stderr, opResult, outputBytes)
 
 	if err := rep.Report(ctx, opResult); err != nil {
@@ -231,24 +233,21 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 	// this comment.
 	clean := strip
 
-	// OnOutput fans out to two places for every (stream, line), and the
-	// first must never wait on the second (Requirement 4.7): write it to
-	// the matching local stream synchronously, then hand it to the
-	// reporter, which may block or take time reporting to the Server.
-	onOutput := func(stream, line string) {
-		switch stream {
-		case "stdout":
-			_, _ = fmt.Fprintln(stdout, line)
-		case "stderr":
-			_, _ = fmt.Fprintln(stderr, line)
-		}
-		// The local mirror above keeps the absolute path and any secret
-		// the tool printed — `kubectl logs` is the one place those are
-		// still worth having. Only what leaves for the Server is cleaned,
-		// and it is cleaned the same way the final output is, so a token
-		// cannot reach a live viewer by a route the comment closes.
-		rep.LogLine(stream, clean(line))
-	}
+	// The tool's output is recorded once, in rec, and two readers follow
+	// the record while the tool runs, each at its own pace: the mirror,
+	// for this container's own log, and the reporter's sender, for the
+	// Server. Neither can slow the other, the record or the tool
+	// (Requirement 4.7): a Server that reads slowly only delays its own
+	// copy.
+	//
+	// The mirror keeps the absolute path and any secret the tool printed:
+	// `kubectl logs` is the one place those are still worth having.
+	// Only what leaves for the Server is cleaned, and it is cleaned the
+	// same way the final output is, so a token cannot reach a live viewer
+	// by a route the comment closes.
+	rec := plugin.NewRecord()
+	mirrored := mirror(rec, stdout, stderr)
+	rep.Follow(rec, clean)
 
 	result, err := p.Execute(ctx, cfg.Operation, plugin.ExecuteOptions{
 		WorkingDir:  filepath.Join(dir, cfg.ProjectDir),
@@ -257,8 +256,14 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 		Config:      cfg.ToolConfig,
 		ExtraArgs:   cfg.ExtraArgs,
 		PlanData:    cfg.PlanData,
-		OnOutput:    onOutput,
+		Record:      rec,
 	})
+	// Execute closes the record of a command it ran. One it refused
+	// before running anything is closed here, so both readers end.
+	rec.Close()
+	// The whole output is in this container's log before anything is said
+	// about the result.
+	<-mirrored
 	if err != nil {
 		// No tool process produced an exit code: the binary is missing, or
 		// the Plugin refused the Operation before running anything.
@@ -283,6 +288,33 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 		opResult.FailureCategory = rpc.FailureToolExited
 	}
 	return opResult, len(output)
+}
+
+// mirror copies rec to this container's own output as it grows: the
+// tool's standard error to stderr, everything else (its standard output
+// and turnip's annotation lines) to stdout. The channel it returns is
+// closed once the last line of the closed record has been written.
+func mirror(rec *plugin.Record, stdout, stderr io.Writer) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		from := 0
+		for {
+			lines, closed := rec.Next(context.Background(), from)
+			for _, l := range lines {
+				w := stdout
+				if l.Stream == plugin.Stderr {
+					w = stderr
+				}
+				_, _ = fmt.Fprintln(w, l.Text)
+			}
+			from += len(lines)
+			if closed {
+				return
+			}
+		}
+	}()
+	return done
 }
 
 // logResultSummary writes the Runner's one line about its result, with the
