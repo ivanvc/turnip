@@ -15,13 +15,12 @@ Slice numbers on this page refer to its `roadmap.md`.
 
 In the order discussed so far; reorder here.
 
-1. `fix-output-order`: implemented, awaiting deploy
-2. Invalid UTF-8 in output, not yet a change: a byte the protobuf string
+1. Invalid UTF-8 in output, not yet a change: a byte the protobuf string
    fields refuse makes every delivery attempt fail, so the Runner
    retries for 15 minutes and the check stays in progress (found by the
    review of `fix-large-output`)
-3. `fix-results-comment-on-replica-loss`: design next
-4. Comment parts split mid-line, not yet a change: a Project's output
+2. `fix-results-comment-on-replica-loss`: design next
+3. Comment parts split mid-line, not yet a change: a Project's output
    too long for one comment is split into `output part N/M` pieces at an
    exact byte count, so a line (or a multi-byte character) can be cut
    across two comments. Parts should end at the last whole line that
@@ -34,7 +33,6 @@ In the order discussed so far; reorder here.
 | Change | What it does | Stage |
 |---|---|---|
 | [`fix-results-comment-on-replica-loss`](changes/fix-results-comment-on-replica-loss/) | a trigger's results comment and later commands survive the loss of the replica that dispatched them | specs |
-| [`fix-output-order`](changes/fix-output-order/) | output in write order; each plugin decides what its output shows | implemented; archived once a deployment shows a failed plan's errors alone |
 | [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized (Slice 40) | proposal |
 | [`fix-plan-survives-push`](changes/fix-plan-survives-push/) | every push marks the pull request's ready plans stale, and says so | proposal |
 | [`fix-concurrent-mutations`](changes/fix-concurrent-mutations/) | a second mutating command for a Project is refused while the first runs | proposal |
