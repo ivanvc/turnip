@@ -57,8 +57,14 @@ type Orchestrator struct {
 	plugins  PluginRegistry
 	// catalog is what config.Parse resolves each Project's uses: against:
 	// the Plugins' Aliases and the operator's Access_List (images.go).
-	catalog                      config.Catalog
-	records                      *recordStore
+	catalog config.Catalog
+	records *recordStore
+	// triggers holds the triggers carried across replicas (trigger.go).
+	triggers *triggerStore
+	// dispatch starts one Target's Operation for a trigger's command; see
+	// carry.go. It is executeOne when nil, which is what New leaves it, and
+	// exists so carrying a trigger forward can be tested without Jobs.
+	dispatch                     dispatchFunc
 	redis                        *redis.Client
 	minimizeOutdatedPlanComments bool
 	// maxCommentsPerProject caps the parts one Project's output takes in a
@@ -92,6 +98,10 @@ type Orchestrator struct {
 
 	startTimeout  time.Duration
 	sweepInterval time.Duration
+	// triggerRetryBackoff is the wait before the second attempt at a
+	// trigger step that Redis failed, doubled before each one after
+	// (retryTrigger). Zero, an unset test fixture, retries without waiting.
+	triggerRetryBackoff time.Duration
 }
 
 // New constructs an Orchestrator. runnerServerAddr is the address a
@@ -121,6 +131,7 @@ func New(
 		plugins:                      plugins,
 		catalog:                      catalog,
 		records:                      newRecordStore(redisClient),
+		triggers:                     newTriggerStore(redisClient),
 		redis:                        redisClient,
 		minimizeOutdatedPlanComments: minimizeOutdatedPlanComments,
 		maxCommentsPerProject:        maxCommentsPerProject,
@@ -132,8 +143,9 @@ func New(
 		cloneSubmodules:      cloneSubmodules,
 		mutationRequirements: mutationRequirements,
 
-		startTimeout:  defaultStartTimeout,
-		sweepInterval: defaultSweepInterval,
+		startTimeout:        defaultStartTimeout,
+		sweepInterval:       defaultSweepInterval,
+		triggerRetryBackoff: defaultTriggerRetryBackoff,
 	}
 	if jobsClient != nil {
 		o.runnerNamespace = jobsClient.Namespace()

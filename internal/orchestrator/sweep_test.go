@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,8 @@ import (
 	"github.com/ivanvc/turnip/internal/config"
 	"github.com/ivanvc/turnip/internal/github"
 	"github.com/ivanvc/turnip/internal/jobs"
+	"github.com/ivanvc/turnip/internal/lock"
+	"github.com/ivanvc/turnip/internal/rpc"
 )
 
 func testSweepOrchestrator(t *testing.T, jobsClient jobCreator) (*Orchestrator, *fakeExecuteClient) {
@@ -24,6 +27,7 @@ func testSweepOrchestrator(t *testing.T, jobsClient jobCreator) (*Orchestrator, 
 		plugins:            testRegistry(),
 		catalog:            testCatalog(),
 		records:            newRecordStore(client),
+		triggers:           newTriggerStore(client),
 		redis:              client,
 		// The sweep now applies a transition, so it has a Lock dependency
 		// it did not have when a timeout mutated nothing.
@@ -58,28 +62,14 @@ func TestSweepOnce_ClaimsExpiredUnstartedRecord(t *testing.T) {
 	o, client := testSweepOrchestrator(t, jobsClient)
 	require.NoError(t, o.records.Create(context.Background(), sweepTestRecord("op-1", time.Now().Add(-time.Minute), false)))
 
-	resultCh := make(chan github.ProjectResult, 1)
-	go func() {
-		r, err := waitForDone(context.Background(), o.redis, "op-1")
-		assert.NoError(t, err)
-		resultCh <- r
-	}()
-	require.Eventually(t, func() bool {
-		return o.redis.PubSubNumSub(context.Background(), doneChannel("op-1")).Val()[doneChannel("op-1")] > 0
-	}, time.Second, time.Millisecond)
-
-	o.sweepOnce(context.Background())
+	r := finalizedResult(t, o, "op-1", func() {
+		o.sweepOnce(context.Background())
+	})
 
 	assert.True(t, statusCalled)
 	assert.Equal(t, 1, client.updateCheckRunCalled)
-
-	select {
-	case r := <-resultCh:
-		assert.False(t, r.Success)
-		assert.Contains(t, r.Output, "Pending")
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for published timeout result")
-	}
+	assert.False(t, r.Success)
+	assert.Contains(t, r.Output, "Pending")
 
 	rec, err := o.records.get(context.Background(), "op-1")
 	require.NoError(t, err)
@@ -188,26 +178,93 @@ func TestSweepOnce_TimeoutCompletionFailureIsNotedAsInProgress(t *testing.T) {
 	assert.Contains(t, got.Output, "its check stays in progress")
 }
 
-// publishedSweep runs one sweep and returns the ProjectResult it published.
+// publishedSweep runs one sweep and returns the ProjectResult it added to
+// the Operation's trigger.
 func publishedSweep(t *testing.T, o *Orchestrator, operationID string) github.ProjectResult {
 	t.Helper()
-	ch := make(chan github.ProjectResult, 1)
-	go func() {
-		r, err := waitForDone(context.Background(), o.redis, operationID)
-		assert.NoError(t, err)
-		ch <- r
-	}()
-	require.Eventually(t, func() bool {
-		return o.redis.PubSubNumSub(context.Background(), doneChannel(operationID)).Val()[doneChannel(operationID)] > 0
-	}, time.Second, time.Millisecond)
+	return finalizedResult(t, o, operationID, func() {
+		o.sweepOnce(context.Background())
+	})
+}
+
+// abandonableRecord is a started record created age ago.
+func abandonableRecord(operationID string, age time.Duration) *OperationRecord {
+	rec := sweepTestRecord(operationID, time.Now().Add(-age), true)
+	rec.CreatedAt = time.Now().Add(-age)
+	return rec
+}
+
+// untouchedLocks fails the test if the sweep moves or releases a Lock.
+type untouchedLocks struct {
+	fakeLockManager
+	t *testing.T
+}
+
+func (u *untouchedLocks) Apply(ctx context.Context, projectKey string, prNumber int, ev lock.Event, plan *lock.PlanRecord) (lock.Transition, error) {
+	u.t.Error("abandoning an Operation must not move its Lock")
+	return lock.Transition{}, nil
+}
+
+func (u *untouchedLocks) ReleaseLock(ctx context.Context, projectKey string, prNumber int) error {
+	u.t.Error("abandoning an Operation must not release its Lock")
+	return nil
+}
+
+func TestSweepOnce_AbandonsStartedRecordAfter24Hours(t *testing.T) {
+	o, client := testSweepOrchestrator(t, &fakeJobCreator{t: t})
+	o.locks = &untouchedLocks{t: t}
+	require.NoError(t, o.records.Create(context.Background(), abandonableRecord("op-1", abandonAfter+time.Minute)))
+
+	r := publishedSweep(t, o, "op-1")
+
+	assert.Equal(t, "No result was received from the Runner within 24 hours.", r.Output)
+	assert.False(t, r.Success)
+	assert.True(t, r.Locked, "the Lock is left as it was")
+	assert.Zero(t, client.updateCheckRunCalled, "the check stays in progress")
+	rec, err := o.records.get(context.Background(), "op-1")
+	require.NoError(t, err)
+	assert.Nil(t, rec, "the record is deleted")
+}
+
+func TestSweepOnce_LeavesRecordStartedLessThan24HoursAgo(t *testing.T) {
+	o, client := testSweepOrchestrator(t, &fakeJobCreator{t: t})
+	require.NoError(t, o.records.Create(context.Background(), abandonableRecord("op-1", 23*time.Hour)))
 
 	o.sweepOnce(context.Background())
 
-	select {
-	case r := <-ch:
-		return r
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for published timeout result")
-		return github.ProjectResult{}
-	}
+	assert.Zero(t, client.updateCheckRunCalled)
+	rec, err := o.records.get(context.Background(), "op-1")
+	require.NoError(t, err)
+	assert.NotNil(t, rec)
+}
+
+func TestSweepOnce_ResultAfterAbandonmentIsIgnored(t *testing.T) {
+	o, client := testSweepOrchestrator(t, &fakeJobCreator{t: t})
+	require.NoError(t, o.records.Create(context.Background(), abandonableRecord("op-1", abandonAfter+time.Minute)))
+	r := publishedSweep(t, o, "op-1")
+	require.Equal(t, abandonedOutput, r.Output)
+
+	require.NoError(t, o.HandleResult(context.Background(), "op-1", rpc.OperationResult{Success: true}))
+
+	assert.Zero(t, client.updateCheckRunCalled, "a late result leaves the check untouched")
+	assert.Len(t, heldResults(t, o, "held-op-1"), 1, "and adds nothing to the trigger")
+}
+
+func TestSweepOnce_ConcurrentSweepsAbandonOnce(t *testing.T) {
+	o, _ := testSweepOrchestrator(t, &fakeJobCreator{t: t})
+	require.NoError(t, o.records.Create(context.Background(), abandonableRecord("op-1", abandonAfter+time.Minute)))
+
+	r := finalizedResult(t, o, "op-1", func() {
+		var wg sync.WaitGroup
+		for range 2 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				o.sweepOnce(context.Background())
+			}()
+		}
+		wg.Wait()
+	})
+
+	assert.Equal(t, abandonedOutput, r.Output, "finalizedResult requires exactly one result")
 }

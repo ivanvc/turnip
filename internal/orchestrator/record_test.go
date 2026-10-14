@@ -215,3 +215,122 @@ func TestRecordStore_ScanOperationKeys(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"operation:op-1", "operation:op-2", "operation:op-3"}, keys)
 }
+
+func TestRecordStore_CreateSetsTwentyFiveHourExpiry(t *testing.T) {
+	s, client := newTestRecordStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.Create(ctx, testRecord("op-1")))
+
+	ttl, err := client.TTL(ctx, operationKey("op-1")).Result()
+	require.NoError(t, err)
+	assert.Greater(t, ttl, 24*time.Hour)
+	assert.LessOrEqual(t, ttl, 25*time.Hour)
+}
+
+func TestRecordStore_TriggerFieldsRoundTrip(t *testing.T) {
+	s, _ := newTestRecordStore(t)
+	ctx := context.Background()
+	rec := testRecord("op-1")
+	rec.TriggerID = "trig-1"
+	rec.CommandIndex = 2
+	require.NoError(t, s.Create(ctx, rec))
+
+	got, claimed, err := s.ClaimForResult(ctx, "op-1")
+	require.NoError(t, err)
+	require.True(t, claimed)
+	assert.Equal(t, "trig-1", got.TriggerID)
+	assert.Equal(t, 2, got.CommandIndex)
+}
+
+// TestRecordStore_ClaimModes_AgainstRecordStates covers every claim mode
+// against every record state.
+func TestRecordStore_ClaimModes_AgainstRecordStates(t *testing.T) {
+	now := time.Now()
+	states := []struct {
+		name   string
+		setup  func(rec *OperationRecord)
+		start  bool
+		gone   bool
+		result bool
+		timout bool
+		aband  bool
+	}{
+		{name: "not started, past start deadline", setup: func(r *OperationRecord) {
+			r.StartDeadline = now.Add(-time.Minute).Unix()
+		}, result: true, timout: true},
+		{name: "not started, 25 hours old", setup: func(r *OperationRecord) {
+			r.StartDeadline = now.Add(-25 * time.Hour).Unix()
+			r.CreatedAt = now.Add(-25 * time.Hour)
+		}, result: true, timout: true},
+		{name: "started, 23 hours old", start: true, setup: func(r *OperationRecord) {
+			r.CreatedAt = now.Add(-23 * time.Hour)
+		}, result: true},
+		{name: "started, 24 hours old", start: true, setup: func(r *OperationRecord) {
+			r.CreatedAt = now.Add(-24 * time.Hour)
+		}, result: true, aband: true},
+		{name: "gone", gone: true},
+	}
+	modes := []struct {
+		name  string
+		claim func(s *recordStore, ctx context.Context) (bool, error)
+		want  func(i int) bool
+	}{
+		{"result", func(s *recordStore, ctx context.Context) (bool, error) {
+			_, c, err := s.ClaimForResult(ctx, "op-1")
+			return c, err
+		}, func(i int) bool { return states[i].result }},
+		{"timeout", func(s *recordStore, ctx context.Context) (bool, error) {
+			_, c, err := s.ClaimForTimeout(ctx, "op-1", now)
+			return c, err
+		}, func(i int) bool { return states[i].timout }},
+		{"abandon", func(s *recordStore, ctx context.Context) (bool, error) {
+			_, c, err := s.ClaimForAbandon(ctx, "op-1", now)
+			return c, err
+		}, func(i int) bool { return states[i].aband }},
+	}
+	for i, st := range states {
+		for _, m := range modes {
+			t.Run(st.name+"/"+m.name, func(t *testing.T) {
+				s, _ := newTestRecordStore(t)
+				ctx := context.Background()
+				if !st.gone {
+					rec := testRecord("op-1")
+					st.setup(rec)
+					require.NoError(t, s.Create(ctx, rec))
+					if st.start {
+						_, _, err := s.MarkStarted(ctx, "op-1")
+						require.NoError(t, err)
+					}
+				}
+				claimed, err := m.claim(s, ctx)
+				require.NoError(t, err)
+				assert.Equal(t, m.want(i), claimed)
+			})
+		}
+	}
+}
+
+func TestRecordStore_Claim_FinalizedRefusedByEveryMode(t *testing.T) {
+	now := time.Now()
+	s, _ := newTestRecordStore(t)
+	ctx := context.Background()
+	rec := testRecord("op-1")
+	rec.CreatedAt = now.Add(-30 * time.Hour)
+	rec.StartDeadline = now.Add(-time.Hour).Unix()
+	require.NoError(t, s.Create(ctx, rec))
+	_, _, err := s.MarkStarted(ctx, "op-1")
+	require.NoError(t, err)
+	_, claimed, err := s.ClaimForAbandon(ctx, "op-1", now)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	_, claimed, err = s.ClaimForResult(ctx, "op-1")
+	require.NoError(t, err)
+	assert.False(t, claimed)
+	_, claimed, err = s.ClaimForTimeout(ctx, "op-1", now)
+	require.NoError(t, err)
+	assert.False(t, claimed)
+	_, claimed, err = s.ClaimForAbandon(ctx, "op-1", now)
+	require.NoError(t, err)
+	assert.False(t, claimed)
+}

@@ -128,15 +128,18 @@ func (f *fakeCommentEventClient) GenerateInstallationToken(ctx context.Context, 
 func testCommentOrchestrator(t *testing.T, locks lock.LockManager) *Orchestrator {
 	t.Helper()
 	client := newTestRedisClient(t)
-	return &Orchestrator{
-		locks:              locks,
-		jobs:               &fakeJobCreator{t: t, redis: client, result: github.ProjectResult{Success: true}},
-		plugins:            testRegistry(),
-		catalog:            testCatalog(),
-		records:            newRecordStore(client),
-		redis:              client,
-		installationClient: func(id int64) github.GitHubClient { return nil }, // executeOne doesn't reconstruct clients
-	}
+	return bindFakeRunner(&Orchestrator{
+		locks:    locks,
+		jobs:     &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}},
+		plugins:  testRegistry(),
+		catalog:  testCatalog(),
+		records:  newRecordStore(client),
+		triggers: newTriggerStore(client),
+		redis:    client,
+		// Replaced by callHandleIssueComment: the trigger's dispatch and
+		// its finalization both build their client from the installation.
+		installationClient: func(id int64) github.GitHubClient { return nil },
+	})
 }
 
 func commentEvent(body, author string) *github.WebhookEvent {
@@ -317,7 +320,10 @@ func TestHandleIssueComment_SequentialCommandsOrdered(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Equal(t, []string{"acquire", "islocked"}, order)
+	// The diff's Lock is acquired before anything asks whether the pull
+	// request holds it: finalizing the diff does, and then the apply's
+	// admission, which begins only once the diff's result is in.
+	assert.Equal(t, []string{"acquire", "islocked"}, order[:2])
 }
 
 func TestHandleIssueComment_UnlockNeverCreatesJobOrRecord(t *testing.T) {

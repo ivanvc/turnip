@@ -121,28 +121,14 @@ func TestReportTimeout_ReportsTheLockAsHeld(t *testing.T) {
 			rec.Operation = tc.operation
 			require.NoError(t, o.records.Create(context.Background(), rec))
 
-			resultCh := make(chan github.ProjectResult, 1)
-			go func() {
-				r, err := waitForDone(context.Background(), o.redis, "op-1")
-				assert.NoError(t, err)
-				resultCh <- r
-			}()
-			require.Eventually(t, func() bool {
-				return o.redis.PubSubNumSub(context.Background(), doneChannel("op-1")).Val()[doneChannel("op-1")] > 0
-			}, time.Second, time.Millisecond)
-
-			o.sweepOnce(context.Background())
-
-			select {
-			case r := <-resultCh:
-				assert.True(t, r.Locked,
-					"a timed-out Operation leaves its Lock held, and the comment must say so")
-				if tc.wantNote {
-					assert.Contains(t, r.LockNote, "Re-plan",
-						"a timed-out apply may still be running, so the plan is no longer usable")
-				}
-			case <-time.After(2 * time.Second):
-				t.Fatal("timed out waiting for published timeout result")
+			r := finalizedResult(t, o, "op-1", func() {
+				o.sweepOnce(context.Background())
+			})
+			assert.True(t, r.Locked,
+				"a timed-out Operation leaves its Lock held, and the comment must say so")
+			if tc.wantNote {
+				assert.Contains(t, r.LockNote, "Re-plan",
+					"a timed-out apply may still be running, so the plan is no longer usable")
 			}
 		})
 	}
@@ -181,7 +167,7 @@ func TestAdmission_AStalePlanIsRefused(t *testing.T) {
 			o, _ := testResultOrchestrator(t, locks)
 			o.plugins = testRegistry()
 
-			res := o.executeOne(context.Background(), &fakeExecuteClient{},
+			res := o.runOne(t, context.Background(), &fakeExecuteClient{},
 				github.Repository{Owner: "owner", Name: "repo"},
 				github.PullRequest{Number: 42, HeadSHA: "abc"},
 				1,
@@ -210,7 +196,7 @@ func TestAdmission_APreUpgradeLockIsRefused(t *testing.T) {
 	o, _ := testResultOrchestrator(t, locks)
 	o.plugins = testRegistry()
 
-	res := o.executeOne(context.Background(), &fakeExecuteClient{},
+	res := o.runOne(t, context.Background(), &fakeExecuteClient{},
 		github.Repository{Owner: "owner", Name: "repo"},
 		github.PullRequest{Number: 42, HeadSHA: "abc"},
 		1,
@@ -244,25 +230,11 @@ func TestHandleResult_AFailedTransitionAnnouncesNothing(t *testing.T) {
 	}
 	require.NoError(t, o.records.Create(context.Background(), rec))
 
-	resultCh := make(chan github.ProjectResult, 1)
-	go func() {
-		r, err := waitForDone(context.Background(), o.redis, "op-1")
-		assert.NoError(t, err)
-		resultCh <- r
-	}()
-	require.Eventually(t, func() bool {
-		return o.redis.PubSubNumSub(context.Background(), doneChannel("op-1")).Val()[doneChannel("op-1")] > 0
-	}, time.Second, time.Millisecond)
-
-	require.NoError(t, o.HandleResult(context.Background(), "op-1", rpc.OperationResult{Success: true}))
-
-	select {
-	case r := <-resultCh:
-		assert.True(t, r.Locked, "a release that errored left the Lock held; say so")
-		assert.Empty(t, r.LockNote, "and announce nothing, because nothing happened")
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for published result")
-	}
+	r := finalizedResult(t, o, "op-1", func() {
+		require.NoError(t, o.HandleResult(context.Background(), "op-1", rpc.OperationResult{Success: true}))
+	})
+	assert.True(t, r.Locked, "a release that errored left the Lock held; say so")
+	assert.Empty(t, r.LockNote, "and announce nothing, because nothing happened")
 }
 
 // The scope reported is the Operation's own, taken from the record the Job
@@ -282,22 +254,8 @@ func TestHandleResult_ReportsTheScopeItRanWith(t *testing.T) {
 	}
 	require.NoError(t, o.records.Create(context.Background(), rec))
 
-	resultCh := make(chan github.ProjectResult, 1)
-	go func() {
-		r, err := waitForDone(context.Background(), o.redis, "op-1")
-		assert.NoError(t, err)
-		resultCh <- r
-	}()
-	require.Eventually(t, func() bool {
-		return o.redis.PubSubNumSub(context.Background(), doneChannel("op-1")).Val()[doneChannel("op-1")] > 0
-	}, time.Second, time.Millisecond)
-
-	require.NoError(t, o.HandleResult(context.Background(), "op-1", rpc.OperationResult{Success: true}))
-
-	select {
-	case r := <-resultCh:
-		assert.Equal(t, []string{"-l", "name=api"}, r.ScopeArgs)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for published result")
-	}
+	r := finalizedResult(t, o, "op-1", func() {
+		require.NoError(t, o.HandleResult(context.Background(), "op-1", rpc.OperationResult{Success: true}))
+	})
+	assert.Equal(t, []string{"-l", "name=api"}, r.ScopeArgs)
 }

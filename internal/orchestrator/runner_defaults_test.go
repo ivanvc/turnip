@@ -102,8 +102,7 @@ func (r *recordingJobCreator) created() []*batchv1.Job {
 func runnerDefaultsOrchestrator(t *testing.T, locks lock.LockManager, permitServiceAccount bool) (*Orchestrator, *recordingJobCreator) {
 	t.Helper()
 	jobsClient := &recordingJobCreator{fakeJobCreator: &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}}
-	o, client := testOrchestrator(t, locks, jobsClient)
-	jobsClient.redis = client
+	o, _ := testOrchestrator(t, locks, jobsClient)
 	o.runnerServiceAccount = "turnip-runner"
 	o.allowedOverrides = allowServiceAccount(permitServiceAccount)
 	return o, jobsClient
@@ -191,7 +190,7 @@ func TestRunnerDefaults_TopLevelServiceAccountRefusedWhenNotPermitted(t *testing
 	client := newSitesClient()
 	target := planTarget(parsedProject(t, topLevelServiceAccountYAML, "web"))
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	assert.False(t, result.Success)
 	const want = `Project "web" inherits runner.serviceAccount "deployer" from the top-level runner: block`
@@ -237,7 +236,7 @@ func TestRunnerDefaults_TopLevelServiceAccountReachesThePodWhenPermitted(t *test
 	o, jobsClient := runnerDefaultsOrchestrator(t, &fakeLockManager{}, true)
 	project := parsedProject(t, topLevelServiceAccountYAML, "web")
 
-	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, planTarget(project))
+	result := o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, planTarget(project))
 	require.True(t, result.Success, "the Job must be built and dispatched: %s", result.Output)
 
 	require.Len(t, jobsClient.created(), 1)
@@ -252,7 +251,7 @@ func TestRunnerDefaults_ProjectServiceAccountWinsOverTopLevel(t *testing.T) {
 		o, jobsClient := runnerDefaultsOrchestrator(t, &fakeLockManager{}, true)
 		project := parsedProject(t, bothLevelsServiceAccountYAML, "web")
 
-		result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, planTarget(project))
+		result := o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, planTarget(project))
 		require.True(t, result.Success, "the Job must be built and dispatched: %s", result.Output)
 
 		require.Len(t, jobsClient.created(), 1)
@@ -264,7 +263,7 @@ func TestRunnerDefaults_ProjectServiceAccountWinsOverTopLevel(t *testing.T) {
 		client := newSitesClient()
 		target := planTarget(parsedProject(t, bothLevelsServiceAccountYAML, "web"))
 
-		result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+		result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 		assert.False(t, result.Success)
 		check := requireOneCreated(t, client, target)
@@ -281,7 +280,7 @@ func TestRunnerDefaults_NoServiceAccountAnywhereUsesTheServerDefault(t *testing.
 	o, jobsClient := runnerDefaultsOrchestrator(t, &fakeLockManager{}, false)
 	project := parsedProject(t, inheritedEnvYAML, "api")
 
-	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, planTarget(project))
+	result := o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, planTarget(project))
 	require.True(t, result.Success, "the Job must be built and dispatched: %s", result.Output)
 
 	require.Len(t, jobsClient.created(), 1)
@@ -312,7 +311,7 @@ func TestRunnerDefaults_InheritedEnvReachesTheToolContainer(t *testing.T) {
 				{"api", wantAPIEnv},
 			} {
 				target := Target{Project: parsedProject(t, inheritedEnvYAML, tc.project), Operation: operation, TriggeredBy: "comment"}
-				result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
+				result := o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
 				require.True(t, result.Success, "the Job must be built and dispatched: %s", result.Output)
 
 				env := toolEnv(t, jobsClient.lastCreatedJob())

@@ -46,6 +46,7 @@ func testCommentsOrchestrator(t *testing.T, minimizeFlag bool) (*Orchestrator, *
 		plugins:                      testRegistry(),
 		catalog:                      testCatalog(),
 		records:                      newRecordStore(client),
+		triggers:                     newTriggerStore(client),
 		redis:                        client,
 		minimizeOutdatedPlanComments: minimizeFlag,
 	}

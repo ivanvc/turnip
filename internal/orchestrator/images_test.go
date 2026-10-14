@@ -193,7 +193,7 @@ func TestImageDigest(t *testing.T) {
 // tool's image under RunInImage.
 func mainContainer(t *testing.T, o *Orchestrator, target Target, jobsClient *fakeJobCreator) corev1.Container {
 	t.Helper()
-	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
 	require.True(t, result.Success, "the Job must be built and dispatched: %s", result.Output)
 	job := jobsClient.lastCreatedJob()
 	require.NotNil(t, job)

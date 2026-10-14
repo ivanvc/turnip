@@ -146,6 +146,30 @@ note says what the failure left in the PR's checks tab.
   often a GitHub rate limit or outage; if it recurs, ask whoever runs
   turnip.
 
+## A Project reports no result from the Runner
+
+**Symptom**: a Project's section in the results comment says `No result
+was received from the Runner within 24 hours.`, and its check is still in
+progress in the PR's checks tab.
+
+The Runner started the operation but never reported back, so turnip gave
+up waiting after 24 hours and let the rest of the comment go out. Nothing
+is known about what the operation changed: it may still have been running
+or may have finished without its result arriving. For that reason turnip
+leaves the check in progress and the Project's lock held, instead of
+marking either as finished. A result that arrives later is ignored.
+
+Look at the Project's real state before acting (for example with a
+fresh `/turnip diff`), then run `/turnip unlock <project>` if the lock should not
+stay. The stuck check blocks the merge if a branch protection rule
+requires it, and the `turnip` check does not pass either, because the
+Project was never reported as applied (see
+[The `turnip` check](#the-turnip-check)); unlocking changes neither.
+What clears both is running the Project again: plan it and apply it, so
+a new check of the same name replaces the stuck one and `turnip` moves
+with the apply, or push a commit, which starts every check afresh. If it
+recurs, ask whoever runs turnip.
+
 ## The `turnip` check
 
 **Symptom**: the required `turnip` check blocks a merge, or shows

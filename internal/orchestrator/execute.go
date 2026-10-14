@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,36 +24,22 @@ func pullRequestURL(owner, repo string, prNumber int) string {
 	return fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, prNumber)
 }
 
-// executeTargets runs one goroutine per Target (Requirement 2.4/17.1's
-// concurrency requirement) and waits for all of them before returning.
-func (o *Orchestrator) executeTargets(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, installationID int64, targets []Target) []github.ProjectResult {
-	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
-		results []github.ProjectResult
-	)
-	for _, t := range targets {
-		wg.Add(1)
-		go func(t Target) {
-			defer wg.Done()
-			r := o.executeOne(ctx, client, repo, pr, installationID, t)
-			mu.Lock()
-			results = append(results, r)
-			mu.Unlock()
-		}(t)
-	}
-	wg.Wait()
-	return results
-}
-
 // executeOne runs the Lock → check run → Job flow for one Target
-// (Requirements 6, 7, 9), blocking until the Operation is finalized (a
-// genuine result or a sweep-detected timeout) and returning its
-// ProjectResult.
-func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, installationID int64, t Target) (result github.ProjectResult) {
+// (Requirements 6, 7, 9) as part of command of trigger triggerID, and ends
+// when the Job is created. It returns nil then: the Operation Record names
+// the trigger and the command, and whichever replica finalizes the
+// Operation completes the Project in its trigger. It returns the Project's
+// refusal when no Job was created, which the caller completes instead. So
+// each Project is completed exactly once, by one side or the other.
+func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, installationID int64, triggerID string, command int, t Target) (refused *github.ProjectResult) {
+	// A dispatched Operation's duration is observed when it is finalized,
+	// from its record's creation time. A refusal ends here, so it is
+	// observed here.
 	start := time.Now()
 	defer func() {
-		metrics.ObserveOperationDuration(t.Project.Tool, t.Operation, time.Since(start))
+		if refused != nil {
+			metrics.ObserveOperationDuration(t.Project.Tool, t.Operation, time.Since(start))
+		}
 	}()
 
 	// Every event below concerns this one Target, so its identity is
@@ -84,10 +69,8 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	// pass without it (aggregate-check-run Requirement 4.4). A refused
 	// Mutating_Operation ran nothing and changes nothing (4.7). Neither
 	// applies once the Job exists: from then on the Operation's outcome is
-	// HandleResult's or the sweep's to record, and a late "not planned"
-	// from here could overwrite it.
-	dispatched := false
-	reject := func(r refusal) github.ProjectResult {
+	// HandleResult's or the sweep's to record, and nothing here refuses it.
+	reject := func(r refusal) *github.ProjectResult {
 		log.WarnContext(ctx, "operation rejected", "reason", r.reason)
 		rejected := rejectedResult(t, r.reason)
 		p, ok := o.plugins[t.Project.Tool]
@@ -95,18 +78,18 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		// A running check that could not be created is already noted by the
 		// deferred appendCheckRunNote; trying again here would only note the
 		// same missing check twice.
-		if !dispatched && checkRunErr == nil {
+		if checkRunErr == nil {
 			action, err := o.refusalCheck(ctx, client, repo, pr, t, isPlan, checkRunID, r)
 			rejected = appendCheckRunNote(rejected, action, err)
 		}
-		if isPlan && !dispatched {
+		if isPlan {
 			ref := prRef{Owner: repo.Owner, Repo: repo.Name, PRNumber: pr.Number, HeadSHA: pr.HeadSHA}
 			if err := o.recordOutcome(ctx, client, ref, t.Project.Name, refusalEntry(t, r)); err != nil {
 				log.ErrorContext(ctx, "recording refused plan for the aggregate check", "error", err)
 				rejected = appendAggregateNote(rejected, err)
 			}
 		}
-		return rejected
+		return &rejected
 	}
 
 	// Every Target has a Plugin: Targets come only from a turnip.yaml that
@@ -118,7 +101,8 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 	p, ok := o.plugins[t.Project.Tool]
 	if !ok {
 		log.ErrorContext(ctx, "no plugin registered for a target's tool", "tool", t.Project.Tool)
-		return rejectedResult(t, fmt.Sprintf("internal error: no plugin is registered for tool %q", t.Project.Tool))
+		rejected := rejectedResult(t, fmt.Sprintf("internal error: no plugin is registered for tool %q", t.Project.Tool))
+		return &rejected
 	}
 
 	// Resolved before any Lock is acquired: a refused ServiceAccount must
@@ -289,13 +273,22 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		// Target are skipped.
 		slog.ErrorContext(ctx, "creating check run", "owner", repo.Owner, "repo", repo.Name, "pr_number", pr.Number, "project", t.Project.Name, "error", checkRunErr)
 	}
-	// ...but it is not silent. Whatever this function ends up returning —
-	// a rejection below, or the Runner's own result — carries a note
-	// saying the check run is missing and why. Without it the PR shows a
-	// result comment and simply no check run, with the reason reachable
-	// only from the Server's log.
-	defer func() { result = appendCheckRunNote(result, checkCreate, checkRunErr) }()
+	// ...but it is not silent. Whatever reaches the pull request for this
+	// Project carries a note saying the check run is missing and why: a
+	// refusal below gets it here, and the Runner's own result gets it at
+	// finalization, from the error kept in the Operation Record. Without it
+	// the PR shows a result comment and simply no check run, with the reason
+	// reachable only from the Server's log.
+	defer func() {
+		if refused != nil {
+			*refused = appendCheckRunNote(*refused, checkCreate, checkRunErr)
+		}
+	}()
 
+	checkRunErrText := ""
+	if checkRunErr != nil {
+		checkRunErrText = checkRunErr.Error()
+	}
 	operationID := uuid.NewString()
 	rec := &OperationRecord{
 		OperationID:    operationID,
@@ -316,7 +309,10 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		// through queueing, scheduling and image pulls (Requirement 2.4).
 		TokenRepositories: o.tokenScopeFor(ctx, client, repo, pr.HeadSHA, submodules).Repositories,
 		TriggeredBy:       t.TriggeredBy,
+		TriggerID:         triggerID,
+		CommandIndex:      command,
 		CheckRunID:        checkRunID,
+		CheckRunError:     checkRunErrText,
 		StartDeadline:     time.Now().Add(o.startTimeout).Unix(),
 		CreatedAt:         time.Now(),
 	}
@@ -327,23 +323,6 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 			title:  recordNotSavedTitle(),
 		})
 	}
-
-	// Subscribe before creating the Job: publishDone must never be able to
-	// fire before a subscriber exists (Redis Pub/Sub has no replay). The
-	// bound here is deliberately generous (matching operationTTL, not
-	// o.startTimeout) — a Job that has genuinely started may still be
-	// legitimately mid-apply for a long time; this exists only to stop
-	// leaking a goroutine forever if a publish never arrives at all (a bug
-	// elsewhere), not to police how long a real Operation is allowed to run.
-	doneCtx, cancel := context.WithTimeout(ctx, operationTTL)
-	defer cancel()
-	done := make(chan struct{})
-	var waitResult github.ProjectResult
-	var waitErr error
-	go func() {
-		waitResult, waitErr = waitForDone(doneCtx, o.redis, operationID)
-		close(done)
-	}()
 
 	imageRef, pullAlways := jobImage(t.Project, isPlan, recordedDigest)
 	build := o.buildJob
@@ -389,33 +368,14 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 			title:  jobNotCreatedTitle(),
 		})
 	}
-	dispatched = true
 	log.InfoContext(ctx, "runner job created", "operation_id", operationID, "job", created.Name)
 	if err := o.records.SetJobName(ctx, operationID, created.Name); err != nil {
 		slog.ErrorContext(ctx, "recording job name for operation", "operation_id", operationID, "error", err)
 	}
-
-	<-done
-	if waitErr != nil {
-		// Not this refusal's check to complete: the Job exists, and a
-		// Runner that reports a result or never starts is finished by
-		// HandleResult or the sweep, which this must not race. A Runner
-		// that started and then died without a result is finished by
-		// neither, and its check stays in progress — a known gap that
-		// needs a claim of its own, not a guess from here.
-		return reject(refusal{reason: fmt.Sprintf("waiting for result: %v", waitErr)})
-	}
-	outcome := "failure"
-	if waitResult.Success {
-		outcome = "success"
-	}
-	metrics.OperationDispatched(t.Project.Tool, t.Operation, outcome)
-	log.InfoContext(ctx, "operation finished",
-		"operation_id", operationID,
-		"outcome", outcome,
-		"duration", time.Since(start).Round(time.Millisecond).String(),
-	)
-	return waitResult
+	// The Job exists, so this Project is no longer the dispatcher's to
+	// complete: HandleResult or the sweep finalizes the Operation and
+	// completes the Project in its trigger.
+	return nil
 }
 
 // refusalKind is what a refusal means for the Project_Check and the
@@ -536,8 +496,8 @@ func (o *Orchestrator) refusalCheck(ctx context.Context, client github.GitHubCli
 }
 
 // deleteRecord is a best-effort cleanup for an Operation Record whose Job
-// never ended up created — a failure here just means the 24h leak-
-// prevention TTL (design.md's Redis Key Format) cleans it up eventually.
+// never ended up created; a failure here just means the leak-prevention
+// expiry (operationTTL) cleans it up eventually.
 func (o *Orchestrator) deleteRecord(ctx context.Context, operationID string) {
 	if err := o.records.Delete(ctx, operationID); err != nil {
 		slog.ErrorContext(ctx, "deleting operation record", "operation_id", operationID, "error", err)

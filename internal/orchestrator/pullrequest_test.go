@@ -90,12 +90,13 @@ func testPullRequestOrchestrator(t *testing.T) (*Orchestrator, *redis.Client) {
 	t.Helper()
 	client := newTestRedisClient(t)
 	o := &Orchestrator{
-		locks:   &fakeLockManager{},
-		jobs:    &fakeJobCreator{t: t},
-		plugins: testRegistry(),
-		catalog: testCatalog(),
-		records: newRecordStore(client),
-		redis:   client,
+		locks:    &fakeLockManager{},
+		jobs:     &fakeJobCreator{t: t},
+		plugins:  testRegistry(),
+		catalog:  testCatalog(),
+		records:  newRecordStore(client),
+		triggers: newTriggerStore(client),
+		redis:    client,
 	}
 	return o, client
 }
@@ -108,13 +109,15 @@ func TestHandlePlanTrigger_MatchedProjectExecutesAndPosts(t *testing.T) {
 	}
 	o := &Orchestrator{
 		locks:              &fakeLockManager{},
-		jobs:               &fakeJobCreator{t: t, redis: client, result: github.ProjectResult{Success: true, ProjectName: "helm-a"}},
+		jobs:               &fakeJobCreator{t: t, result: github.ProjectResult{Success: true, ProjectName: "helm-a"}},
 		plugins:            testRegistry(),
 		catalog:            testCatalog(),
 		records:            newRecordStore(client),
+		triggers:           newTriggerStore(client),
 		redis:              client,
 		installationClient: func(id int64) github.GitHubClient { return fakeClient },
 	}
+	bindFakeRunner(o)
 
 	event := &github.WebhookEvent{
 		Action:       "opened",
@@ -155,7 +158,7 @@ func TestHandlePullRequest_ForeignPullRequestIsRefused(t *testing.T) {
 				},
 			}
 			redisClient := newTestRedisClient(t)
-			jobs := &fakeJobCreator{t: t, redis: redisClient, result: github.ProjectResult{Success: true}}
+			jobs := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
 			fakeClient := &fakePRClient{
 				files:         map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
 				modifiedFiles: []string{"a/main.tf"},
@@ -166,9 +169,11 @@ func TestHandlePullRequest_ForeignPullRequestIsRefused(t *testing.T) {
 				plugins:            testRegistry(),
 				catalog:            testCatalog(),
 				records:            newRecordStore(redisClient),
+				triggers:           newTriggerStore(redisClient),
 				redis:              redisClient,
 				installationClient: func(id int64) github.GitHubClient { return fakeClient },
 			}
+			bindFakeRunner(o)
 
 			event := &github.WebhookEvent{
 				Action:       "opened",
@@ -289,13 +294,15 @@ func TestHandlePullRequest_ReadyForReviewPlans(t *testing.T) {
 	}
 	o := &Orchestrator{
 		locks:              &fakeLockManager{},
-		jobs:               &fakeJobCreator{t: t, redis: client, result: github.ProjectResult{Success: true, ProjectName: "helm-a"}},
+		jobs:               &fakeJobCreator{t: t, result: github.ProjectResult{Success: true, ProjectName: "helm-a"}},
 		plugins:            testRegistry(),
 		catalog:            testCatalog(),
 		records:            newRecordStore(client),
+		triggers:           newTriggerStore(client),
 		redis:              client,
 		installationClient: func(id int64) github.GitHubClient { return fakeClient },
 	}
+	bindFakeRunner(o)
 
 	event := &github.WebhookEvent{
 		Action:       "ready_for_review",
@@ -331,6 +338,7 @@ func TestHandlePullRequest_ClosedDraftStillReleasesLocks(t *testing.T) {
 		plugins:            testRegistry(),
 		catalog:            testCatalog(),
 		records:            newRecordStore(client),
+		triggers:           newTriggerStore(client),
 		redis:              client,
 		installationClient: func(id int64) github.GitHubClient { return fakeClient },
 	}
@@ -460,7 +468,7 @@ func TestHandlePRClosed_ReleasesOnlyLocksHeldByThisPR(t *testing.T) {
 		},
 	}
 	client := newTestRedisClient(t)
-	o := &Orchestrator{locks: locks, plugins: testRegistry(), catalog: testCatalog(), records: newRecordStore(client), redis: client}
+	o := &Orchestrator{locks: locks, plugins: testRegistry(), catalog: testCatalog(), records: newRecordStore(client), triggers: newTriggerStore(client), redis: client}
 
 	prClient := &fakePRClient{files: map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)}}
 	event := &github.WebhookEvent{
@@ -481,7 +489,7 @@ func TestHandlePRClosed_NoLocksHeldPostsNoComment(t *testing.T) {
 		},
 	}
 	client := newTestRedisClient(t)
-	o := &Orchestrator{locks: locks, plugins: testRegistry(), catalog: testCatalog(), records: newRecordStore(client), redis: client}
+	o := &Orchestrator{locks: locks, plugins: testRegistry(), catalog: testCatalog(), records: newRecordStore(client), triggers: newTriggerStore(client), redis: client}
 
 	prClient := &fakePRClient{files: map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)}}
 	event := &github.WebhookEvent{
@@ -496,7 +504,7 @@ func TestHandlePRClosed_NoLocksHeldPostsNoComment(t *testing.T) {
 func TestHandlePRClosed_AlwaysDeletesPlanCommentRecord(t *testing.T) {
 	locks := &fakeLockManager{isLockedByPRFunc: func(ctx context.Context, projectKey string, prNumber int) (bool, error) { return false, nil }}
 	client := newTestRedisClient(t)
-	o := &Orchestrator{locks: locks, plugins: testRegistry(), catalog: testCatalog(), records: newRecordStore(client), redis: client}
+	o := &Orchestrator{locks: locks, plugins: testRegistry(), catalog: testCatalog(), records: newRecordStore(client), triggers: newTriggerStore(client), redis: client}
 	require.NoError(t, o.records.SetPlanCommentRecord(context.Background(), "owner", "repo", 42, []string{"node-1"}))
 
 	prClient := &fakePRClient{files: map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)}}

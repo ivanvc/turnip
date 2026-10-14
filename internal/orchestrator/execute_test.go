@@ -21,6 +21,7 @@ import (
 	"github.com/ivanvc/turnip/internal/lock"
 	"github.com/ivanvc/turnip/internal/plugin"
 	"github.com/ivanvc/turnip/internal/provisioning"
+	"github.com/ivanvc/turnip/internal/rpc"
 )
 
 // fakeLockManager is a scriptable lock.LockManager. Every method defaults
@@ -210,14 +211,19 @@ type fakeExecuteClient struct {
 	// notably Title/Summary, which is where an Operation's outcome is
 	// carried (the Name stays stable for required status checks).
 	//
-	// executeTargets runs one goroutine per Target against a single
-	// client, so these writes need the mutex. Tests read the fields
-	// directly without locking, which is safe: executeTargets waits on
-	// its WaitGroup before returning, ordering every write before any
-	// read a test performs afterwards.
+	// A command dispatches one goroutine per Target against a single
+	// client, and the fake Runners finalize from goroutines of their own,
+	// so these writes need the mutex. Tests read the fields directly
+	// without locking, which is safe: runCommand waits for the dispatch
+	// and for every fake Runner before returning, ordering every write
+	// before any read a test performs afterwards.
 	mu              sync.Mutex
 	createdCheckRun github.CheckRunOptions
-	updatedCheckRun github.CheckRunOptions
+	// createdCheckRuns is every creation in order, for a test whose
+	// Operation is finalized: the aggregate check may be created after
+	// the Project's own.
+	createdCheckRuns []github.CheckRunOptions
+	updatedCheckRun  github.CheckRunOptions
 	// tokenScope records what the last mint was asked to cover, so a test
 	// can assert the Operation narrowed the credential rather than merely
 	// obtaining one. Written from the same per-Target goroutines as the
@@ -228,6 +234,7 @@ type fakeExecuteClient struct {
 func (f *fakeExecuteClient) CreateCheckRun(ctx context.Context, owner, repo string, opts github.CheckRunOptions) (int64, error) {
 	f.mu.Lock()
 	f.createdCheckRun = opts
+	f.createdCheckRuns = append(f.createdCheckRuns, opts)
 	f.mu.Unlock()
 	if f.createCheckRunErr != nil {
 		return 0, f.createCheckRunErr
@@ -262,26 +269,42 @@ func (f *fakeExecuteClient) GenerateInstallationToken(ctx context.Context, scope
 	return github.InstallationToken{Token: "token"}, nil
 }
 
-// fakeJobCreator publishes a scripted result to the operation-done
-// channel as soon as Create is called, extracting the operation ID from
-// the Job's labels (jobs.BuildJob always sets jobs.OperationIDLabel).
-// Waits for the subscriber to actually be listening first (Pub/Sub has
-// no replay) — this only matters because the fake has near-zero latency;
-// a real Runner's round trip makes this ordering a non-issue in practice.
+// fakeJobCreator is the Kubernetes API and the Runner in one: once Create
+// has returned a Job, a fake Runner reports the scripted result to orch
+// through HandleResult, as a real Runner does over gRPC, extracting the
+// operation ID from the Job's labels (jobs.BuildJob always sets
+// jobs.OperationIDLabel). With no orch, no Runner ever reports.
+//
+// The fake Runner waits for the Job's name to be recorded first. A real
+// Runner's Pod takes far longer than that to start; the fake has near-zero
+// latency and would otherwise report while its dispatcher is still
+// writing the record.
 type fakeJobCreator struct {
 	// t is assert.TestingT, not *testing.T, so this fake can also be
 	// driven from a rapid.Check property test — *rapid.T satisfies
 	// testify's TestingT (this repo's established convention).
 	t         assert.TestingT
-	redis     *redis.Client
+	orch      *Orchestrator
 	createErr error
-	result    github.ProjectResult
-	statusFn  func(ctx context.Context, jobName string) (*jobs.JobStatus, error)
+	// result is what the fake Runner reports: its Success, Output and
+	// Changes. The rest of a ProjectResult is HandleResult's to fill in.
+	result   github.ProjectResult
+	statusFn func(ctx context.Context, jobName string) (*jobs.JobStatus, error)
+
+	// reports tracks the fake Runners still reporting, so a test can wait
+	// for them before reading what they wrote.
+	reports sync.WaitGroup
 
 	mu          sync.Mutex
 	created     int
 	capturedJob *batchv1.Job
 }
+
+// reportTo and waitForReports are methods so a fake embedding this one
+// (recordingJobCreator) is bound and waited for the same way.
+func (f *fakeJobCreator) reportTo(o *Orchestrator) { f.orch = o }
+
+func (f *fakeJobCreator) waitForReports() { f.reports.Wait() }
 
 func (f *fakeJobCreator) createCount() int {
 	f.mu.Lock()
@@ -305,17 +328,32 @@ func (f *fakeJobCreator) Create(ctx context.Context, job *batchv1.Job) (*batchv1
 	}
 	operationID := job.Labels[jobs.OperationIDLabel]
 	job.Name = "turnip-runner-" + operationID
+	if f.orch == nil {
+		return job, nil
+	}
+	f.reports.Add(1)
 	go func() {
+		defer f.reports.Done()
+		ctx := context.Background()
 		// assert, not require: this runs on a non-test goroutine, and
 		// require's FailNow/runtime.Goexit doesn't correctly fail the
 		// test from here (this repo's testifylint go-require convention).
 		ok := assert.Eventually(f.t, func() bool {
-			return f.redis.PubSubNumSub(context.Background(), doneChannel(operationID)).Val()[doneChannel(operationID)] > 0
-		}, time.Second, time.Millisecond)
+			rec, err := f.orch.records.get(ctx, operationID)
+			return err == nil && rec != nil && rec.JobName != ""
+		}, 5*time.Second, time.Millisecond)
 		if !ok {
 			return
 		}
-		assert.NoError(f.t, publishDone(context.Background(), f.redis, operationID, f.result))
+		assert.NoError(f.t, f.orch.HandleResult(ctx, operationID, rpc.OperationResult{
+			Success: f.result.Success,
+			Output:  f.result.Output,
+			Changes: rpc.ChangeSummary{
+				Add:     int32(f.result.Changes.Add),
+				Change:  int32(f.result.Changes.Change),
+				Destroy: int32(f.result.Changes.Destroy),
+			},
+		}))
 	}()
 	return job, nil
 }
@@ -330,16 +368,14 @@ func (f *fakeJobCreator) Status(ctx context.Context, jobName string) (*jobs.JobS
 func testOrchestrator(t *testing.T, locks lock.LockManager, jobsClient jobCreator) (*Orchestrator, *redis.Client) {
 	t.Helper()
 	client := newTestRedisClient(t)
-	if fake, ok := jobsClient.(*fakeJobCreator); ok && fake.redis == nil {
-		fake.redis = client
-	}
 	o := &Orchestrator{
-		locks:   locks,
-		jobs:    jobsClient,
-		plugins: testRegistry(),
-		catalog: testCatalog(),
-		records: newRecordStore(client),
-		redis:   client,
+		locks:    locks,
+		jobs:     jobsClient,
+		plugins:  testRegistry(),
+		catalog:  testCatalog(),
+		records:  newRecordStore(client),
+		triggers: newTriggerStore(client),
+		redis:    client,
 		// Matches what a real Server has. Left nil, every override would
 		// be refused — including a Project that merely pins a tool
 		// version — and the failure would look like a lock or job problem
@@ -348,6 +384,7 @@ func testOrchestrator(t *testing.T, locks lock.LockManager, jobsClient jobCreato
 		startTimeout:     5 * time.Minute,
 		sweepInterval:    30 * time.Second,
 	}
+	bindFakeRunner(o)
 	return o, client
 }
 
@@ -409,7 +446,7 @@ func TestExecuteOne_ApplyAfterAPlanWithNoArtifactRuns(t *testing.T) {
 
 	target := testHelmfileTarget()
 	target.Operation = "apply"
-	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
 
 	assert.True(t, result.Success, "an apply must not be refused merely because its plan produced no bytes")
 	assert.Equal(t, 1, jobsClient.createCount())
@@ -429,7 +466,7 @@ func TestExecuteOne_MutatingOperationReplaysTheRecordedScope(t *testing.T) {
 
 	target := testHelmfileTarget()
 	target.Operation = "sync"
-	o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
+	o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
 
 	job := jobsClient.lastCreatedJob()
 	require.NotNil(t, job, "a sync with a recorded plan must reach a Job")
@@ -450,7 +487,7 @@ func TestExecuteOne_MutatingOperationsRefuseArguments(t *testing.T) {
 			target := testHelmfileTarget()
 			target.Operation = operation
 			target.ExtraArgs = []string{"-l", "name=web"}
-			result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+			result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 			assert.False(t, result.Success)
 			assert.Contains(t, result.Output, "does not accept arguments")
@@ -471,7 +508,7 @@ func TestExecuteOne_ProjectCheckIsNamedOperationFirst(t *testing.T) {
 	o, _ := testOrchestrator(t, &fakeLockManager{}, jobsClient)
 	client := &fakeExecuteClient{}
 
-	o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+	o.runOne(t, context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
 
 	assert.Equal(t, "turnip/diff/helm-a", client.createdCheckRun.Name)
 }
@@ -482,7 +519,7 @@ func TestExecuteOne_PlanStillAcceptsArguments(t *testing.T) {
 
 	target := testHelmfileTarget()
 	target.ExtraArgs = []string{"-l", "name=web"}
-	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
 
 	assert.True(t, result.Success)
 	require.Equal(t, 1, jobsClient.createCount())
@@ -504,7 +541,7 @@ func TestExecuteOne_PlanLockConflictIsRejected(t *testing.T) {
 	dispatchedBefore := scrapeMetric(t, "turnip_operations_dispatched_total", map[string]string{"tool": "helmfile", "operation": "diff", "outcome": "rejected"})
 	lockBefore := scrapeMetric(t, "turnip_lock_attempts_total", map[string]string{"outcome": "rejected"})
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "#7")
 
@@ -530,7 +567,7 @@ func TestExecuteOne_PlanLockConflictCarriesTheBlockingPullRequest(t *testing.T) 
 	}
 	o, _ := testOrchestrator(t, locks, &fakeJobCreator{t: t})
 
-	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
+	result := o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
 
 	require.NotNil(t, result.BlockedBy, "a contended lock must identify its holder")
 	assert.Equal(t, 7, result.BlockedBy.Number)
@@ -551,7 +588,7 @@ func TestExecuteOne_PlanLockConflictWithUnknownHolderInventsNothing(t *testing.T
 	}
 	o, _ := testOrchestrator(t, locks, &fakeJobCreator{t: t})
 
-	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
+	result := o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
 
 	assert.False(t, result.Success)
 	assert.Nil(t, result.BlockedBy, "an unidentifiable holder must not be fabricated")
@@ -569,7 +606,7 @@ func TestExecuteOne_ApplyWithoutLockIsRejected(t *testing.T) {
 
 	target := testHelmfileTarget()
 	target.Operation = "apply"
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "new plan is required")
 }
@@ -585,7 +622,7 @@ func TestExecuteOne_ApplyWithoutPlanDataIsRejected(t *testing.T) {
 
 	target := testHelmfileTarget()
 	target.Operation = "apply"
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "new plan is required")
 }
@@ -596,7 +633,7 @@ func TestExecuteOne_JobCreationErrorIsRejectedAndRecordCleanedUp(t *testing.T) {
 	o, redisClient := testOrchestrator(t, locks, jobsClient)
 	client := &fakeExecuteClient{}
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
 	assert.False(t, result.Success)
 	assert.Equal(t, 1, client.updateCheckRunCalled)
 	assert.Equal(t, "Runner Job could not be created", client.updatedCheckRun.Title,
@@ -619,8 +656,13 @@ func TestExecuteOne_SuccessfulPlanPublishesResult(t *testing.T) {
 	lockBefore := scrapeMetric(t, "turnip_lock_attempts_total", map[string]string{"outcome": "acquired"})
 	durationCountBefore := scrapeMetric(t, "turnip_operation_duration_seconds", map[string]string{"tool": "helmfile", "operation": "diff"})
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
-	assert.Equal(t, want, result)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+	// What the Runner reported, as finalization hands it to the trigger.
+	assert.Equal(t, want.ProjectName, result.ProjectName)
+	assert.Equal(t, want.Tool, result.Tool)
+	assert.Equal(t, want.Operation, result.Operation)
+	assert.True(t, result.Success)
+	assert.Equal(t, want.Output, result.Output)
 
 	assert.InDelta(t, dispatchedBefore+1, scrapeMetric(t, "turnip_operations_dispatched_total", map[string]string{"tool": "helmfile", "operation": "diff", "outcome": "success"}), 0.0001)
 	assert.InDelta(t, lockBefore+1, scrapeMetric(t, "turnip_lock_attempts_total", map[string]string{"outcome": "acquired"}), 0.0001)
@@ -633,7 +675,7 @@ func TestExecuteOne_JobCarriesPullRequestBaseRef(t *testing.T) {
 	o, _ := testOrchestrator(t, locks, jobsClient)
 	client := &fakeExecuteClient{}
 
-	o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+	o.runOne(t, context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
 
 	job := jobsClient.lastCreatedJob()
 	require.NotNil(t, job)
@@ -670,7 +712,7 @@ func TestExecuteOne_JobIsProvisionedAsThePluginDeclares(t *testing.T) {
 	target.Project.Image = "registry.example.com/tools/helmfile"
 	target.Project.ToolVersion = "v1.7.4"
 
-	o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
+	o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
 
 	job := jobsClient.lastCreatedJob()
 	require.NotNil(t, job)
@@ -710,7 +752,7 @@ func TestExecuteOne_ShippedHelmfileJobMatchesThePin(t *testing.T) {
 		TriggeredBy: "auto",
 	}
 
-	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
 	require.True(t, result.Success, "the Job must be built and dispatched: %s", result.Output)
 
 	job := jobsClient.lastCreatedJob()
@@ -748,7 +790,7 @@ func TestExecuteOne_CheckRunCreationFailureIsNotedInResult(t *testing.T) {
 	o, _ := testOrchestrator(t, locks, jobsClient)
 	client := &fakeExecuteClient{createCheckRunErr: errors.New(`422 "summary", "title" weren't supplied`)}
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
 
 	assert.True(t, result.Success, "a failed check run must not fail the operation")
 	assert.Contains(t, result.Output, "diff output", "the Runner's own output is kept")
@@ -765,7 +807,7 @@ func TestExecuteOne_SucceedingCheckRunAddsNoNote(t *testing.T) {
 	o, _ := testOrchestrator(t, locks, jobsClient)
 	client := &fakeExecuteClient{}
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
 
 	assert.Equal(t, "diff output", result.Output)
 }
@@ -777,7 +819,7 @@ func TestExecuteOne_JobCarriesServerDefaultServiceAccount(t *testing.T) {
 	o.runnerServiceAccount = "turnip-runner"
 	client := &fakeExecuteClient{}
 
-	o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+	o.runOne(t, context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
 
 	job := jobsClient.lastCreatedJob()
 	require.NotNil(t, job)
@@ -795,7 +837,7 @@ func TestExecuteOne_ProjectServiceAccountRefusedWhenNotAllowed(t *testing.T) {
 	target := testHelmfileTarget()
 	target.Project.Runner.ServiceAccount = "atlantis"
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "atlantis")
@@ -813,14 +855,14 @@ func TestExecuteOne_ProjectServiceAccountUsedWhenAllowed(t *testing.T) {
 	target := testHelmfileTarget()
 	target.Project.Runner.ServiceAccount = "turnip-runner-project"
 
-	o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	job := jobsClient.lastCreatedJob()
 	require.NotNil(t, job)
 	assert.Equal(t, "turnip-runner-project", job.Spec.Template.Spec.ServiceAccountName)
 }
 
-func TestExecuteTargets_RunsConcurrentlyAndWaitsForAll(t *testing.T) {
+func TestBeginCommand_DispatchesEveryTargetAndEachCompletes(t *testing.T) {
 	locks := &fakeLockManager{}
 	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
 	o, _ := testOrchestrator(t, locks, jobsClient)
@@ -829,7 +871,7 @@ func TestExecuteTargets_RunsConcurrentlyAndWaitsForAll(t *testing.T) {
 	targets := []Target{testHelmfileTarget(), testHelmfileTarget()}
 	targets[1].Project.Name = "helm-b"
 
-	results := o.executeTargets(context.Background(), client, testRepo, testPR, 1, targets)
+	results := o.runCommand(t, context.Background(), client, testRepo, testPR, 1, targets)
 	assert.Len(t, results, 2)
 }
 
@@ -847,9 +889,10 @@ func TestExecuteOne_ApplyCheckRunSaysWhatItWillChange(t *testing.T) {
 
 	target := testHelmfileTarget()
 	target.Operation = "apply"
-	o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
-	assert.Equal(t, "running the recorded plan, +1 ~4 -2, -l name=web", client.createdCheckRun.Title)
+	require.NotEmpty(t, client.createdCheckRuns)
+	assert.Equal(t, "running the recorded plan, +1 ~4 -2, -l name=web", client.createdCheckRuns[0].Title)
 }
 
 func TestExecuteOne_CheckRunCreatedWithRunningTitle(t *testing.T) {
@@ -860,7 +903,7 @@ func TestExecuteOne_CheckRunCreatedWithRunningTitle(t *testing.T) {
 
 	target := testHelmfileTarget()
 	target.ExtraArgs = []string{"-l", "name=api"}
-	o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	assert.Equal(t, "running, -l name=api", client.createdCheckRun.Title)
 	assert.NotEmpty(t, client.createdCheckRun.Summary, "GitHub rejects check-run output without a summary")

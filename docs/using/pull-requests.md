@@ -255,7 +255,13 @@ Details worth knowing:
 - **The `turnip` check**, one per commit, once there is something to say:
   whether every plan this pull request made has been carried out. See
   [Requiring turnip before merge](#requiring-turnip-before-merge).
-- **A PR comment** consolidating every project touched by that trigger.
+- **A PR comment** consolidating every project touched by that trigger,
+  posted once everything it started has finished. A comment with several
+  commands runs them one after the other, each starting when the one
+  before it has finished, and that holds whichever turnip Server replica
+  is up: a restart or an upgrade of turnip in the middle (including one
+  your own apply causes) does not drop the later commands or the
+  comment.
   It opens with a **verdict line** (the total change across every
   project, and how many reported no changes or failed), so you can tell
   whether the PR needs attention without expanding anything.

@@ -146,7 +146,7 @@ func TestExecuteOne_RecordsTheScopeAndMintsNothing(t *testing.T) {
 	o, redisClient := testOrchestrator(t, locks, jobsClient)
 	client := &fakeExecuteClient{gitmodules: []byte("[s]\nurl = ../shared.git\n")}
 
-	o.executeOne(context.Background(), client, testRepo, testPR, 1, testHelmfileTarget())
+	require.Nil(t, o.dispatchOnly(context.Background(), client, testRepo, testPR, testHelmfileTarget()))
 
 	job := jobsClient.lastCreatedJob()
 	require.NotNil(t, job)

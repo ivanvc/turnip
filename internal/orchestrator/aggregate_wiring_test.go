@@ -77,7 +77,7 @@ func TestExecuteOne_RefusedPlanIsRecordedNotPlanned(t *testing.T) {
 	}
 	o, _ := testOrchestrator(t, locks, &fakeJobCreator{t: t})
 
-	o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
+	o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
 
 	entry := readTestRecord(t, o, testRef).Projects["helm-a"]
 	assert.Equal(t, OutcomeNotPlanned, entry.Outcome)
@@ -94,7 +94,7 @@ func TestExecuteOne_RefusedApplyLeavesTheOutcomeAlone(t *testing.T) {
 
 	target := testHelmfileTarget()
 	target.Operation = "apply"
-	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, target)
 	require.False(t, result.Success)
 
 	assert.Equal(t, OutcomeApplied, readTestRecord(t, o, testRef).Projects["helm-a"].Outcome)

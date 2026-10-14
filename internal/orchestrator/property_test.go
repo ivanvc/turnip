@@ -67,20 +67,22 @@ func TestProperty_RunnerCreationPerTriggeredProject(t *testing.T) {
 		}
 
 		redisClient := newPropertyRedisClient(t)
-		jobsClient := &fakeJobCreator{t: t, redis: redisClient, result: github.ProjectResult{Success: true}}
+		jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
 		o := &Orchestrator{
 			locks:         &fakeLockManager{},
 			jobs:          jobsClient,
 			plugins:       testRegistry(),
 			catalog:       testCatalog(),
 			records:       newRecordStore(redisClient),
+			triggers:      newTriggerStore(redisClient),
 			redis:         redisClient,
 			startTimeout:  5 * time.Minute,
 			sweepInterval: 30 * time.Second,
 		}
+		bindFakeRunner(o)
 		client := &fakeExecuteClient{}
 
-		results := o.executeTargets(context.Background(), client, testRepo, testPR, 1, targets)
+		results := o.runCommand(t, context.Background(), client, testRepo, testPR, 1, targets)
 
 		require.Len(t, results, n)
 		require.Equal(t, n, jobsClient.createCount(), "exactly one Job creation attempt per triggered Project")
@@ -202,7 +204,7 @@ func TestProperty_ConsolidatedCommentContainsAllProjectResults(t *testing.T) {
 		}
 
 		redisClient := newPropertyRedisClient(t)
-		o := &Orchestrator{plugins: testRegistry(), catalog: testCatalog(), records: newRecordStore(redisClient), redis: redisClient}
+		o := &Orchestrator{plugins: testRegistry(), catalog: testCatalog(), records: newRecordStore(redisClient), triggers: newTriggerStore(redisClient), redis: redisClient}
 		fake := &fakeCommentClient{}
 
 		o.postResults(context.Background(), fake, testRepo, 42, results)

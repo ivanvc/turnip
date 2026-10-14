@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -46,8 +47,11 @@ func (o *Orchestrator) HandleLog(ctx context.Context, operationID string, line r
 }
 
 // HandleResult finalizes an Operation: Lock (Requirement 7),
-// check-run (Requirement 9.2/9.3), and comment (via the published
-// ProjectResult, Requirement 10) actions.
+// check-run (Requirement 9.2/9.3), and comment (Requirement 10) actions.
+// The comment is reached through the Operation's trigger: the Project's
+// result is added to it, and when that finishes the trigger's command this
+// call dispatches the next command or posts the results comment before it
+// returns (finishOperation).
 func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, result rpc.OperationResult) error {
 	rec, claimed, err := o.records.ClaimForResult(ctx, operationID)
 	if err != nil {
@@ -185,11 +189,48 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 	if err := o.records.Delete(ctx, operationID); err != nil {
 		slog.ErrorContext(ctx, "deleting operation record", "operation_id", operationID, "error", err)
 	}
-	if err := publishDone(ctx, o.redis, operationID, pr); err != nil {
-		slog.ErrorContext(ctx, "publishing done notification", "operation_id", operationID, "error", err)
-	}
+	o.finishOperation(ctx, rec, pr)
 
 	return nil
+}
+
+// finishOperation is the last step of finalizing an Operation, after its
+// record is deleted: it observes how long the Operation took, logs how it
+// ended, and completes the Project in its trigger. The replica that
+// completes the last Project of a command begins the next command or posts
+// the results comment here, inside the call that finalized the Operation
+// (a Runner's RPC or a sweep tick), because shutdown lets those end and
+// waits for nothing else.
+//
+// The trigger is carried on a context that the caller's cancellation does
+// not reach. The Operation is already claimed, so no other replica will
+// complete this Project: a Runner that hangs up right after sending its
+// result must not leave the trigger without it.
+func (o *Orchestrator) finishOperation(ctx context.Context, rec *OperationRecord, result github.ProjectResult) {
+	if rec.CheckRunError != "" {
+		result = appendCheckRunNote(result, checkCreate, errors.New(rec.CheckRunError))
+	}
+	outcome := "failure"
+	if result.Success {
+		outcome = "success"
+	}
+	duration := time.Since(rec.CreatedAt)
+	metrics.ObserveOperationDuration(rec.Project.Tool, rec.Operation, duration)
+	metrics.OperationDispatched(rec.Project.Tool, rec.Operation, outcome)
+	slog.InfoContext(ctx, "operation finished",
+		"owner", rec.Owner,
+		"repo", rec.Repo,
+		"pr_number", rec.PRNumber,
+		"project", rec.Project.Name,
+		"operation", rec.Operation,
+		"operation_id", rec.OperationID,
+		"outcome", outcome,
+		"duration", duration.Round(time.Millisecond).String(),
+	)
+	if err := o.completeProject(context.WithoutCancel(ctx), rec.TriggerID, rec.CommandIndex, rec.Project.Name, result); err != nil {
+		slog.ErrorContext(ctx, "adding the result to its trigger",
+			"operation_id", rec.OperationID, "trigger", rec.TriggerID, "command", rec.CommandIndex, "error", err)
+	}
 }
 
 // resultTitle and checkRunResultSummary render an Operation's

@@ -14,8 +14,13 @@ import (
 // operationTTL is a leak-prevention safety net, not a correctness
 // mechanism: an Operation Record is deleted explicitly once finalized
 // (result.go, sweep.go); this only guards against a Server crash between
-// finalizing and deleting.
-const operationTTL = 24 * time.Hour
+// finalizing and deleting. It is an hour past abandonAfter, so the sweep
+// always finds a started record to abandon before Redis removes it.
+const operationTTL = 25 * time.Hour
+
+// abandonAfter is how long after dispatch the sweep gives up on an
+// Operation that started but never reported a result.
+const abandonAfter = 24 * time.Hour
 
 // OperationRecord is the per-Operation context persisted in Redis so any
 // Server replica's gRPC handler or sweep tick can act on an Operation ID
@@ -43,14 +48,23 @@ type OperationRecord struct {
 	// when the Runner fetches. Empty means the installation's full
 	// breadth, which a recursive submodule clone requires (Slice 24,
 	// Requirement 1.4). Not a secret: it is a list of repository names.
-	TokenRepositories []string  `json:"token_repositories,omitempty"`
-	TriggeredBy       string    `json:"triggered_by"`
-	CheckRunID        int64     `json:"check_run_id,omitempty"`
-	JobName           string    `json:"job_name,omitempty"`
-	StartDeadline     int64     `json:"start_deadline"`
-	Started           bool      `json:"started"`
-	Finalized         bool      `json:"finalized"`
-	CreatedAt         time.Time `json:"created_at"`
+	TokenRepositories []string `json:"token_repositories,omitempty"`
+	TriggeredBy       string   `json:"triggered_by"`
+	// TriggerID names the trigger record this Operation belongs to, and
+	// CommandIndex the command within it. Empty and zero for an Operation
+	// with no trigger record, which finalizes without adding a result.
+	TriggerID    string `json:"trigger_id,omitempty"`
+	CommandIndex int    `json:"command_index,omitempty"`
+	CheckRunID   int64  `json:"check_run_id,omitempty"`
+	// CheckRunError is why the Project_Check could not be created, when it
+	// could not. The Operation runs anyway, and its result says so with
+	// this text when it is finalized, on whichever replica that is.
+	CheckRunError string    `json:"check_run_error,omitempty"`
+	JobName       string    `json:"job_name,omitempty"`
+	StartDeadline int64     `json:"start_deadline"`
+	Started       bool      `json:"started"`
+	Finalized     bool      `json:"finalized"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 func operationKey(operationID string) string {
@@ -157,16 +171,19 @@ return {0, ''}
 `
 
 // claimForFinalizationScript atomically claims an Operation Record for
-// finalization — used by both a genuine result (mode "result") and the
-// timeout sweep (mode "timeout"), so exactly one of them ever finalizes a
-// given Operation (design.md's Decision 1).
+// finalization, used by a genuine result (mode "result"), the timeout
+// sweep (mode "timeout") and the abandonment sweep (mode "abandon"), so
+// exactly one of them ever finalizes a given Operation (design.md's
+// Decision 1).
 //
 // KEYS[1] = operation:{id}
-// ARGV[1] = mode: "result" | "timeout"
+// ARGV[1] = mode: "result" | "timeout" | "abandon"
 // ARGV[2] = now (unix seconds; only read when mode == "timeout")
 // Returns 1 if this call claimed it, 0 otherwise (gone, already
 // finalized, or — timeout mode only — started since last checked, or the
-// deadline hasn't passed yet).
+// deadline hasn't passed yet, or, in abandon mode only, not started).
+// The 24-hour age of an abandon is checked by the caller against the
+// record's immutable created_at.
 const claimForFinalizationScript = `
 local existing = redis.call('GET', KEYS[1])
 if not existing then
@@ -181,6 +198,10 @@ if ARGV[1] == 'timeout' then
         return 0
     end
     if tonumber(ARGV[2]) < data.start_deadline then
+        return 0
+    end
+elseif ARGV[1] == 'abandon' then
+    if not data.started then
         return 0
     end
 end
@@ -232,6 +253,14 @@ func (s *recordStore) ClaimForTimeout(ctx context.Context, operationID string, n
 	return s.claim(ctx, operationID, "timeout", now)
 }
 
+// ClaimForAbandon atomically claims operationID for the sweep's
+// abandonment of an Operation that started and has not reported within
+// abandonAfter of its creation. claimed is false when the record is gone,
+// already finalized, not started, or younger than abandonAfter.
+func (s *recordStore) ClaimForAbandon(ctx context.Context, operationID string, now time.Time) (rec *OperationRecord, claimed bool, err error) {
+	return s.claim(ctx, operationID, "abandon", now)
+}
+
 func (s *recordStore) claim(ctx context.Context, operationID, mode string, now time.Time) (*OperationRecord, bool, error) {
 	// Read the record's content before attempting the claim. This is safe
 	// even under a race: every field read here (Project, PR identity,
@@ -243,6 +272,10 @@ func (s *recordStore) claim(ctx context.Context, operationID, mode string, now t
 		return nil, false, err
 	}
 	if rec == nil {
+		return nil, false, nil
+	}
+
+	if mode == "abandon" && now.Sub(rec.CreatedAt) < abandonAfter {
 		return nil, false, nil
 	}
 

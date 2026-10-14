@@ -410,6 +410,20 @@ configure:
 kubectl scale deployment/turnip-server --replicas=3
 ```
 
+No replica owns a pull request's work. What a trigger (an automatic
+plan, or one comment with all its commands) still has to do is kept in
+Redis, and it continues on whichever replica finishes its last step: the
+replica a Runner reports to starts the comment's next command, or posts
+the results comment. Replacing every replica while an apply runs,
+including an apply that upgrades turnip itself, loses neither. See
+[High-availability / multi-instance behavior](troubleshooting.md#high-availability--multi-instance-behavior)
+for the one case that does lose a comment.
+
+Operations that are running while you upgrade to the first version that
+works this way (from one that did not) lose their results comment, once:
+their checks and locks are still updated, so read the checks for what
+they did. Upgrade when nothing is running to avoid it.
+
 ## Next
 
 Once the Server is up and `/readyz` is green, add a `turnip.yaml` to a

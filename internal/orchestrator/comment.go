@@ -27,9 +27,9 @@ func malformedTriggerReply(malformed github.MalformedTriggerErrors) string {
 var _ github.EventHandler = (*Orchestrator)(nil)
 
 // HandleIssueComment reacts to issue_comment webhooks: parses Trigger
-// Commands (Requirement 3), authorizes the author, resolves and executes
-// every command's Targets in order (Requirement 4/5), and posts the
-// consolidated result.
+// Commands (Requirement 3), authorizes the author, resolves every
+// command's Targets (Requirement 4/5), and starts the trigger that runs
+// them in order and posts the consolidated result (carry.go).
 func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.WebhookEvent) error {
 	if event.Action != "created" {
 		return nil
@@ -163,7 +163,8 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 	// the same Project in one comment behaves predictably rather than
 	// racing (see design.md's Edge Cases). Concurrency still applies
 	// *within* one command's own Targets (Requirement 17.1) — only the
-	// commands themselves are sequenced.
+	// commands themselves are sequenced. Each group is one command of the
+	// trigger, begun by whichever replica finishes the one before it.
 	var targetGroups [][]Target
 	var preResults []github.ProjectResult
 	var replies []string
@@ -244,16 +245,16 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 		return nil
 	}
 
-	prInfo := github.PullRequest{Number: pr.Number, HeadSHA: pr.HeadSHA, BaseRef: pr.BaseRef, HeadRef: pr.HeadRef}
-	go func(groups [][]Target, results []github.ProjectResult, notices []string) {
-		detached := context.WithoutCancel(ctx)
-		for _, targets := range groups {
-			results = append(results, o.executeTargets(detached, client, repo, prInfo, event.Installation.ID, targets)...)
-		}
-		o.postResults(detached, client, repo, prInfo.Number, results, notices...)
-	}(targetGroups, preResults, selectionNotices)
-
-	return nil
+	return o.startTrigger(ctx, client, triggerMeta{
+		Repo:           repo,
+		InstallationID: event.Installation.ID,
+		PRNumber:       pr.Number,
+		HeadSHA:        pr.HeadSHA,
+		BaseRef:        pr.BaseRef,
+		HeadRef:        pr.HeadRef,
+		Notices:        selectionNotices,
+		Commands:       targetGroups,
+	}, preResults)
 }
 
 // memoModifiedFiles returns a lookup that fetches the pull request's

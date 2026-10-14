@@ -150,7 +150,7 @@ func TestExecuteOne_MissingPluginIsAnInternalError(t *testing.T) {
 	target.Project.Tool = "terraform"
 	target.Operation = "plan"
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	assert.False(t, result.Success)
 	assert.Equal(t, `internal error: no plugin is registered for tool "terraform"`, result.Output)
@@ -166,7 +166,7 @@ func TestRefusalSite_ServiceAccountNotPermitted(t *testing.T) {
 	target := testHelmfileTarget()
 	target.Project.Runner.ServiceAccount = "deployer"
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	assert.False(t, result.Success)
 	check := requireOneCreated(t, client, target)
@@ -191,7 +191,7 @@ func TestRefusalSite_SubmodulesNotPermitted(t *testing.T) {
 	target := testHelmfileTarget()
 	target.Clone = config.CloneSpec{Submodules: config.SubmodulesRecursive}
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	assert.False(t, result.Success)
 	check := requireOneCreated(t, client, target)
@@ -216,7 +216,7 @@ func TestRefusalSite_MutatingWithArguments(t *testing.T) {
 	target.Operation = "apply"
 	target.ExtraArgs = []string{"-l", "name=web"}
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "does not accept arguments")
@@ -237,7 +237,7 @@ func TestRefusalSite_LockNotAcquired(t *testing.T) {
 	client := newSitesClient()
 	target := testHelmfileTarget()
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	assert.False(t, result.Success)
 	check := requireOneCreated(t, client, target)
@@ -264,7 +264,7 @@ func lockWaitSite(t *testing.T, status func(context.Context, string) (*lock.Lock
 	client := newSitesClient()
 	target := testHelmfileTarget()
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	check := requireOneCreated(t, client, target)
 	assert.Zero(t, jobsClient.createCount())
@@ -413,7 +413,7 @@ func TestRefusalSite_MutatingWithoutAUsablePlan(t *testing.T) {
 			target := testHelmfileTarget()
 			target.Operation = "apply"
 
-			result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+			result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 			assert.False(t, result.Success)
 			assert.Contains(t, result.Output, tc.reason)
@@ -459,7 +459,7 @@ func TestRefusalSite_OperationNotRecorded(t *testing.T) {
 	client := newSitesClient()
 	target := testHelmfileTarget()
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "creating operation record")
@@ -480,7 +480,7 @@ func TestRefusalSite_JobNotBuilt(t *testing.T) {
 	client := newSitesClient()
 	target := testHelmfileTarget()
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "building job")
@@ -501,7 +501,7 @@ func TestRefusalSite_JobNotCreated(t *testing.T) {
 	client := newSitesClient()
 	target := testHelmfileTarget()
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "creating job")
@@ -524,7 +524,7 @@ func TestRefusalSite_ApplyJobNotCreated(t *testing.T) {
 	target := testHelmfileTarget()
 	target.Operation = "apply"
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 
 	assert.False(t, result.Success)
 	check := requireCompletedByUpdate(t, client, target)
@@ -534,9 +534,9 @@ func TestRefusalSite_ApplyJobNotCreated(t *testing.T) {
 	assert.Equal(t, before, readSitesRecord(t, o), "a refused apply ran nothing, so the record must not change")
 }
 
-// cancelOnCreate creates the Job and then cancels the trigger's context
-// without publishing a result, which is the one way to make the wait for
-// the result fail without waiting out operationTTL.
+// cancelOnCreate creates the Job and then cancels the dispatcher's
+// context, and no Runner ever reports: a dispatcher that is going away the
+// moment its Job exists.
 type cancelOnCreate struct {
 	fakeJobCreator
 	cancel context.CancelFunc
@@ -551,27 +551,40 @@ func (c *cancelOnCreate) Create(_ context.Context, job *batchv1.Job) (*batchv1.J
 	return job, nil
 }
 
-// :337 — the Job exists, so HandleResult or the sweep owns the check and
-// the record from here. The refusal must touch neither, or it could race
-// them and overwrite the real outcome.
-func TestRefusalSite_WaitingForResultFailed(t *testing.T) {
+// Once the Job exists, HandleResult or the sweep owns the check, the
+// Outcome and the Project's completion in its trigger. The dispatcher
+// refuses nothing from there, even when its own context ends the moment
+// the Job is created, or it could race them and complete the Project
+// twice. What it leaves behind is the record naming the trigger and the
+// command, which is all a finalizer on any replica needs.
+func TestExecuteOne_ADispatchedOperationIsTheFinalizersToComplete(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	jobsClient := &cancelOnCreate{cancel: cancel}
 	o, _ := testOrchestrator(t, &fakeLockManager{}, jobsClient)
 	client := newSitesClient()
 	target := testHelmfileTarget()
+	meta := triggerMeta{Commands: [][]Target{nil, {target}}}
+	holdTrigger(t, o, "t1", meta)
+	require.NoError(t, o.triggers.BeginCommand(context.Background(), "t1", 1, []string{target.Project.Name}))
 
-	result := o.executeOne(ctx, client, testRepo, testPR, 1, target)
+	refused := o.executeOne(ctx, client, testRepo, testPR, 1, "t1", 1, target)
 
-	assert.False(t, result.Success)
-	assert.Contains(t, result.Output, "waiting for result")
+	assert.Nil(t, refused, "a created Job is not refused")
 	created, updated := client.projectChecks(target)
 	require.Len(t, created, 1)
 	assert.Equal(t, "in_progress", created[0].Status)
-	assert.Empty(t, updated, "the dispatched Operation's check is not this refusal's to complete")
-	assert.Empty(t, readSitesRecord(t, o).Projects, "nor is its Outcome this refusal's to record")
+	assert.Empty(t, updated, "the dispatched Operation's check is not the dispatcher's to complete")
+	assert.Empty(t, readSitesRecord(t, o).Projects, "nor is its Outcome the dispatcher's to record")
 	assert.Equal(t, 1, jobsClient.createCount())
+
+	rec := onlyOperationRecord(t, o)
+	assert.Equal(t, "t1", rec.TriggerID)
+	assert.Equal(t, 1, rec.CommandIndex)
+	assert.Empty(t, heldResults(t, o, "t1"), "nor is the Project the dispatcher's to complete in its trigger")
+	pending, err := o.redis.HExists(context.Background(), triggerKey("t1"), pendingField(1, target.Project.Name)).Result()
+	require.NoError(t, err)
+	assert.True(t, pending, "the Project stays pending until its Operation is finalized")
 }
 
 // No site today refuses after the check exists with anything but an
@@ -631,9 +644,9 @@ func TestRefusalSite_LaterPlanReplacesTheQueuedCheck(t *testing.T) {
 	client := newSitesClient()
 	target := testHelmfileTarget()
 
-	o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 	held = false // PR #5 released the Lock; someone re-plans
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, target)
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
 	require.True(t, result.Success)
 
 	created, updated := client.projectChecks(target)
@@ -641,7 +654,10 @@ func TestRefusalSite_LaterPlanReplacesTheQueuedCheck(t *testing.T) {
 	assert.Equal(t, "queued", created[0].Status)
 	assert.Equal(t, "in_progress", created[1].Status)
 	assert.Equal(t, runningTitle(nil), created[1].Title)
-	assert.Empty(t, updated, "the queued run is never updated")
+	// The one update is the re-plan's own run completing. Updates are
+	// addressed by id, and the queued run's was never kept.
+	require.Len(t, updated, 1, "the queued run is never updated")
+	assert.Equal(t, "completed", updated[0].Status)
 }
 
 // countingCommentClient counts check runs, so a refusal of the whole

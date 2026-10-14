@@ -126,19 +126,19 @@ func (o *Orchestrator) handlePlanTrigger(ctx context.Context, client github.GitH
 
 	targets := planTargetsFor(matched, o.plugins, cfg.Clone)
 
-	// Detach from the request context: the webhook HTTP handler responds
-	// as soon as this method returns, but executing Targets can take far
-	// longer than GitHub's webhook delivery timeout allows for. Run it in
-	// the background on a context stripped of the request's cancellation
-	// (but not its values), and return immediately.
-	go o.runTargetsAndPost(context.WithoutCancel(ctx), client, event.Repository, *event.PullRequest, event.Installation.ID, targets)
-
-	return nil
-}
-
-func (o *Orchestrator) runTargetsAndPost(ctx context.Context, client github.GitHubClient, repo github.Repository, pr github.PullRequest, installationID int64, targets []Target) {
-	results := o.executeTargets(ctx, client, repo, pr, installationID, targets)
-	o.postResults(ctx, client, repo, pr.Number, results)
+	// The automatic plan is a trigger of one command. The webhook HTTP
+	// handler responds as soon as this method returns: startTrigger records
+	// the trigger and dispatches in the background, and the results comment
+	// is posted by whichever replica finalizes its last Operation.
+	return o.startTrigger(ctx, client, triggerMeta{
+		Repo:           event.Repository,
+		InstallationID: event.Installation.ID,
+		PRNumber:       event.PullRequest.Number,
+		HeadSHA:        event.PullRequest.HeadSHA,
+		BaseRef:        event.PullRequest.BaseRef,
+		HeadRef:        event.PullRequest.HeadRef,
+		Commands:       [][]Target{targets},
+	}, nil)
 }
 
 // markAutomaticVerdict records a whole-commit fact the automatic plan found

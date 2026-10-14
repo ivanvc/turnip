@@ -61,13 +61,12 @@ func (r *runnerJobs) Create(_ context.Context, job *batchv1.Job) (*batchv1.Job, 
 
 	go func() {
 		ctx := context.Background()
-		// A Runner cannot report before its Job exists and executeOne is
-		// listening: wait for both, as publishedResult does. assert, not
+		// A Runner cannot report before its Job exists: wait for the
+		// Job's name to be recorded, as fakeJobCreator does. assert, not
 		// require: this is not the test goroutine.
 		ok := assert.Eventually(r.t, func() bool {
 			rec, err := r.o.records.get(ctx, operationID)
-			return err == nil && rec.JobName != "" &&
-				r.redis.PubSubNumSub(ctx, doneChannel(operationID)).Val()[doneChannel(operationID)] > 0
+			return err == nil && rec != nil && rec.JobName != ""
 		}, 2*time.Second, time.Millisecond)
 		if !ok {
 			return
@@ -171,7 +170,7 @@ func roundTripOrchestrator(t *testing.T) (*Orchestrator, *runnerJobs, *sitesClie
 func runPlan(t *testing.T, o *Orchestrator, checks *sitesClient, project config.Project) Target {
 	t.Helper()
 	plan := Target{Project: project, Operation: "diff", TriggeredBy: "auto"}
-	result := o.executeOne(context.Background(), checks, testRepo, testPR, 1, plan)
+	result := o.runOne(t, context.Background(), checks, testRepo, testPR, 1, plan)
 	require.True(t, result.Success, "the plan must run and report: %s", result.Output)
 	return plan
 }
@@ -199,7 +198,7 @@ func TestDigestRoundTrip_ApplyRunsTheDigestThePlanRan(t *testing.T) {
 	runner.reports("ghcr.io/helmfile/helmfile@"+roundTripDigestB, nil)
 
 	apply := Target{Project: project, Operation: "apply", TriggeredBy: "comment"}
-	result := o.executeOne(context.Background(), checks, testRepo, testPR, 1, apply)
+	result := o.runOne(t, context.Background(), checks, testRepo, testPR, 1, apply)
 	require.True(t, result.Success, "the apply must run: %s", result.Output)
 
 	allJobs := runner.createdJobs()
@@ -242,7 +241,7 @@ func TestDigestRoundTrip_PlanWithoutADigestRefusesItsApply(t *testing.T) {
 			runner.reports("ghcr.io/helmfile/helmfile@"+roundTripDigestB, nil)
 
 			apply := Target{Project: project, Operation: "apply", TriggeredBy: "comment"}
-			result := o.executeOne(context.Background(), checks, testRepo, testPR, 1, apply)
+			result := o.runOne(t, context.Background(), checks, testRepo, testPR, 1, apply)
 
 			assert.False(t, result.Success)
 			assert.Contains(t, result.Output, "the image this plan ran could not be recorded; re-plan")

@@ -275,3 +275,29 @@ all state in Redis rather than in-process. If you ever observe
 request (a lock that seems to work in one replica but not another, or a
 plan visible to one replica's apply but not another's), that's a genuine
 regression worth filing, not expected behavior.
+
+That includes a replica going away. A trigger's progress (its commands,
+the results so far, which Operations are still running) is in Redis
+under a `trigger:<id>` key, and the replica that receives a Runner's
+result starts the comment's next command or posts the results comment,
+whichever replica dispatched it.
+
+**A results comment that never appears** therefore means a replica was
+killed in the middle of a step, not between steps: while it was
+dispatching a command's Runner Jobs, or after it took a Runner's result
+and before it posted. A normal stop (a rollout, a node drain) lets those
+steps finish. An out-of-memory kill or a lost node does not. The checks
+and the locks are still right, because they are updated first, so read
+the checks for what ran; a later command of the same comment that was
+never started has no check, and has to be commented again.
+
+Nothing recovers such a trigger. Its `trigger:<id>` key stays in Redis
+until it expires, 25 hours after its latest command began, and can be
+left alone or deleted:
+
+```sh
+redis-cli --scan --pattern 'trigger:*'
+```
+
+A key that is there while Runner Jobs are still running is a trigger in
+progress, not a stranded one.

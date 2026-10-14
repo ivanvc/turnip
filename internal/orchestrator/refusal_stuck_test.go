@@ -46,15 +46,17 @@ func stuckCheckOrchestrator(t *testing.T, locks lock.LockManager) (*Orchestrator
 	t.Cleanup(func() { _ = client.Close() })
 	o := &Orchestrator{
 		locks:            locks,
-		jobs:             &fakeJobCreator{t: t, redis: client},
+		jobs:             &fakeJobCreator{t: t},
 		plugins:          testRegistry(),
 		catalog:          testCatalog(),
 		records:          newRecordStore(client),
+		triggers:         newTriggerStore(client),
 		redis:            client,
 		allowedOverrides: defaultAllowedOverrides(),
 		startTimeout:     5 * time.Minute,
 		sweepInterval:    30 * time.Second,
 	}
+	bindFakeRunner(o)
 	return o, mr
 }
 
@@ -99,8 +101,11 @@ func TestExecuteOne_PlanRecordNotSavedCompletesTheCheck(t *testing.T) {
 	client := &fakeExecuteClient{}
 	hooked := &hookedCheckClient{fakeExecuteClient: client, afterCreate: func() { mr.SetError("ERR injected: redis unavailable") }}
 
-	result := o.executeOne(context.Background(), hooked, testRepo, testPR, 1, testHelmfileTarget())
+	// Dispatched outside a trigger: with Redis failing, the refusal could
+	// not be added to one either, and that is not what this is about.
+	result := o.dispatchOnly(context.Background(), hooked, testRepo, testPR, testHelmfileTarget())
 	mr.SetError("")
+	require.NotNil(t, result)
 
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "creating operation record")
@@ -118,8 +123,11 @@ func TestExecuteOne_ApplyRecordNotSavedCompletesTheCheck(t *testing.T) {
 
 	target := testHelmfileTarget()
 	target.Operation = "apply"
-	result := o.executeOne(context.Background(), hooked, testRepo, testPR, 1, target)
+	// Dispatched outside a trigger: with Redis failing, the refusal could
+	// not be added to one either, and that is not what this is about.
+	result := o.dispatchOnly(context.Background(), hooked, testRepo, testPR, target)
 	mr.SetError("")
+	require.NotNil(t, result)
 
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "creating operation record")
@@ -152,7 +160,7 @@ func TestExecuteOne_PlanJobNotBuiltCompletesTheCheck(t *testing.T) {
 	failBuildJob(o)
 	client := &fakeExecuteClient{}
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, unbuildableTarget("diff"))
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, unbuildableTarget("diff"))
 
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "building job")
@@ -167,7 +175,7 @@ func TestExecuteOne_ApplyJobNotBuiltCompletesTheCheck(t *testing.T) {
 	before := seedAwaitingApply(t, o)
 	client := &fakeExecuteClient{}
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, unbuildableTarget("apply"))
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, unbuildableTarget("apply"))
 
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "building job")

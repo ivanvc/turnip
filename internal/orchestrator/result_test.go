@@ -26,6 +26,7 @@ func testResultOrchestrator(t *testing.T, locks *fakeLockManager) (*Orchestrator
 		plugins:            testRegistry(),
 		catalog:            testCatalog(),
 		records:            newRecordStore(client),
+		triggers:           newTriggerStore(client),
 		redis:              client,
 	}
 	return o, fakeClient
@@ -67,32 +68,13 @@ func TestHandleLog_MarksStarted(t *testing.T) {
 }
 
 // publishedResult runs HandleResult and returns the ProjectResult it
-// published, which is what reaches the pull request comment. The
-// subscription is established before the handler runs because Pub/Sub has
-// no replay.
+// added to the Operation's trigger, which is what reaches the pull request
+// comment.
 func publishedResult(t *testing.T, o *Orchestrator, operationID string, result rpc.OperationResult) github.ProjectResult {
 	t.Helper()
-	ctx := context.Background()
-
-	resultCh := make(chan github.ProjectResult, 1)
-	go func() {
-		r, _ := waitForDone(ctx, o.redis, operationID)
-		resultCh <- r
-	}()
-
-	require.Eventually(t, func() bool {
-		return o.redis.PubSubNumSub(ctx, doneChannel(operationID)).Val()[doneChannel(operationID)] > 0
-	}, time.Second, time.Millisecond)
-
-	require.NoError(t, o.HandleResult(ctx, operationID, result))
-
-	select {
-	case got := <-resultCh:
-		return got
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for the published result")
-		return github.ProjectResult{}
-	}
+	return finalizedResult(t, o, operationID, func() {
+		require.NoError(t, o.HandleResult(context.Background(), operationID, result))
+	})
 }
 
 // The counts the Runner reported, and the Plugin's operation names, must
@@ -272,29 +254,15 @@ func TestHandleResult_SuccessfulApply_ReleasesLockAndAppendsNote(t *testing.T) {
 	o, _ := testResultOrchestrator(t, locks)
 	createTestRecord(t, o, "op-1", "apply")
 
-	resultCh := make(chan github.ProjectResult, 1)
-	go func() {
-		r, err := waitForDone(context.Background(), o.redis, "op-1")
-		assert.NoError(t, err)
-		resultCh <- r
-	}()
-	require.Eventually(t, func() bool {
-		return o.redis.PubSubNumSub(context.Background(), doneChannel("op-1")).Val()[doneChannel("op-1")] > 0
-	}, time.Second, time.Millisecond)
-
-	require.NoError(t, o.HandleResult(context.Background(), "op-1", rpc.OperationResult{Success: true, Output: "applied"}))
+	r := finalizedResult(t, o, "op-1", func() {
+		require.NoError(t, o.HandleResult(context.Background(), "op-1", rpc.OperationResult{Success: true, Output: "applied"}))
+	})
 	assert.True(t, released)
-
-	select {
-	case r := <-resultCh:
-		// The note moved off Output, which renders inside the tool's own
-		// code fence and is what gets split when output is long, onto a
-		// field the renderer places in the trailer beside the next steps.
-		assert.Contains(t, r.LockNote, "Lock released")
-		assert.NotContains(t, r.Output, "Lock released", "turnip's voice does not belong inside the tool's output")
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for published result")
-	}
+	// The note moved off Output, which renders inside the tool's own
+	// code fence and is what gets split when output is long, onto a
+	// field the renderer places in the trailer beside the next steps.
+	assert.Contains(t, r.LockNote, "Lock released")
+	assert.NotContains(t, r.Output, "Lock released", "turnip's voice does not belong inside the tool's output")
 }
 
 func TestHandleResult_FailedApply_DoesNotReleaseLock(t *testing.T) {

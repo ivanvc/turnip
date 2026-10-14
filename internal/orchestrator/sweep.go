@@ -29,10 +29,23 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	}
 }
 
+// abandonedOutput is the line a Project carries in its trigger's comment
+// when its Operation started and nothing came back within abandonAfter.
+const abandonedOutput = "No result was received from the Runner within 24 hours."
+
 // sweepOnce finds Operation Records whose start deadline has passed and
 // which never started, claims each atomically, diagnoses it against the
 // Kubernetes API, and reports it as a timeout failure (Requirement 8).
+// For every record it scans it then tries the abandon claim, which only
+// succeeds for a started record at least abandonAfter old.
+//
+// The scan and the claims stop with ctx. What follows a claim does not: a
+// claimed Operation is finalized by nobody else, so a stop that lands in
+// the middle of a tick must not skip its check and its Lock and still
+// carry its trigger forward. Run returns only after the tick does, which
+// is what a stop waits for.
 func (o *Orchestrator) sweepOnce(ctx context.Context) {
+	claimedCtx := context.WithoutCancel(ctx)
 	keys, err := o.records.ScanOperationKeys(ctx)
 	if err != nil {
 		slog.ErrorContext(ctx, "sweep scan", "error", err)
@@ -47,11 +60,45 @@ func (o *Orchestrator) sweepOnce(ctx context.Context) {
 			slog.ErrorContext(ctx, "sweep claim", "operation_id", operationID, "error", err)
 			continue
 		}
-		if !claimed {
+		if claimed {
+			o.reportTimeout(claimedCtx, operationID, rec)
 			continue
 		}
-		o.reportTimeout(ctx, operationID, rec)
+		rec, claimed, err = o.records.ClaimForAbandon(ctx, operationID, now)
+		if err != nil {
+			slog.ErrorContext(ctx, "sweep abandon claim", "operation_id", operationID, "error", err)
+			continue
+		}
+		if claimed {
+			o.reportAbandoned(claimedCtx, operationID, rec)
+		}
 	}
+}
+
+// reportAbandoned gives up on an Operation that started and never
+// reported. Its check stays in progress and its Lock stays held, as they
+// were: the Runner may still be executing, and nothing here knows what it
+// changed. Only the record goes, and the Project is completed in its
+// trigger so the comment is not held back any longer.
+func (o *Orchestrator) reportAbandoned(ctx context.Context, operationID string, rec *OperationRecord) {
+	slog.WarnContext(ctx, "operation abandoned: no result within the abandonment window",
+		"operation_id", operationID,
+		"job", rec.JobName,
+		"lock_key", rec.ProjectKey,
+		"pr_number", rec.PRNumber,
+		"operation", rec.Operation,
+	)
+	if err := o.records.Delete(ctx, operationID); err != nil {
+		slog.ErrorContext(ctx, "deleting abandoned operation record", "operation_id", operationID, "error", err)
+	}
+	o.finishOperation(ctx, rec, github.ProjectResult{
+		ProjectName: rec.Project.Name,
+		Tool:        rec.Project.Tool,
+		Operation:   rec.Operation,
+		Success:     false,
+		Output:      abandonedOutput,
+		Locked:      true,
+	})
 }
 
 func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, rec *OperationRecord) {
@@ -135,9 +182,7 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 	if err := o.records.Delete(ctx, operationID); err != nil {
 		slog.ErrorContext(ctx, "deleting timed-out operation record", "operation_id", operationID, "error", err)
 	}
-	if err := publishDone(ctx, o.redis, operationID, pr); err != nil {
-		slog.ErrorContext(ctx, "publishing timeout notification", "operation_id", operationID, "error", err)
-	}
+	o.finishOperation(ctx, rec, pr)
 }
 
 // timeoutDiagnostic renders a JobStatus into readable text (Requirement

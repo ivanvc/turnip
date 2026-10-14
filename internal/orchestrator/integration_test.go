@@ -24,16 +24,19 @@ import (
 	"github.com/ivanvc/turnip/internal/rpc"
 )
 
-// grpcDrivingJobCreator, unlike fakeJobCreator (which shortcuts straight
-// to Redis Pub/Sub), drives a real gRPC ExecuteOperation stream against
+// grpcDrivingJobCreator, unlike fakeJobCreator (which calls HandleResult
+// directly), drives a real gRPC ExecuteOperation stream against
 // whatever server bufconn is wired to — exercising rpc.NewServer(orch)'s
-// real dispatch into orch.HandleLog/HandleResult, not just the internal
-// Redis mechanism those handlers happen to use.
+// real dispatch into orch.HandleLog/HandleResult, so the trigger is
+// carried forward inside the Runner's RPC as it is in production.
 type grpcDrivingJobCreator struct {
 	t       *testing.T
 	client  pb.OperationServiceClient
 	logLine string
 	result  *pb.OperationResult
+	// imageID, when set, is what Status reports the tool's container ran,
+	// so a plan records a digest and a later apply is admitted.
+	imageID string
 }
 
 func (g *grpcDrivingJobCreator) Create(ctx context.Context, job *batchv1.Job) (*batchv1.Job, error) {
@@ -68,6 +71,9 @@ func (g *grpcDrivingJobCreator) Create(ctx context.Context, job *batchv1.Job) (*
 }
 
 func (g *grpcDrivingJobCreator) Status(ctx context.Context, jobName string) (*jobs.JobStatus, error) {
+	if g.imageID != "" {
+		return &jobs.JobStatus{JobFound: true, ImageID: g.imageID}, nil
+	}
 	return &jobs.JobStatus{JobFound: false}, nil
 }
 
@@ -111,6 +117,7 @@ func TestIntegration_AutoPlanFlowEndToEnd(t *testing.T) {
 		plugins:            testRegistry(),
 		catalog:            testCatalog(),
 		records:            newRecordStore(redisClient),
+		triggers:           newTriggerStore(redisClient),
 		redis:              redisClient,
 		installationClient: func(id int64) github.GitHubClient { return prClient },
 		startTimeout:       5 * time.Minute,
@@ -163,6 +170,7 @@ func TestIntegration_CommentTriggeredApplyFlowEndToEnd(t *testing.T) {
 		plugins:            testRegistry(),
 		catalog:            testCatalog(),
 		records:            newRecordStore(redisClient),
+		triggers:           newTriggerStore(redisClient),
 		redis:              redisClient,
 		installationClient: func(id int64) github.GitHubClient { return client },
 		startTimeout:       5 * time.Minute,

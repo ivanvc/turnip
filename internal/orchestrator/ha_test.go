@@ -74,6 +74,14 @@ func (c *haFakeClient) GetCollaboratorPermission(ctx context.Context, owner, rep
 	return "write", nil
 }
 
+// IsCollaborator answers yes: these tests are about replicas sharing
+// Redis, not about who may trigger. Without it the embedded nil client is
+// reached and the test panics, which went unnoticed while these tests were
+// skipped for want of a Redis address.
+func (c *haFakeClient) IsCollaborator(ctx context.Context, owner, repo, username string) (bool, error) {
+	return true, nil
+}
+
 func (c *haFakeClient) GetPullRequest(ctx context.Context, owner, repo string, prNumber int) (*github.PullRequest, error) {
 	return c.pr, nil
 }
@@ -129,6 +137,7 @@ func newHAOrchestrator(t *testing.T, addr string, client github.GitHubClient) *O
 		plugins:            testRegistry(),
 		catalog:            testCatalog(),
 		records:            newRecordStore(redisClient),
+		triggers:           newTriggerStore(redisClient),
 		redis:              redisClient,
 		installationClient: func(id int64) github.GitHubClient { return client },
 		startTimeout:       5 * time.Minute,
@@ -136,24 +145,26 @@ func newHAOrchestrator(t *testing.T, addr string, client github.GitHubClient) *O
 	}
 }
 
-// wireFakeJobCreator attaches execute_test.go's fakeJobCreator, which
-// publishes its canned result directly (bypassing HandleResult entirely)
-// — fine when a test only cares about the immediate AcquireLock outcome
-// and never needs StorePlan/ReleaseLock's side effects to have run.
+// wireFakeJobCreator attaches execute_test.go's fakeJobCreator, whose fake
+// Runner reports its canned result straight to this instance's
+// HandleResult, with no gRPC in between. Fine when a test only cares
+// about the immediate AcquireLock outcome.
 func wireFakeJobCreator(t *testing.T, o *Orchestrator, result github.ProjectResult) {
 	t.Helper()
-	o.jobs = &fakeJobCreator{t: t, redis: o.redis, result: result}
+	o.jobs = &fakeJobCreator{t: t, result: result}
+	bindFakeRunner(o)
 }
 
 // wireGRPCJobCreator attaches integration_test.go's grpcDrivingJobCreator,
 // driving a real bufconn gRPC round-trip into this instance's own
-// HandleLog/HandleResult — needed whenever a test's assertion depends on
-// HandleResult's real side effects (StorePlan for a plan,
-// ReleaseLock for an apply), not just the published ProjectResult.
+// HandleLog/HandleResult, as a Runner's stream does in production.
 func wireGRPCJobCreator(t *testing.T, o *Orchestrator, logLine string, result *pb.OperationResult) {
 	t.Helper()
 	client := newBufconnOperationClient(t, o)
-	o.jobs = &grpcDrivingJobCreator{t: t, client: client, logLine: logLine, result: result}
+	// The image id lets a plan record its digest, without which a later
+	// apply is refused (tool-images).
+	o.jobs = &grpcDrivingJobCreator{t: t, client: client, logLine: logLine, result: result,
+		imageID: "ghcr.io/helmfile/helmfile@" + testImageDigest}
 }
 
 func haPlanEvent(owner, repo string, prNumber int) *github.WebhookEvent {
@@ -240,8 +251,8 @@ func TestHA_ConcurrentLockAcquisitionAcrossInstancesExactlyOneWinner(t *testing.
 	instances := make([]*Orchestrator, 2)
 	for i := range instances {
 		instances[i] = newHAOrchestrator(t, addr, client)
-		// The winner's own Operation is never observed by this test (see
-		// below), so a fakeJobCreator publishing directly is sufficient —
+		// The winner's own Operation is not what this test observes (see
+		// below), so a fakeJobCreator reporting directly is sufficient:
 		// no real gRPC round-trip needed here.
 		wireFakeJobCreator(t, instances[i], github.ProjectResult{Success: true, Output: "no changes"})
 	}
@@ -264,10 +275,8 @@ func TestHA_ConcurrentLockAcquisitionAcrossInstancesExactlyOneWinner(t *testing.
 				posted++
 			}
 		}
-		// The winner's own Operation never resolves within this test's
-		// window (nothing ever calls HandleResult for it — see
-		// wireFakeJobCreator's doc comment), so only the numEvents-1
-		// rejections are expected to post.
+		// The winner's own comment may or may not have been posted by
+		// now, so only the numEvents-1 rejections are waited for.
 		return posted >= numEvents-1
 	}, 5*time.Second, 20*time.Millisecond)
 

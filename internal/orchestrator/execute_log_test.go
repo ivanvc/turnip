@@ -55,7 +55,7 @@ func TestExecuteOne_RejectionIsLoggedWithItsReason(t *testing.T) {
 	jobsClient := &fakeJobCreator{t: t, createErr: errors.New("forbidden: jobs.batch")}
 	o, _ := testOrchestrator(t, &fakeLockManager{}, jobsClient)
 
-	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
+	result := o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
 	require.False(t, result.Success)
 
 	rec := findRecord(logs(), "operation rejected")
@@ -72,7 +72,7 @@ func TestExecuteOne_DispatchAndFinishAreLoggedAtInfo(t *testing.T) {
 	want := github.ProjectResult{ProjectName: "helm-a", Tool: "helmfile", Operation: "diff", Success: true, Output: "secret-looking plan output"}
 	o, _ := testOrchestrator(t, &fakeLockManager{}, &fakeJobCreator{t: t, result: want})
 
-	o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
+	o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
 
 	records := logs()
 	created := findRecord(records, "runner job created")

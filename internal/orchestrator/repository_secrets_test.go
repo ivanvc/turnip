@@ -43,8 +43,8 @@ func secretsTarget(keys ...string) Target {
 }
 
 // onlyOperationRecord reads the one Operation Record executeOne left
-// behind: a result published by the fake is never handled, so nothing
-// deletes it.
+// behind, for an Operation no Runner reported on (dispatchOnly), so
+// nothing deleted it.
 func onlyOperationRecord(t *testing.T, o *Orchestrator) *OperationRecord {
 	t.Helper()
 	keys, err := o.records.ScanOperationKeys(context.Background())
@@ -65,9 +65,9 @@ func TestExecuteOne_ProjectListingKeysMountsTheRepositorysSecret(t *testing.T) {
 	repo := testRepo
 	repo.ID = testRepositoryID
 
-	result := o.executeOne(context.Background(), &fakeExecuteClient{}, repo, testPR, 1, secretsTarget("lab-kubeconfig"))
+	refused := o.dispatchOnly(context.Background(), &fakeExecuteClient{}, repo, testPR, secretsTarget("lab-kubeconfig"))
 
-	require.True(t, result.Success, result.Output)
+	require.Nil(t, refused)
 	vol := repositorySecretsVolume(t, jobsClient.lastCreatedJob())
 	require.NotNil(t, vol, "a Project listing keys gets the repository-secrets volume")
 	require.NotNil(t, vol.Secret)
@@ -94,7 +94,7 @@ func TestExecuteOne_KeysWithoutARepositoryIDAreRefused(t *testing.T) {
 	o, _ := testOrchestrator(t, &fakeLockManager{}, jobsClient)
 	client := &fakeExecuteClient{}
 
-	result := o.executeOne(context.Background(), client, testRepo, testPR, 1, secretsTarget("lab-kubeconfig"))
+	result := o.runOne(t, context.Background(), client, testRepo, testPR, 1, secretsTarget("lab-kubeconfig"))
 
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Output, "building job")
@@ -112,7 +112,7 @@ func TestExecuteOne_NoKeysNeedNoRepositoryID(t *testing.T) {
 	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
 	o, _ := testOrchestrator(t, &fakeLockManager{}, jobsClient)
 
-	result := o.executeOne(context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
+	result := o.runOne(t, context.Background(), &fakeExecuteClient{}, testRepo, testPR, 1, testHelmfileTarget())
 
 	assert.True(t, result.Success, result.Output)
 	assert.Nil(t, repositorySecretsVolume(t, jobsClient.lastCreatedJob()))
@@ -137,16 +137,18 @@ func TestHandlePullRequest_JobMountsTheEventRepositorysSecret(t *testing.T) {
 		files:         map[string][]byte{"turnip.yaml": []byte(secretsTurnipYAML)},
 		modifiedFiles: []string{"a/helmfile.yaml"},
 	}
-	jobsClient := &fakeJobCreator{t: t, redis: client, result: github.ProjectResult{Success: true, ProjectName: "lab"}}
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true, ProjectName: "lab"}}
 	o := &Orchestrator{
 		locks:              &fakeLockManager{},
 		jobs:               jobsClient,
 		plugins:            testRegistry(),
 		catalog:            testCatalog(),
 		records:            newRecordStore(client),
+		triggers:           newTriggerStore(client),
 		redis:              client,
 		installationClient: func(id int64) github.GitHubClient { return fakeClient },
 	}
+	bindFakeRunner(o)
 
 	event := &github.WebhookEvent{
 		Action:       "opened",
@@ -199,26 +201,10 @@ func sweepRecord(t *testing.T, rec *OperationRecord, status *jobs.JobStatus) (gi
 	o.runnerNamespace = testRunnerNamespace
 	require.NoError(t, o.records.Create(context.Background(), rec))
 
-	resultCh := make(chan github.ProjectResult, 1)
-	go func() {
-		r, err := waitForDone(context.Background(), o.redis, rec.OperationID)
-		assert.NoError(t, err)
-		resultCh <- r
-	}()
-	channel := doneChannel(rec.OperationID)
-	require.Eventually(t, func() bool {
-		return o.redis.PubSubNumSub(context.Background(), channel).Val()[channel] > 0
-	}, time.Second, time.Millisecond)
-
-	o.sweepOnce(context.Background())
-
-	select {
-	case r := <-resultCh:
-		return r, client.updatedCheckRun
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for the published timeout result")
-		return github.ProjectResult{}, github.CheckRunOptions{}
-	}
+	r := finalizedResult(t, o, rec.OperationID, func() {
+		o.sweepOnce(context.Background())
+	})
+	return r, client.updatedCheckRun
 }
 
 func secretsSweepRecord(keys ...string) *OperationRecord {
