@@ -8,7 +8,7 @@ The consolidated results comment turnip posts on a pull request after a trigger'
 ### Requirement: One results comment per trigger, split by kind
 Once every Operation started by one trigger (an automatic plan, or one trigger comment with all its commands) has finished, turnip SHALL post the results of all its Projects together, including Projects refused before or during dispatch, as fresh pull request comments. Results whose Operation is its tool's plan operation (for Helmfile, `diff`) SHALL form the plan comment; every other Operation's results, and any result whose tool is unknown, SHALL form a separate apply comment. When a trigger has both, the plan comment SHALL be posted first. A trigger that produced no Project result (only replies, or nothing at all) SHALL post no results comment. Replies to malformed lines, unlocks and selection errors are separate comments (see the `commands` capability).
 
-Known issue: the results comment is posted by the replica that dispatched the trigger; if that replica restarts while the Operations run, the checks still finalize but no results comment is posted. Fix proposed in change `fix-results-comment-on-replica-loss`.
+The results comment SHALL be posted once per trigger by whichever Server replica finishes the trigger (see the `operation-lifecycle` capability), so it SHALL be posted even when the replica that received the trigger is gone.
 
 #### Scenario: Plan and apply in one comment
 - **WHEN** a single trigger comment contains `/turnip diff web` and `/turnip apply api`
@@ -21,6 +21,10 @@ Known issue: the results comment is posted by the replica that dispatched the tr
 #### Scenario: Automatic plan
 - **WHEN** the automatic plan for a pushed commit finishes for every matched Project
 - **THEN** turnip posts one plan comment covering all of them
+
+#### Scenario: The receiving replica restarts
+- **WHEN** the replica that received `/turnip apply web` restarts while the apply runs
+- **THEN** the apply comment for `web` is still posted, once
 
 ### Requirement: Verdict line
 Each results comment SHALL open with a bold verdict line summarizing every Project in that comment. For a single Project it SHALL read `**N changes in `name`.**` (`1 change` when one), `**No changes in `name`.**`, `**Succeeded in `name`.**` when a successful mutating Operation's counts were unreported (see the `plugins` capability), or `**`name` failed.**`. For several Projects the headline SHALL be `All N projects failed` when every one failed, otherwise `T changes across N projects` when any Project reported changes (T being the sum of additions, changes and destructions), otherwise `Succeeded across N projects` when any had unreported counts, otherwise `No changes across N projects`. It SHALL then list only the exceptions, comma-separated after a colon: `K with no changes`, `K succeeded` (unreported, shown only when other Projects reported changes) and `K failed` (when not all failed). A headline with no exceptions SHALL end with the period inside the bold.

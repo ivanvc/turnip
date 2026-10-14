@@ -19,20 +19,14 @@ In the order discussed so far; reorder here.
    fields refuse makes every delivery attempt fail, so the Runner
    retries for 15 minutes and the check stays in progress (found by the
    review of `fix-large-output`)
-2. `fix-results-comment-on-replica-loss`: implemented, awaiting deploy
-3. Comment parts split mid-line, not yet a change: a Project's output
-   too long for one comment is split into `output part N/M` pieces at an
-   exact byte count, so a line (or a multi-byte character) can be cut
-   across two comments. Parts should end at the last whole line that
-   fits, splitting inside a line, at a character boundary, only for a
-   line longer than a part (found 2026-10-09; present since the first
-   comment code)
+2. `fix-comment-part-split`: proposal
+3. `fix-helmfile-diff-removals`: proposal
+4. `fix-apply-suggested-with-lock`: proposal
 
 ## Open changes
 
 | Change | What it does | Stage |
 |---|---|---|
-| [`fix-results-comment-on-replica-loss`](changes/fix-results-comment-on-replica-loss/) | a trigger's results comment and later commands survive the loss of the replica that dispatched them | implemented; archived once a self-upgrading apply posts its comment |
 | [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized (Slice 40) | proposal |
 | [`fix-plan-survives-push`](changes/fix-plan-survives-push/) | every push marks the pull request's ready plans stale, and says so | proposal |
 | [`fix-concurrent-mutations`](changes/fix-concurrent-mutations/) | a second mutating command for a Project is refused while the first runs | proposal |
@@ -43,6 +37,9 @@ In the order discussed so far; reorder here.
 | [`operation-scheduling`](changes/operation-scheduling/) | a cap on how many Operations run at once, with a fair queue, and per-Project dependencies that order applies (Slice 30) | proposal |
 | [`runner-server-tls`](changes/runner-server-tls/) | TLS on the Runner's gRPC channel, and a Runner that verifies the Server (Slice 38); where the certificate comes from is still open | proposal |
 | [`org-images`](changes/org-images/) | the project under its organization, and multi-architecture images published on every push to `main` (Slice 49) | proposal |
+| [`fix-comment-part-split`](changes/fix-comment-part-split/) | an output part ends at a whole line, never inside a line or a character | proposal |
+| [`fix-helmfile-diff-removals`](changes/fix-helmfile-diff-removals/) | a Helmfile plan counts the releases it will remove | proposal |
+| [`fix-apply-suggested-with-lock`](changes/fix-apply-suggested-with-lock/) | a plan whose Lock is held offers the apply; an apply never offers itself again | proposal |
 
 ## Planned slices without a change yet
 
