@@ -169,7 +169,7 @@ turnip recognizes three roles, and does not distinguish further:
 
 | Role | Who |
 |---|---|
-| **Outsider** | not a collaborator on the repository |
+| **Outsider** | has no access to the repository beyond what everyone has |
 | **Collaborator** | a collaborator below write: read or triage |
 | **Writer** | write, maintain or admin |
 
@@ -186,12 +186,29 @@ An outsider's comment gets a reply saying so, and nothing runs. A
 collaborator asking for an apply gets a reply naming the permission they
 are missing.
 
+**How turnip recognizes a collaborator.** turnip asks GitHub whether the
+author is a collaborator. GitHub's answer can leave out access granted
+through a team, so when it does not list the author, turnip also asks
+what permission the author holds. On a private repository any permission
+other than none counts; on a public repository only triage or above
+counts, because GitHub reports `read` for every account there and that
+says nothing about trust. An internal repository (GitHub Enterprise) is
+judged like a public one, since every member of the enterprise can read
+it. So a member with write access through a team can plan and apply, and
+a stranger reading a public repository cannot trigger anything.
+
+If turnip cannot ask GitHub (an error, a rate limit), it runs nothing and
+replies that it could not check your permission. That is not a refusal;
+comment again to retry.
+
 **"Collaborator" is wider than it sounds.** For an organization-owned
-repository, GitHub counts outside collaborators, members who are direct
-collaborators, members with access through a team, members with access
-through the organization's *default* permission, and organization owners.
-If your organization grants its members a default permission on
-repositories, every member can trigger a plan.
+repository, GitHub's collaborator answer counts outside collaborators,
+members who are direct collaborators, members with access through the
+organization's *default* permission, and organization owners. Members
+with access through a team count too, through the permission answer
+above rather than the collaborator answer. If your organization grants
+its members a default permission on repositories, every member can
+trigger a plan.
 
 ### Automatic plans have no actor
 

@@ -477,3 +477,55 @@ func TestWebhookHandler_PullRequestCarriesOpenState(t *testing.T) {
 		})
 	}
 }
+
+// Visibility feeds the collaborator check. Only an explicitly private
+// repository reads as private: an internal one sends "private": true too,
+// but its read access comes with the visibility, and a payload without the
+// fields must read as public, the stricter reading.
+func TestWebhookHandler_CarriesRepositoryVisibility(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		private    *bool
+		visibility *string
+		want       bool
+	}{
+		{"private", gh.Ptr(true), gh.Ptr("private"), true},
+		{"public", gh.Ptr(false), gh.Ptr("public"), false},
+		{"internal", gh.Ptr(true), gh.Ptr("internal"), false},
+		{"private without visibility", gh.Ptr(true), nil, false},
+		{"fields absent", nil, nil, false},
+	} {
+		for _, eventType := range []string{"pull_request", "issue_comment"} {
+			t.Run(tc.name+" "+eventType, func(t *testing.T) {
+				var payload []byte
+				if eventType == "pull_request" {
+					payload = testPullRequestPayload(t)
+				} else {
+					payload = testIssueCommentPayload(t, true)
+				}
+				var raw map[string]any
+				require.NoError(t, json.Unmarshal(payload, &raw))
+				repo := raw["repository"].(map[string]any)
+				delete(repo, "private")
+				delete(repo, "visibility")
+				if tc.private != nil {
+					repo["private"] = *tc.private
+				}
+				if tc.visibility != nil {
+					repo["visibility"] = *tc.visibility
+				}
+				payload, err := json.Marshal(raw)
+				require.NoError(t, err)
+
+				handler := &recordingEventHandler{}
+				h := NewWebhookHandler(testWebhookSecret, handler)
+				w := httptest.NewRecorder()
+				h.ServeHTTP(w, signedWebhookRequest(t, eventType, payload))
+
+				require.Equal(t, http.StatusOK, w.Code)
+				require.NotNil(t, handler.lastEvent)
+				assert.Equal(t, tc.want, handler.lastEvent.Repository.Private)
+			})
+		}
+	}
+}

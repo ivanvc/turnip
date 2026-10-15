@@ -18,6 +18,10 @@ type Repository struct {
 	Owner string
 	Name  string
 	URL   string
+	// Private is whether the payload's visibility is "private". Internal
+	// and public repositories, and a payload without the fields, read as
+	// not private, the stricter reading for the collaborator check.
+	Private bool
 }
 
 // PullRequest carries what's available from the triggering payload. For a

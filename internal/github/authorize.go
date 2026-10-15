@@ -20,12 +20,18 @@ var permissionRank = map[string]int{
 // cacheEntry holds whichever authorization answers have been fetched for
 // one account on one repository.
 //
-// The two are independent and neither implies the other. Collaborator
-// status comes from the 204/404 endpoint, which answers "is this person a
+// The two stay separate and are cached separately. Collaborator status
+// comes from the 204/404 endpoint, which answers "is this person a
 // collaborator"; the permission level comes from the endpoint that reports
-// what access an account has. Inferring the first from the second is the
-// defect this shape exists to make unexpressible — a successful permission
-// lookup says GitHub knows the account, not that it trusts them.
+// what access an account has. A successful permission lookup on its own
+// says GitHub knows the account, not that it trusts them: on a public
+// repository every account reads as "read".
+//
+// IsCollaborator is the one place one answer informs the other, and only
+// under the visibility rule in collaboratorByRole: when the collaborator
+// answer leaves an account out (as it does for access granted through a
+// team), a role the repository's visibility cannot explain still counts.
+// Nothing else may infer collaboration from a permission level.
 //
 // One expiry covers both, set when the entry is created. An answer fetched
 // late in the window therefore lives less than the full TTL, which errs
@@ -61,23 +67,57 @@ func NewAuthorizer(client GitHubClient) *Authorizer {
 	}
 }
 
-// IsCollaborator reports whether GitHub considers username a collaborator
-// on owner/repo.
+// IsCollaborator reports whether username is a collaborator on
+// owner/repo: listed by GitHub's collaborator answer, or holding a role
+// the repository's visibility does not explain.
 //
-// It asks the endpoint that answers that question, which replies 204 or
-// 404 — go-github maps the 404 to a clean false, so "not a collaborator"
-// and "could not tell" stay distinguishable. Anything else is returned as
-// an error, and a caller must refuse rather than read it as a no: GitHub
-// requires write, maintain or admin to read collaborator information, so
-// an under-permissioned installation lands here and must not look like a
-// repository with no collaborators.
+// The collaborator answer is asked first, and a yes is final, so an
+// account it lists costs no permission lookup. That endpoint replies 204
+// or 404, and go-github maps the 404 to a clean false, so "not listed"
+// and "could not tell" stay distinguishable.
 //
-// Deliberately not derived from a permission lookup. That endpoint reports
-// what access an account has, and reporting *some* access is not evidence
-// of collaboration — on a public repository read access is universal. The
-// gate once inferred one from the other and admitted every account GitHub
-// would answer about at all.
-func (a *Authorizer) IsCollaborator(ctx context.Context, owner, repo, username string) (bool, error) {
+// On a 404 the permission answer decides, read through the same cache
+// HasWritePermission uses, so a team member who goes on to ask for an
+// apply is still asked about once. GitHub's collaborator answer, asked by
+// an App with no organization permission, leaves out access granted
+// through a team, while the permission answer reports it.
+//
+// An error from either lookup is returned as an error, never as a no, and
+// a caller must refuse rather than read it as one: an under-permissioned
+// installation, a rate limit or an outage lands here and must not look
+// like a repository with no collaborators.
+func (a *Authorizer) IsCollaborator(ctx context.Context, owner, repo, username string, private bool) (bool, error) {
+	listed, err := a.listedCollaborator(ctx, owner, repo, username)
+	if err != nil {
+		return false, err
+	}
+	if listed {
+		return true, nil
+	}
+
+	perm, err := a.permission(ctx, owner, repo, username)
+	if err != nil {
+		return false, err
+	}
+	return collaboratorByRole(perm, private), nil
+}
+
+// collaboratorByRole is the visibility rule: whether a role reported by
+// the permission answer is access the repository's visibility does not
+// explain. On a private repository that is any role above none; on a
+// public one it is a role above read, since GitHub reports read for every
+// account there. A role turnip does not recognize ranks below none and
+// admits no one.
+func collaboratorByRole(perm string, private bool) bool {
+	floor := permissionRank["read"]
+	if private {
+		floor = permissionRank["none"]
+	}
+	return permissionRank[perm] > floor
+}
+
+// listedCollaborator asks GitHub's collaborator answer, through the cache.
+func (a *Authorizer) listedCollaborator(ctx context.Context, owner, repo, username string) (bool, error) {
 	if entry, ok := a.cached(owner, repo, username); ok && entry.haveCollaborator {
 		return entry.collaborator, nil
 	}

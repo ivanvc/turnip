@@ -310,6 +310,76 @@ func TestClient_GetCollaboratorPermission(t *testing.T) {
 	assert.Equal(t, "write", got)
 }
 
+func TestClient_GetCollaboratorPermission_Roles(t *testing.T) {
+	tests := []struct {
+		name, roleName, permission, want string
+	}{
+		{"read", "read", "read", "read"},
+		{"triage keeps its name over the folded permission", "triage", "read", "triage"},
+		{"write", "write", "write", "write"},
+		{"maintain keeps its name over the folded permission", "maintain", "write", "maintain"},
+		{"admin", "admin", "admin", "admin"},
+		{"custom role over read", "reviewer", "read", "read"},
+		{"custom role over triage", "triager", "read", "read"},
+		{"custom role over write", "deployer", "write", "write"},
+		{"custom role over maintain", "releaser", "write", "write"},
+		{"custom role over admin", "owner-ish", "admin", "admin"},
+		{"no role_name", "", "write", "write"},
+		{"none", "", "none", "none"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, mux := newTestClient(t)
+			mux.HandleFunc("/repos/owner/repo/collaborators/alice/permission", func(w http.ResponseWriter, r *http.Request) {
+				body := map[string]string{"permission": tt.permission}
+				if tt.roleName != "" {
+					body["role_name"] = tt.roleName
+				}
+				writeJSON(t, w, body)
+			})
+
+			got, err := client.GetCollaboratorPermission(t.Context(), "owner", "repo", "alice")
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestClient_HasWritePermission_AnswersAsBefore(t *testing.T) {
+	tests := []struct {
+		roleName, permission string
+		want                 bool
+	}{
+		{"read", "read", false},
+		{"triage", "read", false},
+		{"write", "write", true},
+		{"maintain", "write", true},
+		{"admin", "admin", true},
+		{"", "none", false},
+		{"", "read", false},
+		{"", "write", true},
+		{"custom-read", "read", false},
+		{"custom-write", "write", true},
+		{"custom-admin", "admin", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.roleName+"/"+tt.permission, func(t *testing.T) {
+			client, mux := newTestClient(t)
+			mux.HandleFunc("/repos/owner/repo/collaborators/alice/permission", func(w http.ResponseWriter, r *http.Request) {
+				body := map[string]string{"permission": tt.permission}
+				if tt.roleName != "" {
+					body["role_name"] = tt.roleName
+				}
+				writeJSON(t, w, body)
+			})
+
+			got, err := NewAuthorizer(client).HasWritePermission(t.Context(), "owner", "repo", "alice")
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 // tokenMintServer stands in for GitHub's installation-token endpoint and
 // records the body it was asked with, which is where the scoping lives.
 func tokenMintServer(t *testing.T) (*Client, *map[string]any) {

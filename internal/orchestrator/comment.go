@@ -46,9 +46,9 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 	hasMalformed := errors.As(err, &malformed)
 
 	authorizer := github.NewAuthorizer(client)
-	isCollaborator, err := authorizer.IsCollaborator(ctx, owner, repoName, event.Comment.Author)
+	isCollaborator, err := authorizer.IsCollaborator(ctx, owner, repoName, event.Comment.Author, event.Repository.Private)
 	if err != nil {
-		// Answered below as "no permission", which is what the author
+		// Answered below as "could not check", which is what the author
 		// sees; the actual failure is only ever visible here.
 		slog.ErrorContext(ctx, "checking collaborator permission",
 			"owner", owner, "repo", repoName, "pr_number", event.PullRequest.Number,
@@ -59,8 +59,11 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 			"actor", event.Comment.Author)
 	}
 	if err != nil || !isCollaborator {
-		_, postErr := client.PostComment(ctx, owner, repoName, event.PullRequest.Number,
-			fmt.Sprintf("@%s does not have permission to trigger operations on this repository.", event.Comment.Author))
+		reply := fmt.Sprintf("@%s does not have permission to trigger operations on this repository.", event.Comment.Author)
+		if err != nil {
+			reply = fmt.Sprintf("@%s: turnip could not check your permission on this repository, so nothing was run. Comment again to retry.", event.Comment.Author)
+		}
+		_, postErr := client.PostComment(ctx, owner, repoName, event.PullRequest.Number, reply)
 		return postErr
 	}
 
@@ -325,7 +328,10 @@ func (o *Orchestrator) handleUnlock(ctx context.Context, cfg *config.Config, cmd
 		slog.InfoContext(ctx, "refusing unlock from an author without write permission",
 			"owner", repo.Owner, "repo", repo.Name, "pr_number", prNumber, "actor", author)
 	}
-	if err != nil || !hasWrite {
+	if err != nil {
+		return fmt.Sprintf("@%s: turnip could not check your write permission, so nothing was unlocked. Comment again to retry.", author)
+	}
+	if !hasWrite {
 		return fmt.Sprintf("@%s does not have write permission required to unlock.", author)
 	}
 

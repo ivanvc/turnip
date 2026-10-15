@@ -296,6 +296,13 @@ the operation running.
   access specifically (not just any collaborator access, e.g. triage or
   read). Ask a maintainer to grant write access, or ask them to run the
   command themselves.
+- **"turnip could not check your permission"**: not a refusal. turnip
+  could not ask GitHub (an error, a rate limit or an outage), so it ran
+  nothing rather than guess. Comment again. An apply reports `could not
+  check write permission to run "apply"; comment again to retry`, and an
+  unlock replies that it could not check your write permission. If it
+  keeps happening, whoever runs turnip can find the GitHub error in the
+  Server's logs.
 
 ## Mutation requirements not met
 

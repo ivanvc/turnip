@@ -39,10 +39,27 @@ type fakeCommentEventClient struct {
 	// and that combination is the one the gate used to get wrong.
 	collaborator *bool
 
+	// collaboratorErr and permissionErr make the matching lookup fail,
+	// which is GitHub being unable to answer, as distinct from an answer
+	// of "not a collaborator".
+	collaboratorErr error
+	permissionErr   error
+
 	mu            sync.Mutex
 	posted        []string
 	modifiedCalls int
 	fileCalls     []string
+
+	// collaboratorCalls and permissionCalls count the questions asked of
+	// GitHub, so a test can say how many each comment cost.
+	collaboratorCalls int
+	permissionCalls   int
+}
+
+func (f *fakeCommentEventClient) questionCounts() (collaborator, permission int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.collaboratorCalls, f.permissionCalls
 }
 
 // getFileCallLog is how a test witnesses that a refusal ran before the
@@ -77,24 +94,30 @@ func (f *fakeCommentEventClient) modifiedFetches() int {
 }
 
 func (f *fakeCommentEventClient) GetCollaboratorPermission(ctx context.Context, owner, repo, username string) (string, error) {
-	// Authorizer.IsCollaborator only checks whether this call errors, not
-	// the permission string's value — an empty permission simulates
-	// GitHub's real behavior for a non-collaborator (the underlying API
-	// call itself fails, e.g. 404), matching what a real non-collaborator
-	// author would produce.
+	f.mu.Lock()
+	f.permissionCalls++
+	f.mu.Unlock()
+	if f.permissionErr != nil {
+		return "", f.permissionErr
+	}
+	// An empty permission simulates an account with no access: GitHub
+	// answers "none" for it, not an error.
 	if f.permission == "" {
-		return "", errors.New("not a collaborator")
+		return "none", nil
 	}
 	return f.permission, nil
 }
 func (f *fakeCommentEventClient) IsCollaborator(ctx context.Context, owner, repo, username string) (bool, error) {
+	f.mu.Lock()
+	f.collaboratorCalls++
+	f.mu.Unlock()
+	if f.collaboratorErr != nil {
+		return false, f.collaboratorErr
+	}
 	if f.collaborator != nil {
 		return *f.collaborator, nil
 	}
-	if f.permission == "" {
-		return false, errors.New("not a collaborator")
-	}
-	return true, nil
+	return f.permission != "", nil
 }
 func (f *fakeCommentEventClient) GetPullRequest(ctx context.Context, owner, repo string, prNumber int) (*github.PullRequest, error) {
 	return f.pr, nil
@@ -262,8 +285,7 @@ func TestHandleIssueComment_NonCollaboratorRejectedBeforeAnyCommand(t *testing.T
 	client := &fakeCommentEventClient{permission: ""}
 	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip plan", "mallory")))
 
-	require.Len(t, client.posted, 1)
-	assert.Contains(t, client.posted[0], "does not have permission")
+	require.Equal(t, []string{"@mallory does not have permission to trigger operations on this repository."}, client.posted)
 }
 
 func TestHandleIssueComment_MalformedLineRepliedAlongsideWellFormedProcessed(t *testing.T) {
@@ -447,8 +469,91 @@ func TestHandleIssueComment_SuccessfulPermissionLookupIsNotAuthorization(t *test
 
 	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip diff", "mallory")))
 
-	require.Len(t, client.postedComments(), 1)
-	assert.Contains(t, client.postedComments()[0], "does not have permission")
+	require.Equal(t, []string{"@mallory does not have permission to trigger operations on this repository."}, client.postedComments())
 	assert.Empty(t, client.getFileCallLog(),
 		"a refused trigger must not read the repository's configuration")
+}
+
+const couldNotCheck = "@alice: turnip could not check your permission on this repository, so nothing was run. Comment again to retry."
+
+func TestHandleIssueComment_CollaboratorLookupErrorIsNotARefusal(t *testing.T) {
+	o := testCommentOrchestrator(t, &fakeLockManager{})
+	client := &fakeCommentEventClient{
+		permission:      "write",
+		collaboratorErr: errors.New("rate limited"),
+		files:           map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
+		pr:              openPR(),
+	}
+
+	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip diff", "alice")))
+
+	require.Equal(t, []string{couldNotCheck}, client.postedComments())
+	assert.Empty(t, client.getFileCallLog())
+}
+
+func TestHandleIssueComment_PermissionLookupErrorForUnlistedAuthorIsNotARefusal(t *testing.T) {
+	notCollaborator := false
+	o := testCommentOrchestrator(t, &fakeLockManager{})
+	client := &fakeCommentEventClient{
+		collaborator:  &notCollaborator,
+		permissionErr: errors.New("unreachable"),
+		files:         map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
+		pr:            openPR(),
+	}
+
+	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip diff", "alice")))
+
+	require.Equal(t, []string{couldNotCheck}, client.postedComments())
+	assert.Empty(t, client.getFileCallLog())
+}
+
+func TestHandleIssueComment_PermissionLookupErrorForApplyIsNotARefusal(t *testing.T) {
+	listed := true
+	o := testCommentOrchestrator(t, &fakeLockManager{})
+	jobsClient, ok := o.jobs.(*fakeJobCreator)
+	require.True(t, ok)
+	// The collaborator answer lists the author, so the gate asks nothing
+	// else and only the apply's write check meets the error.
+	client := &fakeCommentEventClient{
+		collaborator:  &listed,
+		permissionErr: errors.New("unreachable"),
+		files:         map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
+		pr:            openPR(),
+	}
+
+	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip apply helm-a", "alice")))
+
+	posted := client.postedComments()
+	require.Len(t, posted, 1)
+	assert.Contains(t, posted[0], `could not check write permission to run "apply"; comment again to retry`)
+	assert.NotContains(t, posted[0], "write permission is required")
+	assert.Zero(t, jobsClient.createCount())
+}
+
+func TestHandleIssueComment_PermissionLookupErrorForUnlockIsNotARefusal(t *testing.T) {
+	listed := true
+	o := testCommentOrchestrator(t, &fakeLockManager{})
+	client := &fakeCommentEventClient{
+		collaborator:  &listed,
+		permissionErr: errors.New("unreachable"),
+		files:         map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
+		pr:            openPR(),
+	}
+
+	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip unlock", "alice")))
+
+	require.Equal(t, []string{"@alice: turnip could not check your write permission, so nothing was unlocked. Comment again to retry."}, client.postedComments())
+}
+
+func TestHandleIssueComment_UnlockRefusalTextUnchanged(t *testing.T) {
+	o := testCommentOrchestrator(t, &fakeLockManager{})
+	client := &fakeCommentEventClient{
+		permission: "read",
+		files:      map[string][]byte{"turnip.yaml": []byte(validTurnipYAML)},
+		pr:         openPR(),
+	}
+
+	require.NoError(t, callHandleIssueComment(o, client, commentEvent("/turnip unlock", "alice")))
+
+	require.Equal(t, []string{"@alice does not have write permission required to unlock."}, client.postedComments())
 }

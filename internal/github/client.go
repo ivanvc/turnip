@@ -261,7 +261,24 @@ func (c *Client) GetCollaboratorPermission(ctx context.Context, owner, repo, use
 	if err != nil {
 		return "", fmt.Errorf("github: getting permission level of %s on %s/%s: %w", username, owner, repo, err)
 	}
-	return level.GetPermission(), nil
+	return roleOf(level.GetRoleName(), level.GetPermission()), nil
+}
+
+// standardRoles are GitHub's five repository roles. Only these are
+// trusted from role_name: a custom role's name means nothing to turnip.
+var standardRoles = map[string]bool{
+	"read": true, "triage": true, "write": true, "maintain": true, "admin": true,
+}
+
+// roleOf picks the role to report. role_name is the highest role from
+// every grant and tells triage from read, which the legacy permission
+// field folds together. For a custom role, role_name is its own name and
+// permission is the base role it extends, so permission is the answer.
+func roleOf(roleName, permission string) string {
+	if standardRoles[roleName] {
+		return roleName
+	}
+	return permission
 }
 
 func toCreateCheckRunOptions(opts CheckRunOptions) gh.CreateCheckRunOptions {

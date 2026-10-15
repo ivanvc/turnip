@@ -87,6 +87,17 @@ Account permissions untouched (every entry "No access"):
 | Issues | Read & write | GitHub represents PR comments as issue comments under the hood; this is what lets turnip post and edit them |
 | Pull requests | Read & write | reading PR metadata, listing changed files |
 
+**How commenters are checked.** turnip asks GitHub whether the comment's
+author is a collaborator, and when GitHub's answer does not list them it
+asks what permission they hold. That second answer reports access granted
+through a team, so a member with write access through a team can trigger
+plans and applies with the permissions above and no Organization
+permission. On a public or internal repository only triage or above
+counts, since GitHub reports `read` for every account there (every
+enterprise member, on an internal one). When GitHub cannot be
+asked, turnip runs nothing and replies that it could not check the
+author's permission; the GitHub error is in the Server's logs.
+
 **Subscribe to events**: each repository permission above unlocks its
 matching event checkbox in this list once set. Check `Pull request`
 and `Issue comment` (nothing else).

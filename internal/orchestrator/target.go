@@ -146,6 +146,29 @@ func (s *selection) resolve(ctx context.Context, cmd *github.TriggerCommand) (ta
 		candidates = narrowed
 	}
 
+	// The write check is asked at most once per command, an error
+	// included: every Project gets the same answer, and a lookup that
+	// failed (a rate limit, say) is not retried once per Project. The
+	// error is logged here, once, since the reply carries only that the
+	// check could not be made.
+	var (
+		writeChecked bool
+		hasWrite     bool
+		writeErr     error
+	)
+	writePermission := func() (bool, error) {
+		if !writeChecked {
+			writeChecked = true
+			hasWrite, writeErr = s.authorizer.HasWritePermission(ctx, s.owner, s.repo, s.author)
+			if writeErr != nil {
+				slog.ErrorContext(ctx, "checking write permission",
+					"owner", s.owner, "repo", s.repo, "pr_number", s.prNumber,
+					"actor", s.author, "operation", cmd.Operation, "error", writeErr)
+			}
+		}
+		return hasWrite, writeErr
+	}
+
 	for _, project := range candidates {
 		p, ok := s.plugins[project.Tool]
 		if !ok || !operationRecognized(p.GetOperations(), cmd.Operation) {
@@ -160,14 +183,18 @@ func (s *selection) resolve(ctx context.Context, cmd *github.TriggerCommand) (ta
 		}
 
 		if cmd.Operation != p.GetPlanOperation() {
-			hasWrite, err := s.authorizer.HasWritePermission(ctx, s.owner, s.repo, s.author)
+			hasWrite, err := writePermission()
 			if err != nil || !hasWrite {
+				output := "write permission is required to run \"" + cmd.Operation + "\""
+				if err != nil {
+					output = "could not check write permission to run \"" + cmd.Operation + "\"; comment again to retry"
+				}
 				rejected = append(rejected, github.ProjectResult{
 					ProjectName: project.Name,
 					Tool:        project.Tool,
 					Operation:   cmd.Operation,
 					Success:     false,
-					Output:      "write permission is required to run \"" + cmd.Operation + "\"",
+					Output:      output,
 				})
 				continue
 			}

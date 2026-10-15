@@ -204,5 +204,11 @@ func repositoryFrom(r *gh.Repository) Repository {
 		Owner: r.GetOwner().GetLogin(),
 		Name:  r.GetName(),
 		URL:   r.GetHTMLURL(),
+		// Only an explicitly private repository reads as private. An
+		// internal one (GitHub Enterprise) also sends "private": true, but
+		// every enterprise member holds read there through the visibility
+		// itself, so it takes the public rule. An absent field reads as
+		// public too, the stricter of the two.
+		Private: r.GetPrivate() && r.GetVisibility() == "private",
 	}
 }

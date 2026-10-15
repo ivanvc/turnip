@@ -17,9 +17,10 @@ new work gets a name, never a number.
 
 In the order discussed so far; reorder here.
 
-1. `fix-comment-part-split`: proposal
-2. `fix-helmfile-diff-removals`: proposal
-3. `fix-apply-suggested-with-lock`: proposal
+1. `fix-team-collaborators`: implemented, awaiting deploy
+2. `fix-comment-part-split`: proposal
+3. `fix-helmfile-diff-removals`: proposal
+4. `fix-apply-suggested-with-lock`: proposal
 
 ## Open changes
 
@@ -38,6 +39,7 @@ In the order discussed so far; reorder here.
 | [`fix-comment-part-split`](changes/fix-comment-part-split/) | an output part ends at a whole line, never inside a line or a character | | proposal |
 | [`fix-helmfile-diff-removals`](changes/fix-helmfile-diff-removals/) | a Helmfile plan counts the releases it will remove | | proposal |
 | [`fix-apply-suggested-with-lock`](changes/fix-apply-suggested-with-lock/) | a plan whose Lock is held offers the apply; an apply never offers itself again | | proposal |
+| [`fix-team-collaborators`](changes/fix-team-collaborators/) | an author with access through a team may trigger commands; a failed permission check says so | | implemented; archived once the refused author's diff runs |
 
 Changes that overlap without depending on each other are best done
 one at a time: `fix-plan-survives-push`, `fix-lock-release-on-close` and
@@ -81,6 +83,15 @@ dies after starting: `runner-timeouts`; resuming a scheduled Run:
 `operation-scheduling`), or decided against (verifying a Helmfile plan
 is still fresh at apply).
 
+- A minimum role for mutating commands: an operator setting (for
+  example `TURNIP_MUTATION_MIN_ROLE`) that can only raise the role an
+  `apply` or `sync` needs above write, to maintain or admin, beside
+  `TURNIP_MUTATION_REQUIREMENTS` (raised 2026-10-15). Plans stay as
+  they are, and the setting does not depend on the repository's
+  visibility: the archived `collaborator-authorization` change declined
+  configurable levels on 2026-09-21 because a plan threshold takes the
+  read-level reviewer's only tool and an apply threshold has no safe
+  value below write; raising it has no unsafe value
 - Matching Projects by directory rather than name: selectors still
   match Project names only
 - Contain `Project.directory` to the workspace: validation still checks
