@@ -106,7 +106,7 @@ func runCloneWith(ctx context.Context, cfg Config, rep resultReporter, clone clo
 	if err := clone(ctx, cfg.WorkspaceDir, cfg.RepoURL, cfg.CommitSHA, cfg.BaseRef, cfg.CloneSubmodules); err != nil {
 		// Same wording and same path-stripping the Runner used when it
 		// owned the clone, so what reaches the pull request is unchanged.
-		message := stripWorkspacePath(cfg.WorkspaceDir, fmt.Sprintf("clone failed: %v", err))
+		message := cleanForServer(cfg.WorkspaceDir, fmt.Sprintf("clone failed: %v", err))
 		return reportCloneFailure(ctx, rep, message, stderr)
 	}
 
@@ -206,17 +206,17 @@ func resolveWorkspace(dir string) (string, func(), error) {
 func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporter, stdout, stderr io.Writer) (OperationResult, int) {
 	dir, cleanup, err := resolveWorkspace(cfg.WorkspaceDir)
 	if err != nil {
-		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: fmt.Sprintf("create workdir: %v", err), FailureCategory: rpc.FailureWorkspaceFailed}, 0
+		// There is no workspace path to strip yet, but the message names
+		// TMPDIR, whose bytes may not be valid UTF-8.
+		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: cleanForServer("", fmt.Sprintf("create workdir: %v", err)), FailureCategory: rpc.FailureWorkspaceFailed}, 0
 	}
 	defer cleanup()
 
-	// strip removes dir from anything headed for the Server: a reviewer
-	// reading the PR comment knows repository-relative paths, not the
-	// directory turnip cloned into. See stripWorkspacePath.
-	strip := func(s string) string { return stripWorkspacePath(dir, s) }
-
-	// clean is what leaves for the Server: the workspace path removed, and
-	// the installation token removed with it.
+	// clean is what leaves for the Server: the workspace path removed (a
+	// reviewer reading the PR comment knows repository-relative paths, not
+	// the directory turnip cloned into) and each run of bytes that is not
+	// valid UTF-8 replaced, since a message holding them cannot be
+	// encoded. See cleanForServer.
 	//
 	// Redaction belongs here rather than at the command seam because this
 	// is where the secret is — internal/plugin has no business holding
@@ -231,7 +231,7 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 	// The redaction this used to perform guarded a hazard that no longer
 	// exists — and Slice 24's tests assert the absence rather than trust
 	// this comment.
-	clean := strip
+	clean := func(s string) string { return cleanForServer(dir, s) }
 
 	// The tool's output is recorded once, in rec, and two readers follow
 	// the record while the tool runs, each at its own pace: the mirror,

@@ -33,3 +33,9 @@ digest: something nobody reviewed.
 `internal/orchestrator` (the `synchronize` handling and Lock events).
 Found by the 2026-09-30 review of current behavior; the docs already
 claim this behavior ("When a stored plan stops being usable").
+
+## Dependencies
+
+- **Overlaps `fix-lock-release-on-close` and `fix-concurrent-mutations`.**
+  All three change the `locking` capability, so they are best done one
+  at a time.

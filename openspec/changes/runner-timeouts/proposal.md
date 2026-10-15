@@ -30,4 +30,11 @@ analysis and the five decisions made so far.
 
 `internal/runner`, `internal/jobs`, `internal/orchestrator` (sweep).
 Open questions carried from the roadmap: defaults, and whether a
-`runner:` override is offered (Slice 43's rule applies if so).
+`runner:` override is offered (`runner-defaults`' rule applies if so).
+
+## Dependencies
+
+- **`operation-scheduling` depends on this, in part.** It leaves
+  completing a queued check stranded by a replica that stopped to this
+  change.
+- **`runner-pod-disruption` (planned) depends on this.**

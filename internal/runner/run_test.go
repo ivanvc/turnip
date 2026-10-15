@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -633,4 +635,79 @@ func TestRunWith_AToolThatCannotStartStillEndsAndLogs(t *testing.T) {
 	assert.Contains(t, stderr.String(), "runner: operation result: success=false")
 	assert.Empty(t, rep.logLines)
 	assert.Equal(t, rpc.FailureToolNotStarted, rep.lastResult.FailureCategory)
+}
+
+// Text with bytes that are not valid UTF-8 cannot be encoded in a
+// protobuf string field. Every string bound for the Server is cleaned
+// of them; the Runner's own log keeps the bytes.
+func TestRunWith_InvalidUTF8NeverReachesTheServer(t *testing.T) {
+	p := &fakePlugin{
+		operations: []string{"diff"},
+		script:     []outputLine{{"stdout", "name: caf\xe9"}, {"stdout", "after"}},
+		result: &plugin.ExecuteResult{
+			ExitCode: 1,
+			Output:   "name: caf\xe9\nafter",
+			Error:    errors.New("bad \xff\xfe\xfd byte"),
+		},
+	}
+	rep := &fakeReporter{}
+	var stdout, stderr safeBuffer
+
+	require.Equal(t, 0, runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), &stdout, &stderr))
+
+	require.Len(t, rep.logLines, 2)
+	assert.Equal(t, "name: caf\uFFFD", rep.logLines[0].line, "a log line is sent valid")
+	assert.Equal(t, "after", rep.logLines[1].line)
+	assert.Equal(t, "name: caf\uFFFD\nafter", rep.lastResult.Output)
+	assert.Equal(t, "bad \uFFFD byte", rep.lastResult.ErrorMessage)
+	assert.True(t, utf8.ValidString(rep.lastResult.Output))
+
+	assert.Equal(t, "name: caf\xe9\nafter\n", stdout.String(), "the Runner's log keeps the bytes as printed")
+}
+
+func TestRunWith_LargeOutputOfInvalidBytesIsSentWithinTheLimitAndValid(t *testing.T) {
+	// Each invalid byte sits between valid ones, so replacing them makes
+	// the output larger (3 MiB becomes 5 MiB): cutting before cleaning
+	// would send about 2 MiB.
+	output := strings.Repeat("a\xff\n", 1<<20)
+	require.Greater(t, len(strings.ToValidUTF8(output, "\uFFFD")), 3<<20)
+	p := &fakePlugin{operations: []string{"diff"}, result: &plugin.ExecuteResult{ExitCode: 0, Output: output}}
+	rep := &fakeReporter{}
+	var stdout, stderr safeBuffer
+
+	require.Equal(t, 0, runWith(context.Background(), testRunConfig(), rep, fakeSelector(p), &stdout, &stderr))
+
+	sent := rep.lastResult.Output
+	assert.LessOrEqual(t, len(sent), 1<<20)
+	assert.Greater(t, len(sent), 1<<19, "the cut keeps close to the limit")
+	assert.Contains(t, sent, "earlier lines omitted", "the cut ran")
+	assert.True(t, utf8.ValidString(sent))
+	assert.NotContains(t, sent, "\xff")
+	assert.True(t, strings.HasSuffix(sent, "a\uFFFD\n"), "the cut keeps the end")
+}
+
+func TestExecute_WorkdirFailureMessageIsSentValid(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing-caf\xe9"))
+	cfg := testRunConfig()
+	cfg.WorkspaceDir = ""
+	p := &fakePlugin{operations: []string{"diff"}, result: &plugin.ExecuteResult{}}
+
+	got, _ := execute(context.Background(), cfg, p, &fakeReporter{}, io.Discard, io.Discard)
+
+	assert.Contains(t, got.ErrorMessage, "create workdir: ")
+	assert.Contains(t, got.ErrorMessage, "missing-caf\uFFFD")
+	assert.True(t, utf8.ValidString(got.ErrorMessage))
+}
+
+func TestRunCloneWith_FailureMessageWithInvalidUTF8IsSentValid(t *testing.T) {
+	rep := &fakeReporter{}
+	var stderr safeBuffer
+	clone := func(context.Context, string, string, string, string, string) error {
+		return errors.New("fatal: bad ref caf\xe9")
+	}
+
+	require.Equal(t, 1, runCloneWith(context.Background(), testCloneConfig(), rep, clone, &stderr))
+
+	assert.Contains(t, rep.lastResult.ErrorMessage, "bad ref caf\uFFFD")
+	assert.True(t, utf8.ValidString(rep.lastResult.ErrorMessage))
 }

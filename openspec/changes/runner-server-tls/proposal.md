@@ -80,3 +80,10 @@ and the credential helper's connections), `internal/jobs`, `cmd/server`,
 `deploy/`, `docs/operating/`, `SECURITY.md` (the plaintext channel is
 described there today). The in-process test harnesses that dial without
 credentials need a certificate, since nothing turns encryption off.
+
+## Dependencies
+
+- **Overlaps `split-server-runner-namespaces`**, which also changes the `deployment` capability;
+  best done after it: each Runner Job is given the certificate authority, which is simpler to design once the Runner's namespace is settled.
+- **Overlaps `org-images`**, which rewrites every file; see its
+  Dependencies.

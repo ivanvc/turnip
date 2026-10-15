@@ -303,6 +303,10 @@ Each of the two is always in its own order. When a tool writes to both
 at the very same moment, those lines can land either way round, close to
 where they were written.
 
+Bytes in the output that are not valid UTF-8 (a file in another
+encoding, say) are shown as `�`, one for each run of them, so the
+output always reaches the comment.
+
 What a tool's output shows is decided per tool. Helmfile's is everything
 it wrote when the operation succeeds; when it fails, it is Helmfile's
 messages and errors alone, with a line saying how many lines of diffs

@@ -141,6 +141,18 @@ func TestHelmfilePlugin_ChangeSummaryOnlyForDiff(t *testing.T) {
 	})
 }
 
+// The counts are read from the bytes the tool wrote, before anything
+// replaces invalid UTF-8 for the Server.
+func TestHelmfilePlugin_DiffWhoseOnlyBodyLineIsInvalidUTF8StillCountsTheRelease(t *testing.T) {
+	var calls []recordedCall
+	diffOutput := []Line{stdoutLine("Comparing release=a, chart=charts/a"), stdoutLine("name: caf\xe9")}
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, diffOutput, 0, nil)}
+
+	result, err := p.Execute(context.Background(), "diff", ExecuteOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.ChangeSummary.Change)
+}
+
 func TestHelmfilePlugin_PlanDataAlwaysNil(t *testing.T) {
 	var calls []recordedCall
 	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{stdoutLine("out")}, 0, nil)}

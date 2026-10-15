@@ -62,12 +62,25 @@ written from them.
 
 - Resuming a trigger's waiting Operations after its Server replica
   stops: as drafted, they are lost and repeating the command runs what
-  is left. `fix-results-comment-on-replica-loss` puts a trigger's
-  progress in Redis, which a resume would build on; whether this change
-  can then resume is decided in its design, once that one has landed
+  is left. `fix-results-comment-on-replica-loss` (archived 2026-10-14)
+  now keeps a trigger's progress in Redis, which a resume would build
+  on; whether this change resumes is decided in its design
 - Completing stranded queued checks by a sweep: `runner-timeouts`
 - Ordering plans, and dependencies between repositories
 - Execution-order groups
+
+## Dependencies
+
+- **Depends on `fix-concurrent-mutations`.** Both decide when a mutating
+  command is admitted; the queue and the dependency rules build on how
+  a running mutating command holds its Lock, which that change settles.
+- **Depends on `fix-invalid-config-check-on-comment`.** An invalid
+  dependency graph is reported as any invalid `turnip.yaml` is, which
+  on the comment path fails the `turnip` check only once that change
+  lands.
+- **Depends on `runner-timeouts`, in part.** Completing a queued check
+  stranded by a replica that stopped is left to it (see Not in this
+  change); this change can land first and leave those checks queued.
 
 ## Capabilities
 
@@ -86,7 +99,6 @@ written from them.
 `internal/config` (the two fields and graph validation),
 `internal/github` (titles), `docs/using/turnip-yaml.md`,
 `docs/operating/server-settings.md`, `docs/using/pull-requests.md`.
-Depends on nothing open, but shares ground with
-`fix-results-comment-on-replica-loss` (trigger state in Redis) and
-`fix-concurrent-mutations` (what a mutating command is admitted
-against); whichever lands first sets the shapes the others mirror.
+It builds on the trigger record `fix-results-comment-on-replica-loss`
+added (archived 2026-10-14): a command's Operations are dispatched from
+it, so the queue belongs there.

@@ -25,4 +25,12 @@ against one cluster or state is the failure the Lock exists to prevent.
 
 `internal/lock` (a new state or event for a mutating command in
 flight), `internal/orchestrator` admission. Out of scope: queueing the
-second command (Slice 30, scheduling, if wanted).
+second command (`operation-scheduling`, if wanted).
+
+## Dependencies
+
+- **`operation-scheduling` depends on this.** Its queue and dependency
+  rules build on how a running mutating command holds its Lock.
+- **Overlaps `fix-plan-survives-push` and `fix-lock-release-on-close`.**
+  All three change the `locking` capability, likely the same Lock
+  transitions, so they are best done one at a time.

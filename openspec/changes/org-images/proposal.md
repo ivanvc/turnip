@@ -81,3 +81,13 @@ Repository owner steps, outside the tasks: transfer the repository to
 the organization (first); allow its Actions to publish packages to the
 organization; make both packages public after their first publish; push
 a pre-release tag to exercise the release path before a real version.
+
+## Dependencies
+
+- **No change depends on this, and it depends on none**, but it changes
+  the Go module path in every file, so it conflicts with any change
+  being implemented at the same time. It lands when nothing else is in
+  flight, after the repository transfer.
+- **Overlaps `runner-server-tls` and `split-server-runner-namespaces`**,
+  which also change the `runner-security`, `runner-job` and `deployment`
+  capabilities.

@@ -57,3 +57,10 @@ Found 2026-09-30 by the review of `separate-clone-identity`.
 `docs/getting-started/operators.md`. No Server code change is expected
 beyond confirming the open question 3. Out of scope: per-repository
 Runner namespaces (one Runner namespace per Server, as today).
+
+## Dependencies
+
+- **Overlaps `runner-server-tls`**, which also changes the `deployment` capability;
+  best done before it: that change gives each Runner Job a certificate authority, simpler to design once the Runner's namespace is settled.
+- **Overlaps `org-images`**, which rewrites every file; see its
+  Dependencies.

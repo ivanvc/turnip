@@ -23,3 +23,9 @@ states depending on how turnip was asked.
 ## Impact
 
 `internal/orchestrator` (comment-path config handling).
+
+## Dependencies
+
+- **`operation-scheduling` depends on this.** It reports an invalid
+  dependency graph as any invalid `turnip.yaml` is, which on the comment
+  path fails the `turnip` check only once this lands.

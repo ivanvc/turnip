@@ -92,7 +92,8 @@ or nothing happens for several minutes before a timeout is reported.
 `kubectl -n <namespace> logs <pod> -c runner` shows, in order:
 
 1. **The tool's output, once**, every line as the tool printed it,
-   unredacted and with the Pod's absolute paths intact. turnip cuts
+   unredacted, with the Pod's absolute paths intact and any bytes that
+   are not valid UTF-8 as written (the pull request shows them as `�`). turnip cuts
    nothing here, but the node rotates a container's log when it grows
    past its size limit (10 MiB by default), and `kubectl logs` shows only
    the newest file, so a very long output loses its start here too.

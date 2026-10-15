@@ -25,5 +25,13 @@ event will ever release.
 
 ## Impact
 
-`internal/lock` (finding a pull request's Locks; overlaps Slice 28's
-need to list Locks), `internal/orchestrator` close handling.
+`internal/lock` (finding a pull request's Locks),
+`internal/orchestrator` close handling.
+
+## Dependencies
+
+- **`lock-overview` (planned) depends on this.** It lists held Locks
+  too; the way to find a pull request's Locks is built here first.
+- **Overlaps `fix-plan-survives-push` and `fix-concurrent-mutations`.**
+  All three change the `locking` capability, so they are best done one
+  at a time.
