@@ -17,10 +17,9 @@ new work gets a name, never a number.
 
 In the order discussed so far; reorder here.
 
-1. `fix-invalid-utf8-output`: implemented, awaiting deploy
-2. `fix-comment-part-split`: proposal
-3. `fix-helmfile-diff-removals`: proposal
-4. `fix-apply-suggested-with-lock`: proposal
+1. `fix-comment-part-split`: proposal
+2. `fix-helmfile-diff-removals`: proposal
+3. `fix-apply-suggested-with-lock`: proposal
 
 ## Open changes
 
@@ -39,7 +38,6 @@ In the order discussed so far; reorder here.
 | [`fix-comment-part-split`](changes/fix-comment-part-split/) | an output part ends at a whole line, never inside a line or a character | | proposal |
 | [`fix-helmfile-diff-removals`](changes/fix-helmfile-diff-removals/) | a Helmfile plan counts the releases it will remove | | proposal |
 | [`fix-apply-suggested-with-lock`](changes/fix-apply-suggested-with-lock/) | a plan whose Lock is held offers the apply; an apply never offers itself again | | proposal |
-| [`fix-invalid-utf8-output`](changes/fix-invalid-utf8-output/) | a tool's invalid UTF-8 no longer stops its log lines and result from reaching the Server | | implemented; archived once deployed |
 
 Changes that overlap without depending on each other are best done
 one at a time: `fix-plan-survives-push`, `fix-lock-release-on-close` and
