@@ -343,7 +343,9 @@ is what stops another PR planning the same project underneath you.
 `/turnip unlock` gives it up without applying.
 
 A single project's output that's too long for one GitHub comment splits
-across multiple comments rather than getting truncated. A project's
+across multiple comments rather than getting truncated. It is split
+between lines, never inside one, unless a single line is too long for a
+comment. A project's
 output takes at most 5 comments by default (the operator can change
 that; see [Server settings](../operating/server-settings.md)). Beyond
 that, turnip cuts the **start** of the output and keeps the end, and puts

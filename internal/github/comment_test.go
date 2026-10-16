@@ -2,12 +2,15 @@ package github
 
 import (
 	"fmt"
+	"math/rand"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 )
 
 func TestBuildConsolidatedComment_SingleBody(t *testing.T) {
@@ -193,6 +196,55 @@ func TestClampBody_CutsWithinTheLastSectionKeepingItsEnd(t *testing.T) {
 	assert.Contains(t, got, chunkOmissionMarker, "the cut is announced inside the fence")
 	assert.Contains(t, got, "line-19999", "the end of the output is what survives")
 	assert.NotContains(t, got, "line-0\n", "the beginning is what is dropped")
+}
+
+// A section cut to fit a body keeps its output from the start of a whole
+// line, not from wherever the byte count lands.
+func TestClampBody_CutKeepsTheEndFromAWholeLine(t *testing.T) {
+	output := numberedLines(20000)
+
+	got := clampBody("**verdict**\n\n", []section{testSection("huge", output)}, "")
+
+	_, after, ok := strings.Cut(got, chunkOmissionMarker)
+	require.True(t, ok, "the cut is announced")
+	assert.True(t, strings.HasPrefix(after, "line-"), "kept output starts at a whole line, got %.20q", after)
+	assert.LessOrEqual(t, len(got), maxCommentLength)
+}
+
+// When the last line alone is longer than the room, the cut falls inside
+// it, at a character boundary.
+func TestClampBody_CutInsideAnOverlongLastLineIsAtACharacterBoundary(t *testing.T) {
+	output := "first\n" + strings.Repeat("é💡", maxCommentLength)
+
+	got := clampBody("**verdict**\n\n", []section{testSection("huge", output)}, "")
+
+	assert.LessOrEqual(t, len(got), maxCommentLength)
+	assert.True(t, utf8.ValidString(got), "no character is broken")
+	assert.NotContains(t, got, "first")
+	_, after, ok := strings.Cut(got, chunkOmissionMarker)
+	require.True(t, ok)
+	assert.True(t, utf8.RuneStart(after[0]))
+}
+
+func TestKeptStart(t *testing.T) {
+	tests := []struct {
+		name string
+		s    string
+		cut  int
+		want int
+	}{
+		{"no cut", "ab\ncd\n", 0, 0},
+		{"cut at a line start", "ab\ncd\n", 3, 3},
+		{"cut inside a line moves to the next line", "ab\ncd\nef\n", 4, 6},
+		{"cut inside the last line stays", "ab\ncdef", 5, 5},
+		{"cut inside a character moves to a boundary", "ab\ncé", 5, 6},
+		{"only a closing annotation after the cut stays", "ab\ncd\n@@ turnip: x @@\n", 4, 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, keptStart(tt.s, tt.cut))
+		})
+	}
 }
 
 func TestBuildConsolidatedComment_EmptyResults(t *testing.T) {
@@ -744,4 +796,366 @@ func TestBuildConsolidatedComment_CapsOutputAtThreeComments(t *testing.T) {
 	}, 3)
 	assert.Len(t, bodies, 3)
 	assert.Contains(t, strings.Join(bodies, ""), " earlier lines omitted)")
+}
+
+// reserveForChunk returns the reserve that makes splitDetailSection pack
+// parts of at most chunk output bytes for r.
+func reserveForChunk(r ProjectResult, chunk int) int {
+	return maxCommentLength - len(buildDetailSectionPart(r, "", 9999, 9999)) - chunk
+}
+
+// Feature: fix-comment-part-split, Property 1: Parts end at whole lines
+func TestSplitDetailSection_PartsEndAtWholeLines(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		chunk := rapid.IntRange(1, 300).Draw(t, "chunk")
+		lines := rapid.SliceOfN(
+			rapid.OneOf(
+				rapid.StringMatching(`[a-z0-9 :]{0,12}`),
+				rapid.StringMatching(`[a-zé💡]{0,60}`),
+				rapid.StringMatching(`[a-zé💡]{200,700}`),
+			), 1, 40).Draw(t, "lines")
+		output := strings.Join(lines, "\n")
+		if rapid.Bool().Draw(t, "trailingNewline") {
+			output += "\n"
+		}
+		r := ProjectResult{ProjectName: "web", Operation: "plan", Success: true, Output: output}
+
+		pieces := splitDetailSection(r, reserveForChunk(r, chunk), 100000)
+
+		var joined strings.Builder
+		for i, p := range pieces {
+			assert.Equal(t, i+1, p.part)
+			assert.Len(t, pieces, p.total)
+			assert.True(t, utf8.ValidString(p.chunk), "part %d is valid UTF-8", i)
+			if len(pieces) > 1 { // an output that fits whole is not packed
+				assert.LessOrEqual(t, len(p.chunk), max(chunk, utf8.UTFMax), "part %d size", i)
+			}
+			joined.WriteString(p.chunk)
+
+			if i == len(pieces)-1 || strings.HasSuffix(p.chunk, "\n") {
+				continue
+			}
+			// Not the last part and not ending a line: it must end inside a
+			// line longer than a part.
+			end := joined.Len()
+			startOfLine := strings.LastIndexByte(output[:end], '\n') + 1
+			lineLen := len(output[startOfLine:])
+			if nl := strings.IndexByte(output[startOfLine:], '\n'); nl >= 0 {
+				lineLen = nl + 1
+			}
+			assert.Greaterf(t, lineLen, chunk, "part %d ends inside a line that fits a part", i)
+		}
+		assert.Equal(t, output, joined.String())
+	})
+}
+
+func splitChunks(t *testing.T, output string, chunk int) []string {
+	t.Helper()
+	r := ProjectResult{ProjectName: "web", Operation: "plan", Success: true, Output: output}
+	var chunks []string
+	for _, p := range splitDetailSection(r, reserveForChunk(r, chunk), 1000) {
+		chunks = append(chunks, p.chunk)
+	}
+	return chunks
+}
+
+func TestSplitDetailSection_LineAtPartEndStartsNextPart(t *testing.T) {
+	// "ports:\nport: 8888\n" with room for 12 bytes would cut "port: 8888"
+	// after "port: 8"; the whole line moves to the next part instead.
+	output := "ports:\n" + "port: 8888\n" + strings.Repeat("filler line\n", 3)
+	got := splitChunks(t, output, 14)
+	require.Greater(t, len(got), 1)
+	assert.Equal(t, "ports:\n", got[0])
+	assert.True(t, strings.HasPrefix(got[1], "port: 8888\n"))
+	assert.Equal(t, output, strings.Join(got, ""))
+}
+
+func TestSplitDetailSection_MultiByteCharacterAtPartEnd(t *testing.T) {
+	for _, ch := range []string{"é", "💡"} {
+		output := strings.Repeat("a", 7) + "\n" + ch + ch + "\n" + strings.Repeat("b", 7) + "\n"
+		got := splitChunks(t, output, 9)
+		assert.Equal(t, output, strings.Join(got, ""))
+		for i, c := range got {
+			assert.Truef(t, utf8.ValidString(c), "%q part %d", ch, i)
+		}
+		assert.Equal(t, 2, strings.Count(strings.Join(got, ""), ch), "each character once")
+	}
+}
+
+func TestSplitDetailSection_LineLongerThanAPartSplitsBetweenCharacters(t *testing.T) {
+	long := strings.Repeat("é", 20) + "\n" // 41 bytes
+	output := "before\n" + long + "after\n"
+	got := splitChunks(t, output, 10)
+
+	assert.Equal(t, output, strings.Join(got, ""))
+	assert.Equal(t, "before\n", got[0])
+	for i, c := range got {
+		assert.Truef(t, utf8.ValidString(c), "part %d", i)
+		assert.LessOrEqualf(t, len(c), 10, "part %d", i)
+	}
+	assert.True(t, strings.HasSuffix(got[len(got)-1], "after\n"))
+}
+
+// splitWithinTime runs splitDetailSection and fails, rather than hanging the
+// whole test binary, when it does not return.
+func splitWithinTime(t require.TestingT, r ProjectResult, reserve, maxParts int) []section {
+	done := make(chan []section, 1)
+	go func() { done <- splitDetailSection(r, reserve, maxParts) }()
+	select {
+	case pieces := <-done:
+		return pieces
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "splitDetailSection did not return")
+		return nil
+	}
+}
+
+// Feature: fix-comment-part-split, Property 2: The cap holds for parts packed by lines
+func TestSplitDetailSection_CapHoldsForPartsPackedByLines(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		chunk := rapid.IntRange(120, 400).Draw(t, "chunk")
+		maxParts := rapid.IntRange(1, 6).Draw(t, "maxParts")
+		annotations := rapid.SliceOfN(rapid.OneOf(
+			rapid.StringMatching(`@@ turnip: [a-z ]{0,20} @@\n`),
+			rapid.StringMatching(`@@ turnip: [a-z]{300,999}[a-z]{0,500} @@\n`), // longer than a part
+		), 0, 3).Draw(t, "annotations")
+		lines := rapid.SliceOfN(
+			rapid.OneOf(
+				rapid.StringMatching(`[a-z0-9 :]{0,12}`),
+				rapid.StringMatching(`[a-zé💡]{0,90}`),
+				rapid.StringMatching(`[a-zé💡]{200,900}`),
+			), 1, 200).Draw(t, "lines")
+		lead := strings.Join(annotations, "")
+		output := lead + strings.Join(lines, "\n") + "\n"
+		if lead != "" && rapid.Bool().Draw(t, "onlyAnnotations") {
+			output = strings.TrimSuffix(lead, "\n") // nothing the cap can cut
+		}
+		r := ProjectResult{ProjectName: "web", Operation: "plan", Success: true, Output: output}
+
+		pieces := splitWithinTime(t, r, reserveForChunk(r, chunk), maxParts)
+
+		require.NotEmpty(t, pieces)
+		var all strings.Builder
+		for _, p := range pieces {
+			all.WriteString(p.chunk)
+		}
+		joined := all.String()
+		if len(pieces) > maxParts {
+			// The cap cannot cut the leading annotation lines, so it is over
+			// only when they, and the omission line, alone take more parts.
+			if joined != output {
+				require.True(t, strings.HasPrefix(joined, lead))
+				assert.Regexp(t, `^…\(\d+ earlier lines omitted\)\n$`, joined[len(lead):], "cut to its annotation lines and the omission line")
+			}
+			return
+		}
+		if joined == output {
+			return
+		}
+		prefix := lead + "…("
+		assert.Truef(t, strings.HasPrefix(joined, prefix), "a cut output opens with its annotation lines and the omission line, got %.80q", joined)
+		assert.Contains(t, joined[len(lead):], " earlier lines omitted)\n")
+	})
+}
+
+// bigMixedOutput builds an output of about size bytes: lines of varied
+// length with multi-byte characters throughout, a line of code fences now
+// and then, a short "port: 8888" line often enough that some byte cut would
+// land inside one, and a few lines longer than a whole comment.
+func bigMixedOutput(size int) string {
+	rng := rand.New(rand.NewSource(7))
+	alphabet := []string{"a", "b", "é", "💡", "日", " ", ":"}
+	var b strings.Builder
+	b.WriteString("@@ turnip: web, example v1.0.0 @@\n@@ turnip: example plan @@\n")
+	for i := 0; b.Len() < size; i++ {
+		switch {
+		case i%12000 == 11999:
+			b.WriteString(strings.Repeat("é", 40000+rng.Intn(10000)) + "\n") // longer than a comment
+		case i%997 == 0:
+			b.WriteString("port: 8888\n")
+		case i%1500 == 0:
+			b.WriteString("  ```yaml\n")
+		default:
+			for range rng.Intn(120) {
+				b.WriteString(alphabet[rng.Intn(len(alphabet))])
+			}
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("@@ turnip: exit 0 in 3s @@\n")
+	return b.String()
+}
+
+// partsByProject reads every comment body back into the outputs of the
+// sections it carries, keyed by Project name and in order. It parses what
+// the builder rendered, so it also checks that each section opens a fence
+// and closes the same one before its </details>.
+func partsByProject(t *testing.T, bodies []string, names []string) map[string][]string {
+	t.Helper()
+	got := map[string][]string{}
+	for bi, body := range bodies {
+		assert.Equalf(t, strings.Count(body, "<details>"), strings.Count(body, "</details>"), "body %d closes every <details>", bi)
+		assert.NotContainsf(t, body, "omitted because this comment reached GitHub's size limit", "body %d dropped a section", bi)
+		for _, seg := range strings.Split(body, "<details>\n<summary>")[1:] {
+			summary, rest, ok := strings.Cut(seg, "</summary>\n\n")
+			require.True(t, ok, "summary closes")
+			openLine, rest, ok := strings.Cut(rest, "\n")
+			require.True(t, ok, "fence opens")
+			bar := strings.TrimSuffix(openLine, "diff")
+			require.GreaterOrEqual(t, len(bar), 3)
+			require.Equal(t, strings.Repeat("`", len(bar)), bar, "the opening fence is backticks")
+			section, _, ok := strings.Cut(rest, "\n\n</details>")
+			require.True(t, ok, "section closes")
+			chunk, _, ok := strings.Cut(section, "\n"+bar)
+			require.True(t, ok, "the fence the section opens is closed in it")
+
+			name := ""
+			for _, n := range names {
+				if strings.Contains(summary, "<code>"+n+"</code>") {
+					name = n
+				}
+			}
+			require.NotEmptyf(t, name, "summary %q names a Project", summary)
+			got[name] = append(got[name], chunk)
+		}
+	}
+	return got
+}
+
+// assertPartsEndAtLines checks the parts cut nothing inside a character, and
+// nothing inside a line unless the line is longer than every part.
+func assertPartsEndAtLines(t *testing.T, name string, parts []string) string {
+	t.Helper()
+	longest := 0
+	for _, p := range parts {
+		longest = max(longest, len(p))
+	}
+	joined := strings.Join(parts, "")
+	end := 0
+	for i, p := range parts {
+		assert.Truef(t, utf8.ValidString(p), "%s part %d is valid UTF-8", name, i)
+		end += len(p)
+		if i == len(parts)-1 || strings.HasSuffix(p, "\n") {
+			continue
+		}
+		start := strings.LastIndexByte(joined[:end], '\n') + 1
+		lineLen := len(joined) - start
+		if nl := strings.IndexByte(joined[start:], '\n'); nl >= 0 {
+			lineLen = nl + 1
+		}
+		assert.Greaterf(t, lineLen, longest, "%s part %d ends inside a line that fits a part", name, i)
+	}
+	return joined
+}
+
+// The checkpoint of fix-comment-part-split: each piece of the split can be
+// right while a reader still sees a broken line, so this builds whole
+// comments and reads them back.
+func TestBuildConsolidatedComment_LargeOutputReadsBackWithoutBrokenLines(t *testing.T) {
+	big := bigMixedOutput(2 << 20)
+	medium := bigMixedOutput(150000)
+	results := []ProjectResult{
+		{ProjectName: "api", Operation: "plan", Success: true, Output: "no changes\n"},
+		{ProjectName: "web", Operation: "plan", Success: true, Output: big},
+		{ProjectName: "db", Operation: "plan", Success: false, Output: medium},
+		{ProjectName: "cache", Operation: "plan", Success: true, Output: "port: 8888\n"},
+	}
+	names := []string{"api", "web", "db", "cache"}
+
+	for _, tc := range []struct {
+		name     string
+		maxParts int
+	}{{"default cap", testMaxParts}, {"raised cap", 60}} {
+		t.Run(tc.name, func(t *testing.T) {
+			bodies := BuildConsolidatedComment(results, tc.maxParts)
+			require.NotEmpty(t, bodies)
+			for i, body := range bodies {
+				assert.LessOrEqualf(t, utf8.RuneCountInString(body), maxCommentLength, "body %d", i)
+				assert.LessOrEqualf(t, len(body), maxCommentLength, "body %d in bytes", i)
+				assert.Truef(t, utf8.ValidString(body), "body %d is valid UTF-8", i)
+			}
+
+			parts := partsByProject(t, bodies, names)
+			for _, r := range results {
+				joined := assertPartsEndAtLines(t, r.ProjectName, parts[r.ProjectName])
+				if len(parts[r.ProjectName]) > tc.maxParts {
+					t.Errorf("%s takes %d parts, over the cap %d", r.ProjectName, len(parts[r.ProjectName]), tc.maxParts)
+				}
+				if joined == r.Output {
+					continue
+				}
+				// Cut by the cap: the leading annotation lines, the omission
+				// line, then the end of the output from the start of a line.
+				lead := r.Output[:leadingAnnotationLen(r.Output)]
+				require.Truef(t, strings.HasPrefix(joined, lead+"…("), "%s opens with its annotation lines and the omission line", r.ProjectName)
+				_, kept, ok := strings.Cut(joined[len(lead):], " earlier lines omitted)\n")
+				require.True(t, ok)
+				assert.Truef(t, strings.HasSuffix(r.Output, kept), "%s keeps the end of its output", r.ProjectName)
+				require.Less(t, len(kept), len(r.Output))
+				assert.Equalf(t, byte('\n'), r.Output[len(r.Output)-len(kept)-1], "%s keeps its end from the start of a line", r.ProjectName)
+			}
+
+			for _, i := range []int{0, 3} {
+				assert.Equal(t, results[i].Output, strings.Join(parts[results[i].ProjectName], ""), "an output that fits is untouched")
+			}
+			if tc.maxParts > testMaxParts {
+				assert.Equal(t, big, strings.Join(parts["web"], ""), "the raised cap keeps every line")
+				assert.Equal(t, medium, strings.Join(parts["db"], ""))
+			}
+		})
+	}
+}
+
+// Annotation lines the cap cannot cut, too long for the cap's parts: the
+// split still returns, with the output cut to those lines and the omission
+// line, and every body stays within the limit.
+func TestBuildConsolidatedComment_LeadLongerThanTheCapStillReturns(t *testing.T) {
+	lead := "@@ turnip: web, terraform 1.9 @@\n@@ turnip: terraform plan " +
+		strings.Repeat("-var=x ", 10000) + "@@\n"
+	r := ProjectResult{ProjectName: "web", Operation: "plan", Success: true, Output: lead + numberedLines(20000)}
+
+	pieces := splitWithinTime(t, r, minReserve, 1)
+	assert.Regexp(t, `^…\(20000 earlier lines omitted\)\n$`, strings.TrimPrefix(partsOf(t, pieces), lead))
+
+	only := ProjectResult{ProjectName: "web", Operation: "plan", Success: true,
+		Output: strings.TrimSuffix(strings.Repeat("@@ turnip: "+strings.Repeat("a", 300)+" @@\n", 400), "\n")}
+	assert.Equal(t, only.Output, partsOf(t, splitWithinTime(t, only, minReserve, 1)))
+}
+
+// A tiny part followed by a full one: packing must count the separators and
+// the footer, or the body they share overflows and loses the tiny part.
+func TestBuildConsolidatedComment_TinyPartBeforeAFullOneIsNotDropped(t *testing.T) {
+	r := ProjectResult{
+		ProjectName: "web", Operation: "plan", Success: false, Locked: true, PlanOperation: "plan",
+		Output: strings.Repeat("x", 500000) + "\n",
+	}
+
+	bodies := BuildConsolidatedComment([]ProjectResult{r}, 2)
+
+	for i, body := range bodies {
+		assert.LessOrEqualf(t, len(body), maxCommentLength, "body %d", i)
+		assert.NotContainsf(t, body, "omitted because this comment reached GitHub's size limit", "body %d dropped a section", i)
+		assert.NotContainsf(t, body, chunkOmissionMarker, "body %d cut into a section", i)
+	}
+	all := strings.Join(bodies, "")
+	assert.Contains(t, all, "(output part 1/2)")
+	assert.Contains(t, all, "(output part 2/2)")
+}
+
+// Output full of backtick runs widens each part's fence past the three
+// backticks the scaffold was sized with; the bodies must still fit.
+func TestBuildConsolidatedComment_WideFencesStillFit(t *testing.T) {
+	output := strings.Repeat(strings.Repeat("`", 500)+"\n", 400)
+	for _, maxParts := range []int{1, 5} {
+		bodies := BuildConsolidatedComment([]ProjectResult{
+			{ProjectName: "web", Operation: "plan", Success: true, Output: output},
+		}, maxParts)
+		for i, body := range bodies {
+			assert.LessOrEqualf(t, len(body), maxCommentLength, "cap %d body %d", maxParts, i)
+		}
+	}
+
+	// The last resort, cutting into one section, also sizes for the fence.
+	got := clampBody("**verdict**\n\n", []section{testSection("huge", output)}, "")
+	assert.LessOrEqual(t, len(got), maxCommentLength)
 }

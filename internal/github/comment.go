@@ -48,7 +48,7 @@ func BuildConsolidatedComment(results []ProjectResult, maxPartsPerProject int, n
 		pieces = append(pieces, splitDetailSection(r, reserve, maxPartsPerProject)...)
 	}
 
-	groups := packSections(head, pieces)
+	groups := packSections(head, footer, pieces)
 
 	bodies := make([]string, len(groups))
 	lastGroup := len(groups) - 1
@@ -132,25 +132,95 @@ func splitDetailSection(r ProjectResult, reserve int, maxParts int) []section {
 	// few bytes larger than budgeted. Passing equal part/total also means
 	// the estimate includes the next-steps block, which only the final
 	// piece carries.
-	scaffold := len(buildDetailSectionPart(r, "", 9999, 9999))
+	// The scaffold's fences are the narrowest; fenceGrowth adds what a
+	// part's backtick runs can widen them by.
+	scaffold := len(buildDetailSectionPart(r, "", 9999, 9999)) + fenceGrowth(r.Output)
 	chunkCap := max(budget-scaffold, 1)
 
 	output := r.Output
 	if maxParts < 1 {
 		maxParts = 1
 	}
-	if (len(output)+chunkCap-1)/chunkCap > maxParts {
-		output = capOutput(output, maxParts*chunkCap)
+	chunks := packLines(output, chunkCap)
+	keep := maxParts * chunkCap
+	// Below floor capOutput keeps nothing more than the leading annotation
+	// lines and its omission line, which it never cuts.
+	floor := leadingAnnotationLen(r.Output) + maxMarkerLen
+	for len(chunks) > maxParts {
+		// Parts packed by lines end short of full, so the cap's byte
+		// keep can need more parts than the cap: cap to it, and if the
+		// result still needs too many, lower it by the bytes the cap's
+		// parts left unused and pack again.
+		if capped := capOutput(r.Output, keep); capped != output {
+			output = capped
+		} else if keep <= floor {
+			// What is left is what the cap cannot cut: accept the parts
+			// it takes, which clampBody still brings under the limit.
+			break
+		} else {
+			used := 0
+			for _, c := range chunks[:maxParts] {
+				used += len(c)
+			}
+			keep = max(keep-max(maxParts*chunkCap-used, 1), floor)
+			output = capOutput(r.Output, keep)
+		}
+		chunks = packLines(output, chunkCap)
 	}
-	total := (len(output) + chunkCap - 1) / chunkCap // ceil division
 
-	pieces := make([]section, 0, total)
-	for part := 1; part <= total; part++ {
-		n := min(chunkCap, len(output))
-		pieces = append(pieces, section{result: r, chunk: output[:n], part: part, total: total})
-		output = output[n:]
+	pieces := make([]section, 0, len(chunks))
+	for i, chunk := range chunks {
+		pieces = append(pieces, section{result: r, chunk: chunk, part: i + 1, total: len(chunks)})
 	}
 	return pieces
+}
+
+// packLines splits output into parts of at most size bytes, each ending at
+// the end of a whole line. A line longer than size is the only one split
+// inside, into pieces that each end between two characters; the line's last
+// piece stays open, and the whole lines after it are added to its part while
+// they fit. Joined, the parts are exactly output.
+func packLines(output string, size int) []string {
+	var parts []string
+	start := 0 // where the part being filled starts
+	for pos := 0; pos < len(output); {
+		end := len(output)
+		if i := strings.IndexByte(output[pos:], '\n'); i >= 0 {
+			end = pos + i + 1
+		}
+		switch {
+		case end-start <= size:
+			// The line fits the part being filled.
+		case end-pos <= size:
+			// It fits a part of its own: close the one before it.
+			parts = append(parts, output[start:pos])
+			start = pos
+		default:
+			if pos > start {
+				parts = append(parts, output[start:pos])
+			}
+			for end-pos > size {
+				cut := pos + size
+				for cut > pos && !utf8.RuneStart(output[cut]) {
+					cut--
+				}
+				if cut == pos { // a character wider than size: take it whole
+					cut = pos + 1
+					for cut < end && !utf8.RuneStart(output[cut]) {
+						cut++
+					}
+				}
+				parts = append(parts, output[pos:cut])
+				pos = cut
+			}
+			start = pos
+		}
+		pos = end
+	}
+	if start < len(output) {
+		parts = append(parts, output[start:])
+	}
+	return parts
 }
 
 // linesOmittedFormat is the line capOutput puts after the leading
@@ -192,25 +262,31 @@ func capOutput(output string, limit int) string {
 	if len(rest) <= keep {
 		return output
 	}
-	cut := len(rest) - keep
-	// Advance to the start of the next whole line, unless that would
-	// leave none of the tool's output: when the cut lands in the last
-	// tool line (one longer than the whole budget), keep that line's own
-	// end instead, cut inside it at a rune boundary, as the Runner does.
-	if cut > 0 && rest[cut-1] != '\n' {
-		if i := strings.IndexByte(rest[cut:], '\n'); i >= 0 && !onlyClosingAnnotation(rest[cut+i+1:]) {
-			cut += i + 1
-		} else {
-			for cut < len(rest) && !utf8.RuneStart(rest[cut]) {
-				cut++
-			}
-		}
-	}
+	cut := keptStart(rest, len(rest)-keep)
 	removed := strings.Count(rest[:cut], "\n")
 	if cut == len(rest) && !strings.HasSuffix(rest, "\n") {
 		removed++
 	}
 	return output[:lead] + fmt.Sprintf(linesOmittedFormat, removed) + rest[cut:]
+}
+
+// keptStart returns where the text kept from the end of s starts, given
+// that cut bytes would be removed from its front. A cut inside a line moves
+// forward to the start of the next whole line, unless that would leave none
+// of the tool's output: when the cut lands in the last tool line (one longer
+// than the whole budget), the line's own end is kept instead, from the next
+// character boundary, as the Runner does.
+func keptStart(s string, cut int) int {
+	if cut > 0 && s[cut-1] != '\n' {
+		if i := strings.IndexByte(s[cut:], '\n'); i >= 0 && !onlyClosingAnnotation(s[cut+i+1:]) {
+			cut += i + 1
+		} else {
+			for cut < len(s) && !utf8.RuneStart(s[cut]) {
+				cut++
+			}
+		}
+	}
+	return cut
 }
 
 // onlyClosingAnnotation reports whether s holds no tool output: nothing,
@@ -221,6 +297,24 @@ func onlyClosingAnnotation(s string) bool {
 		return true
 	}
 	return !strings.Contains(line, "\n") && strings.HasPrefix(line, "@@ turnip: ") && strings.HasSuffix(line, " @@")
+}
+
+// fenceGrowth returns how many bytes wider than for empty content the two
+// fences around any part of content can be. It counts every run of
+// backticks, not only those that open a line, because a part can start
+// inside a line, and a run there opens the part's first line.
+func fenceGrowth(content string) int {
+	longest, run := 0, 0
+	for i := 0; i < len(content); i++ {
+		if content[i] == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	_, narrow := fencesFor("", false)
+	return 2 * max(longest+1-len(narrow), 0)
 }
 
 // chunkOmissionMarker opens a section whose output was cut, inside its
@@ -334,11 +428,11 @@ func cutWithinSection(header string, s section, footer string, dropped int) stri
 	empty.chunk = ""
 	overhead := len(assembleBody(header, []section{empty}, footer, dropped))
 
-	room := max(maxCommentLength-overhead-len(chunkOmissionMarker), 0)
+	room := max(maxCommentLength-overhead-len(chunkOmissionMarker)-fenceGrowth(s.chunk), 0)
 
 	chunk := s.chunk
 	if len(chunk) > room {
-		chunk = chunk[len(chunk)-room:] // keep the end
+		chunk = chunk[keptStart(chunk, len(chunk)-room):] // keep the end
 	}
 	s.chunk = chunkOmissionMarker + chunk
 
@@ -346,21 +440,32 @@ func cutWithinSection(header string, s section, footer string, dropped int) stri
 }
 
 // packSections greedily groups pieces into comment bodies, keeping each
-// body's total content under maxCommentLength. The first group's budget
-// accounts for the head (notice alert, if any, plus the verdict line);
-// later groups start fresh (their continuation header is small enough not
-// to need accounting for here).
-func packSections(head string, pieces []section) [][]section {
+// body's total content under maxCommentLength. It counts what assembleBody
+// adds around the pieces: the header and its blank line (the head for the
+// first group, a continuation header for later ones), the blank line
+// between pieces, and the footer with its blank line. A group does not know
+// whether it is the last, so every group leaves room for the footer.
+func packSections(head, footer string, pieces []section) [][]section {
+	tail := 0
+	if footer != "" {
+		tail = len("\n\n") + len(footer)
+	}
+	continued := len(fmt.Sprintf("_(continued %d/%d)_\n\n", 9999, 9999))
+
 	var groups [][]section
 	var current []section
-	currentLen := len(head)
+	currentLen := len(head) + len("\n\n") + tail
 
 	for _, piece := range pieces {
 		size := len(piece.render())
-		if len(current) > 0 && currentLen+size > maxCommentLength {
-			groups = append(groups, current)
-			current = nil
-			currentLen = 0
+		if len(current) > 0 {
+			if currentLen+len("\n\n")+size > maxCommentLength {
+				groups = append(groups, current)
+				current = nil
+				currentLen = continued + tail
+			} else {
+				size += len("\n\n")
+			}
 		}
 		current = append(current, piece)
 		currentLen += size
