@@ -78,16 +78,23 @@ var olderReleaseTableBanners = []string{
 	"FAILED TO DELETE RELEASES:",
 }
 
-// MutationChangesReported returns false when the run's counts cannot be
+// ChangesReported returns false when a successful run's counts cannot be
 // read from output, the run's whole transcript, so a zero count from it
 // would misreport a run that changed something as "no changes" rather than
-// as succeeded with no counts (Requirement 5, Decision 2). That is so when:
+// as succeeded with no counts (Requirement 5, Decision 2). For apply and
+// sync that is so when:
 //
 //   - the transcript carries one of the older upper-case banners, which
 //     parseReleaseTables cannot read; or
 //   - the run's argv set Helmfile's log level above info (-q, --quiet or
 //     --log-level warn and up), since Helmfile logs its Release_Tables at
 //     info level and would have printed none.
+//
+// For diff only the second holds (fix-helmfile-diff-removals): Helmfile
+// logs its "Affected releases are:" summary at info level too, so a quiet
+// plan prints no removals, and its zero destroy count cannot be trusted.
+// The older banners are an apply's, so they are not looked for here. Any
+// other operation reports its counts.
 //
 // output is the transcript as the Server received it, both streams,
 // rather than stderr alone: this is the one place that trade-off is
@@ -100,10 +107,19 @@ var olderReleaseTableBanners = []string{
 // annotation therefore always survives, and the banners print at the end
 // of an apply; a banner printed only in a cut start would go unseen, and
 // the run would read as reported.
-func (p *HelmfilePlugin) MutationChangesReported(output string) bool {
+func (p *HelmfilePlugin) ChangesReported(operation, output string) bool {
+	switch operation {
+	case "diff", "apply", "sync":
+	default:
+		return true
+	}
+	checkBanners := operation != "diff"
 	for _, line := range strings.Split(stripANSI(output), "\n") {
 		if argv, ok := commandAnnotation(line); ok && argsSilenceTables(argv) {
 			return false
+		}
+		if !checkBanners {
+			continue
 		}
 		trimmed := strings.TrimSpace(line)
 		for _, banner := range olderReleaseTableBanners {
@@ -131,8 +147,9 @@ func commandAnnotation(line string) (args []string, ok bool) {
 }
 
 // argsSilenceTables reports whether args set Helmfile's log level above
-// info, where its Release_Tables are not printed. It follows Helmfile's
-// own precedence: --debug wins over --quiet, which wins over --log-level.
+// info, where its Release_Tables and its "Affected releases are:" summary
+// are not printed. It follows Helmfile's own precedence: --debug wins over
+// --quiet, which wins over --log-level.
 // Levels set through HELMFILE_QUIET or HELMFILE_LOG_LEVEL in the image are
 // not visible here; the documentation says so.
 func argsSilenceTables(args []string) bool {
@@ -215,6 +232,11 @@ func (p *HelmfilePlugin) Execute(ctx context.Context, operation string, opts Exe
 		// would otherwise read as the body of whichever release it landed
 		// after and count an unchanged one as changed.
 		summary.Change = parseChangedReleases(strings.TrimRight(rec.StreamText(Stdout), "\n"))
+		// A release Helmfile will remove has no diff at all: it appears
+		// only in the "Affected releases are:" summary its logger prints
+		// to stderr, so that is where Destroy is read, and only there
+		// (the same text inside a manifest on stdout must not count).
+		summary.Destroy = parseAffectedReleases(rec.StreamText(Stderr))
 	} else {
 		// Every other operation (apply, sync) actually mutates, and
 		// Helmfile prints its own account of what it changed as

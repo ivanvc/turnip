@@ -312,9 +312,12 @@ The counts on a check's title and in the PR comment (`+1 ~4 -2`) come
 from Helmfile's own output, read differently for the plan and for the
 mutating commands.
 
-**`diff` counts releases with a diff.** Every release whose diff shows
-something counts as changed (`~`), a pending removal included; a `diff`
-never reports `+` or `-`.
+**`diff` counts releases with a diff, and the ones it will remove.**
+Every release whose diff shows something counts as changed (`~`). A
+release set to `installed: false` that is still deployed has no diff:
+Helmfile lists it as `DELETED` in the `Affected releases are:` summary
+it prints after the diffs, and turnip counts it as destroyed (`-`) from
+that summary. A `diff` never reports `+`.
 
 **`apply` and `sync` count what Helmfile reports acting on**: the
 releases its closing summary names as updated, reinstalled or deleted,
@@ -337,16 +340,25 @@ counts, rather than as `no changes`. `succeeded` never means no changes.
 It happens when:
 
 - **the plan was passed `-q`, `--quiet` or `--log-level warn` (or
-  higher).** Helmfile prints its summary at its info log level, so these
-  silence it, and the apply or sync replays the plan's arguments.
-  `--debug` overrides them, as it does in Helmfile. Leave them off to get
-  counts.
+  higher).** Helmfile prints its summaries at its info log level, so
+  these silence them: the plan itself reads `succeeded`, since the
+  releases it would remove can't be seen, and so does the apply or sync,
+  which replays the plan's arguments. `--debug` overrides them, as it
+  does in Helmfile. Leave them off to get counts.
 - **the image runs a Helmfile older than v1.6.0**, whose summary turnip
   does not read. The operation still succeeds or fails normally. See
   [Gotchas for operators](#gotchas-for-operators).
 
-If an apply or sync that changed something reads `no changes`, the image
-may be silencing Helmfile's summary through its environment; see
+**Don't change Helmfile's log level for a Project**, neither with flags
+nor with `HELMFILE_LOG_LEVEL` or `HELMFILE_QUIET` in the image. turnip
+reads its counts from what Helmfile prints, so with less printed the
+counts, and the next steps the pull request offers from them, may not be
+accurate. A flag at least makes the run read `succeeded`; a variable in
+the environment isn't seen at all.
+
+If an apply or sync that changed something, or a plan that removes a
+release, reads `no changes`, the image may be silencing Helmfile's
+summary through its environment; see
 [Gotchas for operators](#gotchas-for-operators).
 
 #### A failed operation shows Helmfile's messages, not the diffs
@@ -747,5 +759,5 @@ See also [`SECURITY.md`](../../SECURITY.md).
   turnip runs. Helmfile prints its summary at its info log level, and
   turnip sees the command line, not the environment, so a level set this
   way silences the summary without the `succeeded` fallback: the run then
-  reads `no changes`. The same holds for either variable set through a
+  reads `no changes`, even for a plan that removes a release. The same holds for either variable set through a
   repository's `runner.env`.

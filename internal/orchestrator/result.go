@@ -83,11 +83,12 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 	if p, ok := o.plugins[rec.Project.Tool]; ok {
 		pr.PlanOperation = p.GetPlanOperation()
 		pr.ApplyOperation = p.GetApplyOperation()
-		// Requirement 5: only a Mutating_Operation's counts can be
-		// unreported; a plan always reports what it found. An
-		// unregistered Plugin (pr built above with no Plugin found) leaves
-		// counts as reported, per the design.
-		if result.Success && rec.Operation != p.GetPlanOperation() && !p.MutationChangesReported(result.Output) {
+		// Requirement 5: any successful operation's counts can be
+		// unreported, the plan included (a quiet Helmfile diff prints no
+		// removals; fix-helmfile-diff-removals). A failure's counts are
+		// always reported. An unregistered Plugin (pr built above with no
+		// Plugin found) leaves counts as reported, per the design.
+		if result.Success && !p.ChangesReported(rec.Operation, result.Output) {
 			pr.Changes.Unreported = true
 		}
 	}
@@ -151,7 +152,7 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 		Change:  int(result.Changes.Change),
 		Destroy: int(result.Changes.Destroy),
 	}
-	ev, planRec := o.lockEventFor(rec, result.Success, summary, result.PlanData)
+	ev, planRec := o.lockEventFor(rec, result.Success, summary, pr.Changes.Unreported, result.PlanData)
 	if planRec != nil {
 		planRec.ImageDigest = o.planImageDigest(ctx, rec)
 	}

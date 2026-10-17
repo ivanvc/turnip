@@ -8,11 +8,15 @@ import (
 // lockEventFor classifies a finished Operation into the Event its Lock
 // sees, together with the plan to record when the edge keeps one.
 //
+// unreported is true when the tool could not report the plan's counts
+// (a quiet Helmfile diff). Such a plan may have something to apply, so it
+// is kept as one rather than released as a plan with no changes.
+//
 // An unregistered tool is treated as mutating rather than as a plan. That
 // is the conservative reading: a mutating Operation never releases on
 // failure, so a tool turnip cannot identify can never talk turnip into
 // freeing a Project it knows nothing about.
-func (o *Orchestrator) lockEventFor(rec *OperationRecord, success bool, changes plugin.ChangeSummary, planData []byte) (lock.Event, *lock.PlanRecord) {
+func (o *Orchestrator) lockEventFor(rec *OperationRecord, success bool, changes plugin.ChangeSummary, unreported bool, planData []byte) (lock.Event, *lock.PlanRecord) {
 	p, registered := o.plugins[rec.Project.Tool]
 	if !registered || rec.Operation != p.GetPlanOperation() {
 		if success {
@@ -27,16 +31,22 @@ func (o *Orchestrator) lockEventFor(rec *OperationRecord, success bool, changes 
 
 	// "Something to apply" is the plan's own verdict *or* the tool's:
 	// Helmfile answers true on account of sync, which upgrades every
-	// release regardless of the diff.
-	if changes.Add != 0 || changes.Change != 0 || changes.Destroy != 0 || p.ActsWithoutChanges() {
+	// release regardless of the diff. A plan whose counts were not
+	// reported has no zero to trust, so it counts as something to apply.
+	if changes.Add != 0 || changes.Change != 0 || changes.Destroy != 0 || unreported || p.ActsWithoutChanges() {
 		// The arguments stored are the Operation's own, taken from the
 		// record the Job was built from rather than re-derived from the
 		// trigger line, so whatever turnip normalized is what a later
 		// mutating Operation replays.
+		//
+		// Whether the counts were reported is kept with them, so the
+		// mutating Operation replaying the plan titles its check
+		// "succeeded" rather than "no changes".
 		return lock.EventPlanApplicable, &lock.PlanRecord{
-			Data:    planData,
-			Args:    rec.ExtraArgs,
-			Summary: changes,
+			Data:       planData,
+			Args:       rec.ExtraArgs,
+			Summary:    changes,
+			Unreported: unreported,
 		}
 	}
 

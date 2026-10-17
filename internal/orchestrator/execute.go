@@ -251,7 +251,9 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		planData = plan.Data
 		execArgs = plan.Args
 		recordedDigest = plan.ImageDigest
-		title = runningRecordedPlanTitle(changeCounts(plan.Summary), plan.Args)
+		planCounts := changeCounts(plan.Summary)
+		planCounts.Unreported = plan.Unreported
+		title = runningRecordedPlanTitle(planCounts, plan.Args)
 	}
 
 	// checkRunErr is deliberately its own variable, not the shared err:

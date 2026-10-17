@@ -154,6 +154,30 @@ func TestStorePlan_RecordsAPlanWithNoArtifact(t *testing.T) {
 	assert.Equal(t, StatePlanReady, status.State, "the comment must be able to offer an apply")
 }
 
+// TestStorePlan_RecordsUnreported checks that whether a plan's counts were
+// reported round-trips with the plan, and that a later reported plan clears
+// it rather than keeping a stale flag.
+func TestStorePlan_RecordsUnreported(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestManager(t)
+	const projectKey = "owner/repo/project"
+
+	_, err := acquireLock(ctx, m, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
+
+	require.NoError(t, storePlan(ctx, m, projectKey, 1, PlanRecord{Args: []string{"-q"}, Unreported: true}))
+	plan, err := m.GetPlan(ctx, projectKey, 1)
+	require.NoError(t, err)
+	assert.True(t, plan.Unreported)
+
+	_, err = acquireLock(ctx, m, projectKey, 1, "https://example.com/pr/1", "alice")
+	require.NoError(t, err)
+	require.NoError(t, storePlan(ctx, m, projectKey, 1, PlanRecord{Summary: plugin.ChangeSummary{Change: 1}}))
+	plan, err = m.GetPlan(ctx, projectKey, 1)
+	require.NoError(t, err)
+	assert.False(t, plan.Unreported, "a reported plan replaces the flag")
+}
+
 // TestStorePlan_RecordsImageDigest checks that the digest of the image a
 // plan ran in round-trips through the store beside the rest of the plan,
 // and that a later plan without one clears it rather than keeping a

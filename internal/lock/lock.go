@@ -55,6 +55,10 @@ type LockData struct {
 	PlanData    []byte               `json:"plan_data,omitempty"`
 	PlanSummary plugin.ChangeSummary `json:"plan_summary,omitzero"`
 
+	// PlanUnreported is true when the plan's tool could not report its
+	// counts (a quiet Helmfile diff), so PlanSummary's zeros mean nothing.
+	PlanUnreported bool `json:"plan_unreported,omitempty"`
+
 	// PlanImageDigest is the sha256 digest of the image the plan ran in,
 	// so a mutating Operation runs exactly that image rather than
 	// re-resolving a tag. Empty when it could not be read.
@@ -92,10 +96,15 @@ func (d LockData) DecodedState() LockState {
 // ImageDigest is the "sha256:..." digest of the image the plan ran in. It
 // is empty when the digest could not be read, and a mutating Operation
 // refuses such a record rather than re-resolving a tag.
+//
+// Unreported is true when the plan's tool could not report its counts (a
+// quiet Helmfile diff). Summary is then not shown as counts: a mutating
+// Operation replaying the plan renders "succeeded", never "no changes".
 type PlanRecord struct {
 	Data        []byte
 	Args        []string
 	Summary     plugin.ChangeSummary
+	Unreported  bool
 	ImageDigest string
 }
 

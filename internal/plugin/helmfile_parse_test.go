@@ -204,3 +204,59 @@ func TestParseChangedReleases_IgnoresTurnipsOwnAnnotations(t *testing.T) {
 	assert.Equal(t, 1, parseChangedReleases(withTranscript),
 		"api reported no body of its own; only the trailer followed it")
 }
+
+func TestParseAffectedReleases(t *testing.T) {
+	const header = "Affected releases are:\n"
+	tests := []struct {
+		name   string
+		output string
+		want   int
+	}{
+		{name: "no summary", output: "Building dependency release=web\n", want: 0},
+		{name: "one removal", output: header + "  web (example/web) DELETED\n\n", want: 1},
+		{
+			name:   "two removals",
+			output: header + "  api (example/api) DELETED\n  web (example/web) DELETED\n\n",
+			want:   2,
+		},
+		{
+			name: "two summaries are summed",
+			output: header + "  web (example/web) DELETED\n\n" +
+				"Building dependency release=api\n" +
+				header + "  api (example/api) DELETED\n\n",
+			want: 2,
+		},
+		{
+			name:   "updated lines are not counted",
+			output: header + "  api (example/api) UPDATED\n  web (example/web) DELETED\n\n",
+			want:   1,
+		},
+		{
+			name:   "only updated lines",
+			output: header + "  api (example/api) UPDATED\n\n",
+			want:   0,
+		},
+		{
+			name:   "a summary ends at another log line",
+			output: header + "  web (example/web) DELETED\nsome other log line\n  api (example/api) DELETED\n",
+			want:   1,
+		},
+		{
+			name:   "release lines without a header are not counted",
+			output: "  web (example/web) DELETED\n",
+			want:   0,
+		},
+		{
+			name:   "color codes",
+			output: sgr(header) + "  web (example/web) " + sgr("DELETED") + "\n",
+			want:   1,
+		},
+		{name: "empty summary", output: header + "\n", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, parseAffectedReleases(tt.output))
+		})
+	}
+}

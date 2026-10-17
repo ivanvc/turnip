@@ -70,7 +70,7 @@ func (p *fakePlugin) Provisioning() provisioning.Spec {
 	return provisioning.Spec{Strategy: provisioning.RunInImage, Image: "ghcr.io/helmfile/helmfile"}
 }
 func (p *fakePlugin) ImageTags() []string                 { return []string{"v*.*.*", "sha256:*"} }
-func (p *fakePlugin) MutationChangesReported(string) bool { return true }
+func (p *fakePlugin) ChangesReported(string, string) bool { return true }
 func (p *fakePlugin) Execute(_ context.Context, _ string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
 	for _, l := range p.script {
 		if opts.Record != nil {
@@ -482,7 +482,7 @@ func (p *echoWorkingDirPlugin) Provisioning() provisioning.Spec {
 	return provisioning.Spec{Strategy: provisioning.RunInImage, Image: "ghcr.io/helmfile/helmfile"}
 }
 func (p *echoWorkingDirPlugin) ImageTags() []string                 { return []string{"v*.*.*", "sha256:*"} }
-func (p *echoWorkingDirPlugin) MutationChangesReported(string) bool { return true }
+func (p *echoWorkingDirPlugin) ChangesReported(string, string) bool { return true }
 func (p *echoWorkingDirPlugin) Execute(_ context.Context, _ string, opts plugin.ExecuteOptions) (*plugin.ExecuteResult, error) {
 	if opts.Record != nil {
 		opts.Record.Append(plugin.Stdout, "reading "+opts.WorkingDir+"/values.yaml")

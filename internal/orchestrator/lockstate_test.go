@@ -52,7 +52,7 @@ func TestLockEventFor(t *testing.T) {
 				ExtraArgs: []string{"-l", "name=web"},
 			}
 
-			ev, planRec := o.lockEventFor(rec, tc.success, tc.changes, []byte("bytes"))
+			ev, planRec := o.lockEventFor(rec, tc.success, tc.changes, false, []byte("bytes"))
 
 			assert.Equal(t, tc.want, ev)
 			if !tc.wantPlan {
@@ -62,6 +62,72 @@ func TestLockEventFor(t *testing.T) {
 			require.NotNil(t, planRec)
 			assert.Equal(t, []string{"-l", "name=web"}, planRec.Args,
 				"the scope stored is the Operation's own, not the trigger line re-parsed")
+		})
+	}
+}
+
+// A plan whose counts were not reported is kept, whatever the tool does
+// without changes; with its counts reported the same plan releases.
+func TestLockEventFor_UnreportedPlanIsKept(t *testing.T) {
+	// This tool does not act without changes (actsWithoutChanges unset),
+	// so only the unreported flag can keep its zero-count plan.
+	registry := PluginRegistry{"quiet": &fakePlugin{name: "quiet", operations: []string{"plan", "apply"}, planOperation: "plan", applyOperation: "apply"}}
+	o := &Orchestrator{plugins: registry}
+	rec := &OperationRecord{
+		Project:   config.Project{Name: "p", Tool: "quiet"},
+		Operation: "plan",
+		ExtraArgs: []string{"-q"},
+	}
+
+	ev, planRec := o.lockEventFor(rec, true, plugin.ChangeSummary{}, true, []byte("bytes"))
+	assert.Equal(t, lock.EventPlanApplicable, ev)
+	require.NotNil(t, planRec, "the plan is recorded")
+	assert.Equal(t, []byte("bytes"), planRec.Data)
+	assert.Equal(t, []string{"-q"}, planRec.Args)
+	assert.True(t, planRec.Unreported, "the replay must know the counts were not reported")
+
+	// A plan with reported changes records them as reported.
+	_, planRec = o.lockEventFor(rec, true, plugin.ChangeSummary{Change: 1}, false, nil)
+	require.NotNil(t, planRec)
+	assert.False(t, planRec.Unreported)
+
+	ev, planRec = o.lockEventFor(rec, true, plugin.ChangeSummary{}, false, []byte("bytes"))
+	assert.Equal(t, lock.EventPlanNothingToApply, ev, "reported zero counts still release")
+	assert.Nil(t, planRec)
+
+	ev, planRec = o.lockEventFor(rec, false, plugin.ChangeSummary{}, true, nil)
+	assert.Equal(t, lock.EventPlanFailed, ev, "a failure is not kept on account of unreported counts")
+	assert.Nil(t, planRec)
+}
+
+// Through HandleResult: an inert tool whose plan reports no counts keeps
+// its Lock; the same tool reporting zero releases it.
+func TestHandleResult_UnreportedPlanKeepsLockForInertTool(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		plugin    plugin.Plugin
+		wantEvent lock.Event
+	}{
+		{"unreported plan", unreportingHelmfile{&fakePlugin{name: "pulumi", operations: []string{"preview", "up"}, planOperation: "preview", applyOperation: "up"}}, lock.EventPlanApplicable},
+		{"reported zero plan", &fakePlugin{name: "pulumi", operations: []string{"preview", "up"}, planOperation: "preview", applyOperation: "up"}, lock.EventPlanNothingToApply},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			locks := &fakeLockManager{}
+			o, _ := testResultOrchestrator(t, locks)
+			o.plugins = PluginRegistry{"pulumi": tc.plugin}
+			require.NoError(t, o.records.Create(context.Background(), &OperationRecord{
+				OperationID: "op-1",
+				ProjectKey:  "owner/repo/p",
+				Project:     config.Project{Name: "p", Tool: "pulumi"},
+				Owner:       "owner", Repo: "repo", PRNumber: 42,
+				Operation:     "preview",
+				StartDeadline: time.Now().Add(time.Hour).Unix(),
+				CreatedAt:     time.Now(),
+			}))
+
+			require.NoError(t, o.HandleResult(context.Background(), "op-1", rpc.OperationResult{Success: true}))
+
+			assert.Equal(t, []lock.Event{tc.wantEvent}, locks.appliedEvents())
 		})
 	}
 }

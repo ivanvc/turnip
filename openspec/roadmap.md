@@ -19,7 +19,7 @@ In the order discussed so far; reorder here.
 
 1. `fix-team-collaborators`: implemented, awaiting deploy
 2. `fix-comment-part-split`: implemented, awaiting deploy
-3. `fix-helmfile-diff-removals`: proposal
+3. `fix-helmfile-diff-removals`: implemented, awaiting deploy
 4. `fix-apply-suggested-with-lock`: proposal
 
 ## Open changes
@@ -37,7 +37,7 @@ In the order discussed so far; reorder here.
 | [`runner-server-tls`](changes/runner-server-tls/) | TLS on the Runner's gRPC channel, and a Runner that verifies the Server; where the certificate comes from is still open | | proposal |
 | [`org-images`](changes/org-images/) | the project under its organization, and multi-architecture images published on every push to `main` | | proposal |
 | [`fix-comment-part-split`](changes/fix-comment-part-split/) | an output part ends at a whole line, never inside a line or a character | | implemented; archived once deployed |
-| [`fix-helmfile-diff-removals`](changes/fix-helmfile-diff-removals/) | a Helmfile plan counts the releases it will remove | | proposal |
+| [`fix-helmfile-diff-removals`](changes/fix-helmfile-diff-removals/) | a Helmfile plan counts the releases it will remove | | implemented; archived once a plan removing a release reads -1 |
 | [`fix-apply-suggested-with-lock`](changes/fix-apply-suggested-with-lock/) | a plan whose Lock is held offers the apply; an apply never offers itself again | | proposal |
 | [`fix-team-collaborators`](changes/fix-team-collaborators/) | an author with access through a team may trigger commands; a failed permission check says so | | implemented; archived once the refused author's diff runs |
 

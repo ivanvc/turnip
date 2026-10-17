@@ -58,7 +58,7 @@ func bannerTitle(line string) (title string, ok bool) {
 // Mutating_Operation's stderr, summed over every table Helmfile printed
 // (one set per sub-helmfile that changed something). Only the
 // "="-framed banner Helmfile prints from v1.6.0 on is recognized; see
-// MutationChangesReported for the older, upper-case banner.
+// ChangesReported for the older, upper-case banner.
 func parseReleaseTables(output string) ChangeSummary {
 	lines := strings.Split(stripANSI(output), "\n")
 
@@ -146,4 +146,43 @@ func parseChangedReleases(output string) int {
 	}
 
 	return changed
+}
+
+const affectedReleasesHeader = "Affected releases are:"
+
+// affectedReleaseRe matches a line of Helmfile's affected-releases summary,
+// "  <name> (<chart>) DELETED" or "... UPDATED".
+var affectedReleaseRe = regexp.MustCompile(`^\s*\S+ \(.*\) (DELETED|UPDATED)\s*$`)
+
+// parseAffectedReleases counts the releases a `helmfile diff` will remove,
+// read from the summaries Helmfile logs to stderr after the diffs: an
+// "Affected releases are:" line followed by one line per release. Helmfile
+// runs no diff for a release it removes, so this summary is the only place
+// the removal shows. Summaries are summed (one per sub-helmfile). A summary
+// ends at the first line that is neither blank nor a release line; UPDATED
+// lines, printed only with Helmfile's --detailed-exitcode, are not counted.
+func parseAffectedReleases(output string) int {
+	lines := strings.Split(stripANSI(output), "\n")
+
+	deleted := 0
+	inSummary := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == affectedReleasesHeader {
+			inSummary = true
+			continue
+		}
+		if !inSummary || strings.TrimSpace(line) == "" {
+			continue
+		}
+		m := affectedReleaseRe.FindStringSubmatch(line)
+		if m == nil {
+			inSummary = false
+			continue
+		}
+		if m[1] == "DELETED" {
+			deleted++
+		}
+	}
+
+	return deleted
 }

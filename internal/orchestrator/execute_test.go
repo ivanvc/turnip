@@ -895,6 +895,26 @@ func TestExecuteOne_ApplyCheckRunSaysWhatItWillChange(t *testing.T) {
 	assert.Equal(t, "running the recorded plan, +1 ~4 -2, -l name=web", client.createdCheckRuns[0].Title)
 }
 
+// A plan whose counts were not reported (a quiet Helmfile diff) is
+// replayed under "succeeded", never under its zero counts as "no changes".
+func TestExecuteOne_ApplyOfUnreportedPlanIsNotTitledNoChanges(t *testing.T) {
+	locks := &fakeLockManager{
+		getPlanFunc: func(ctx context.Context, projectKey string, prNumber int) (lock.PlanRecord, error) {
+			return lock.PlanRecord{ImageDigest: testImageDigest, Args: []string{"-q"}, Unreported: true}, nil
+		},
+	}
+	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}
+	o, _ := testOrchestrator(t, locks, jobsClient)
+	client := &fakeExecuteClient{}
+
+	target := testHelmfileTarget()
+	target.Operation = "apply"
+	o.runOne(t, context.Background(), client, testRepo, testPR, 1, target)
+
+	require.NotEmpty(t, client.createdCheckRuns)
+	assert.Equal(t, "running the recorded plan, succeeded, -q", client.createdCheckRuns[0].Title)
+}
+
 func TestExecuteOne_CheckRunCreatedWithRunningTitle(t *testing.T) {
 	locks := &fakeLockManager{}
 	jobsClient := &fakeJobCreator{t: t, result: github.ProjectResult{Success: true}}

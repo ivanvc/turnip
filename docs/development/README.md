@@ -263,10 +263,17 @@ burst is also why the capture reads both pipes from one loop (see
 `readStreams`): a reader per pipe recorded the errors that follow the
 burst in the middle of it.
 
-**Counting a `diff`** reads standard output only. Each
+**Counting a `diff`** reads changes from standard output. Each
 `Comparing release=<name>, chart=<chart>` header followed by at least one
 non-blank line before the next header (or the end) is one changed
-release, reported as `Change`. Standard error carries everything
+release, reported as `Change`. A release Helmfile will remove has no diff;
+it is read from the `Affected releases are:` summary on standard error
+instead, each `  <name> (<chart>) DELETED` line counting one `Destroy`
+(`parseAffectedReleases`). The summary ends at the first line that is
+neither blank nor a release line, summaries are summed (one per
+sub-helmfile), and `UPDATED` lines, printed only with
+`--detailed-exitcode`, count nothing. Apart from that summary, standard
+error carries everything
 Helmfile says itself ("Building dependency", "Adding repo", a failed
 helm diff), which would otherwise read as the body of whichever release
 it landed after. turnip's own annotation lines are a stream of their
@@ -283,17 +290,21 @@ release until a blank line or the next banner. `Updated Releases` and
 summed, since Helmfile prints one set per sub-helmfile. ANSI color codes
 are stripped first.
 
-**When counts are not reported** (`MutationChangesReported` returns
-false, and the run renders `succeeded`), judged from the whole transcript:
+**When counts are not reported** (`ChangesReported(operation, output)`
+returns false, and the run renders `succeeded`), judged from the whole
+transcript. The Server asks it for every successful operation, the plan
+included; for Helmfile:
 
-- one of the older upper-case banners (`UPDATED RELEASES:`,
-  `REINSTALLED RELEASES:`, `DELETED RELEASES:`, `FAILED RELEASES:`,
-  `FAILED TO DELETE RELEASES:`) appears, meaning a Helmfile before v1.6.0
-  whose tables are not parsed;
-- the command annotation's argv sets the log level above info: `-q`,
-  `--quiet`, or `--log-level` `warn`, `error`, `dpanic`, `panic` or
-  `fatal`, following Helmfile's precedence (`--debug` wins over `--quiet`,
-  which wins over `--log-level`; parsing stops at `--`).
+- for an `apply` or `sync`, one of the older upper-case banners
+  (`UPDATED RELEASES:`, `REINSTALLED RELEASES:`, `DELETED RELEASES:`,
+  `FAILED RELEASES:`, `FAILED TO DELETE RELEASES:`) appears, meaning a
+  Helmfile before v1.6.0 whose tables are not parsed;
+- for any of `diff`, `apply` or `sync`, the command annotation's argv
+  sets the log level above info, which silences both the Release_Tables
+  and the `diff`'s `Affected releases are:` summary: `-q`, `--quiet`, or
+  `--log-level` `warn`, `error`, `dpanic`, `panic` or `fatal`, following
+  Helmfile's precedence (`--debug` wins over `--quiet`, which wins over
+  `--log-level`; parsing stops at `--`).
 
 `HELMFILE_QUIET` and `HELMFILE_LOG_LEVEL` in the environment are not
 visible to this check, which is why the user docs say not to set them.

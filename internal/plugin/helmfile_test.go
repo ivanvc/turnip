@@ -487,7 +487,86 @@ func TestHelmfilePlugin_ExecuteIgnoresTableTextOnStdout(t *testing.T) {
 	assert.Equal(t, ChangeSummary{}, result.ChangeSummary)
 }
 
-func TestHelmfilePlugin_MutationChangesReported(t *testing.T) {
+// A diff counts the releases it will remove from the "Affected releases
+// are:" summary on stderr, beside the changed releases from stdout
+// (plugin-helmfile, "Change counts for diff").
+func TestHelmfilePlugin_ExecuteDiffCountsRemovals(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []Line
+		want  ChangeSummary
+	}{
+		{
+			name: "pending removal",
+			lines: []Line{
+				stderrLine("Affected releases are:"),
+				stderrLine("  web (example/web) DELETED"),
+				stderrLine(""),
+			},
+			want: ChangeSummary{Destroy: 1},
+		},
+		{
+			name: "removals and changes together",
+			lines: []Line{
+				stdoutLine("Comparing release=a, chart=example/a"),
+				stdoutLine("default, a, Deployment (apps) has changed:"),
+				stdoutLine("Comparing release=b, chart=example/b"),
+				stdoutLine("default, b, Deployment (apps) has changed:"),
+				stderrLine("Affected releases are:"),
+				stderrLine("  c (example/c) DELETED"),
+				stderrLine(""),
+			},
+			want: ChangeSummary{Change: 2, Destroy: 1},
+		},
+		{
+			name: "removals in two helmfiles",
+			lines: []Line{
+				stderrLine("Affected releases are:"),
+				stderrLine("  web (example/web) DELETED"),
+				stderrLine(""),
+				stderrLine("Affected releases are:"),
+				stderrLine("  api (example/api) DELETED"),
+				stderrLine(""),
+			},
+			want: ChangeSummary{Destroy: 2},
+		},
+		{
+			name: "updated releases in the summary",
+			lines: []Line{
+				stdoutLine("Comparing release=a, chart=example/a"),
+				stdoutLine("default, a, Deployment (apps) has changed:"),
+				stderrLine("Affected releases are:"),
+				stderrLine("  a (example/a) UPDATED"),
+				stderrLine(""),
+			},
+			want: ChangeSummary{Change: 1},
+		},
+		{
+			name: "the summary's text in a diff body",
+			lines: []Line{
+				stdoutLine("Comparing release=cm, chart=example/cm"),
+				stdoutLine("Affected releases are:"),
+				stdoutLine("  web (example/web) DELETED"),
+			},
+			want: ChangeSummary{Change: 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls []recordedCall
+			p := &HelmfilePlugin{run: fakeRunner(t, &calls, tt.lines, 0, nil)}
+
+			result, err := p.Execute(context.Background(), "diff", ExecuteOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, result.ChangeSummary)
+		})
+	}
+}
+
+// The existing apply cases, asked for an apply (and for a sync, which
+// answers the same).
+func TestHelmfilePlugin_ChangesReported(t *testing.T) {
 	tests := []struct {
 		name   string
 		output string
@@ -580,9 +659,69 @@ func TestHelmfilePlugin_MutationChangesReported(t *testing.T) {
 	p := NewHelmfilePlugin()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, p.MutationChangesReported(tt.output))
+			assert.Equal(t, tt.want, p.ChangesReported("apply", tt.output))
+			assert.Equal(t, tt.want, p.ChangesReported("sync", tt.output))
 		})
 	}
+}
+
+// A quiet diff prints no "Affected releases are:" summary, so its counts
+// are not reported (fix-helmfile-diff-removals, Decision 2). Only the log
+// level is read for a diff: the older banners are an apply's.
+//
+// Mutation check: answering true for every diff fails the quiet cases;
+// looking for the older banners in a diff fails the last case.
+func TestHelmfilePlugin_ChangesReportedDiff(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{
+			name:   "no flag",
+			output: "@@ turnip: helmfile --no-color diff @@\nComparing release=web, chart=charts/web\n",
+			want:   true,
+		},
+		{
+			name:   "-q",
+			output: "@@ turnip: helmfile --no-color diff -q @@\nComparing release=web, chart=charts/web\n",
+			want:   false,
+		},
+		{
+			name:   "--quiet",
+			output: "@@ turnip: helmfile --no-color diff --quiet @@\n",
+			want:   false,
+		},
+		{
+			name:   "--log-level warn",
+			output: "@@ turnip: helmfile --no-color diff --log-level warn @@\n",
+			want:   false,
+		},
+		{
+			name:   "--debug overrides -q",
+			output: "@@ turnip: helmfile --no-color diff --debug -q @@\n",
+			want:   true,
+		},
+		{
+			name:   "an older banner's text in a diff body is not an apply's banner",
+			output: "@@ turnip: helmfile --no-color diff @@\nUPDATED RELEASES:\n",
+			want:   true,
+		},
+	}
+
+	p := NewHelmfilePlugin()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, p.ChangesReported("diff", tt.output))
+		})
+	}
+}
+
+// An operation Helmfile does not count from (none today) reports its
+// counts, whatever its transcript holds.
+func TestHelmfilePlugin_ChangesReportedOtherOperation(t *testing.T) {
+	p := NewHelmfilePlugin()
+	assert.True(t, p.ChangesReported("lint", "@@ turnip: helmfile lint -q @@\nUPDATED RELEASES:\n"))
 }
 
 // A stderr line between two releases changes neither.

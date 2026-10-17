@@ -48,10 +48,11 @@ type Plugin interface {
 	// Execute runs one of the operations returned by GetOperations.
 	Execute(ctx context.Context, operation string, opts ExecuteOptions) (*ExecuteResult, error)
 
-	// MutationChangesReported reports whether a successful
-	// Mutating_Operation's counts are meaningful, given its transcript.
-	// False renders "succeeded".
-	MutationChangesReported(output string) bool
+	// ChangesReported reports whether a successful operation's counts are
+	// meaningful, given its transcript. False renders "succeeded". It is
+	// asked for every successful operation, the plan included; a tool
+	// answers true for its plan unless it has a reason not to.
+	ChangesReported(operation, output string) bool
 }
 
 // ExecuteOptions carries the standardized inputs to a Plugin's Execute call.
