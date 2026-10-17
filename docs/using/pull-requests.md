@@ -282,6 +282,12 @@ Details worth knowing:
   - Release its lock: /turnip unlock web
   ```
 
+  The apply is offered while this pull request holds the project's lock
+  after a successful plan, whatever the plan's counts. That includes a
+  plan with no changes for a tool that acts without them (Helmfile), and
+  a plan whose counts were not reported. It is never offered after an
+  apply or sync, or for a plan that failed.
+
 ### What turnip ran
 
 Each project's output opens and closes with turnip's own lines, written

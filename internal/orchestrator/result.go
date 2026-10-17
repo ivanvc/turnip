@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ivanvc/turnip/internal/github"
+	"github.com/ivanvc/turnip/internal/lock"
 	"github.com/ivanvc/turnip/internal/metrics"
 	"github.com/ivanvc/turnip/internal/plugin"
 	"github.com/ivanvc/turnip/internal/rpc"
@@ -171,6 +172,13 @@ func (o *Orchestrator) HandleResult(ctx context.Context, operationID string, res
 		)
 	}
 	switch {
+	case errors.Is(lockErr, lock.ErrLockedByOtherPR):
+		// Another pull request took the Lock while this Operation ran
+		// (it was unlocked mid-flight, then planned elsewhere). This pull
+		// request holds nothing, so the comment offers neither the apply
+		// nor the unlock, both of which the Lock would refuse.
+		slog.ErrorContext(ctx, "applying lock event", "operation_id", operationID, "event", string(ev), "error", lockErr)
+		pr.Locked = false
 	case lockErr != nil:
 		slog.ErrorContext(ctx, "applying lock event", "operation_id", operationID, "event", string(ev), "error", lockErr)
 	case tr.Released:

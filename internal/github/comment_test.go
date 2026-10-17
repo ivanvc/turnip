@@ -1159,3 +1159,73 @@ func TestBuildConsolidatedComment_WideFencesStillFit(t *testing.T) {
 	got := clampBody("**verdict**\n\n", []section{testSection("huge", output)}, "")
 	assert.LessOrEqual(t, len(got), maxCommentLength)
 }
+
+// Feature: fix-apply-suggested-with-lock, Decision 1: the apply line
+// follows success, a plan operation, the Lock and a registered tool, and
+// never the counts.
+func TestNextSteps_ApplyOfferTable(t *testing.T) {
+	counts := map[string]ChangeCounts{
+		"none":       {},
+		"some":       {Change: 1},
+		"unreported": {Unreported: true},
+	}
+	for _, success := range []bool{true, false} {
+		for _, op := range []string{"diff", "apply"} {
+			for _, locked := range []bool{true, false} {
+				for name, c := range counts {
+					for _, registered := range []bool{true, false} {
+						r := ProjectResult{ProjectName: "web", Operation: op, Success: success,
+							Locked: locked, Changes: c}
+						if registered {
+							r.PlanOperation, r.ApplyOperation = "diff", "apply"
+						}
+						want := success && op == "diff" && locked && registered
+						got := strings.Contains(nextSteps(r), "Apply just this project")
+						assert.Equal(t, want, got,
+							"success=%v op=%s locked=%v counts=%s registered=%v", success, op, locked, name, registered)
+					}
+				}
+			}
+		}
+	}
+}
+
+// Delta scenario "Plan with changes keeps its Lock": the exact three lines,
+// in order, so a reordered or partly dropped trailer fails here.
+func TestNextSteps_PlanWithChangesKeepsItsLock(t *testing.T) {
+	out := nextSteps(ProjectResult{ProjectName: "web", Operation: "diff", Success: true, Locked: true,
+		Changes: ChangeCounts{Change: 1}, PlanOperation: "diff", ApplyOperation: "apply"})
+	assert.Equal(t, "\n\n- Apply just this project: `/turnip apply web`\n"+
+		"- Re-plan it: `/turnip diff web`\n- Release its lock: `/turnip unlock web`", out)
+}
+
+func TestNextSteps_CleanPlanWithKeptLock(t *testing.T) {
+	out := nextSteps(ProjectResult{ProjectName: "web", Operation: "diff", Success: true, Locked: true,
+		PlanOperation: "diff", ApplyOperation: "apply"})
+	assert.Equal(t, "\n\n- Apply just this project: `/turnip apply web`\n"+
+		"- Re-plan it: `/turnip diff web`\n- Release its lock: `/turnip unlock web`", out)
+}
+
+func TestNextSteps_PlanWithUnreportedCounts(t *testing.T) {
+	out := nextSteps(ProjectResult{ProjectName: "web", Operation: "diff", Success: true, Locked: true,
+		Changes: ChangeCounts{Unreported: true}, PlanOperation: "diff", ApplyOperation: "apply"})
+	assert.Contains(t, out, "`/turnip apply web`")
+}
+
+func TestNextSteps_CleanPlanWithReleasedLock(t *testing.T) {
+	out := nextSteps(ProjectResult{ProjectName: "web", Operation: "diff", Success: true, Locked: false,
+		PlanOperation: "diff", ApplyOperation: "apply"})
+	assert.Equal(t, "\n\n- Re-plan it: `/turnip diff web`", out)
+}
+
+func TestNextSteps_SuccessfulApplyOffersNoApply(t *testing.T) {
+	out := nextSteps(ProjectResult{ProjectName: "web", Operation: "apply", Success: true, Locked: false,
+		Changes: ChangeCounts{Change: 1}, PlanOperation: "diff", ApplyOperation: "apply"})
+	assert.NotContains(t, out, "Apply just this project")
+}
+
+func TestNextSteps_FailedPlanOffersNoApply(t *testing.T) {
+	out := nextSteps(ProjectResult{ProjectName: "web", Operation: "diff", Success: false, Locked: true,
+		PlanOperation: "diff", ApplyOperation: "apply"})
+	assert.NotContains(t, out, "Apply just this project")
+}

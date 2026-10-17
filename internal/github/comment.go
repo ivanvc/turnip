@@ -712,9 +712,11 @@ func ScopeText(args []string) string {
 
 // nextSteps prints the commands that act on this Project alone.
 //
-// Each is offered by state rather than from a fixed list: apply only
-// where there is something to apply, unlock only where a Lock is actually
-// held. Nothing here encodes *which* outcomes leave a Lock held — that is
+// Each is offered by state rather than from a fixed list: apply only for
+// a successful plan whose Lock is still held, unlock only where a Lock is
+// actually held. The counts take no part in the apply: a plan with none,
+// or whose counts were not reported, still admits the apply when the Lock
+// was kept. Nothing here encodes *which* outcomes leave a Lock held; that is
 // the lock lifecycle's business, and reading r.Locked rather than
 // inferring from r.Success keeps this correct when that lifecycle
 // changes.
@@ -725,7 +727,10 @@ func ScopeText(args []string) string {
 func nextSteps(r ProjectResult) string {
 	var lines []string
 
-	if r.Success && r.Changes.Any() && r.ApplyOperation != "" {
+	// An unregistered tool leaves both names empty, so it is never taken
+	// for a plan. A mutating operation is not the plan's, so it offers none.
+	isPlan := r.PlanOperation != "" && r.Operation == r.PlanOperation
+	if r.Success && isPlan && r.Locked && r.ApplyOperation != "" {
 		lines = append(lines, fmt.Sprintf("- Apply just this project: `/turnip %s %s`", r.ApplyOperation, r.ProjectName))
 	}
 	if r.PlanOperation != "" {
