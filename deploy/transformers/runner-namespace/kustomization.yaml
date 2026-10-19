@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# For an operator separating the Runner namespace from the Server's: list
+# this in place of ../namespaces, and merge TURNIP_RUNNER_NAMESPACE into
+# turnip-server-config. It includes ../namespaces, so the subjects still
+# follow the Server namespace. A separate transformer because a
+# replacement whose source field is absent fails the build, and most
+# installs leave TURNIP_RUNNER_NAMESPACE unset.
+resources:
+  - ../namespaces
+  - runner-namespace.yaml

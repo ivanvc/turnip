@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# An operator renaming the Server namespace, Runners still beside it.
+namespace: ops
+resources:
+  - ../../../../deploy/base
+transformers:
+  - ../../../../deploy/transformers/namespaces
+configMapGenerator:
+  - name: turnip-server-config
+    behavior: merge
+    literals:
+      - TURNIP_REDIS_ADDR=redis:6379
+      - TURNIP_GITHUB_APP_ID=1
+secretGenerator:
+  - name: turnip-github-app
+    literals:
+      - webhook-secret=dummy
+      - private-key=dummy

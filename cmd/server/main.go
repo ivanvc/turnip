@@ -78,10 +78,15 @@ func run(cfg orchestrator.Config, plugins orchestrator.PluginRegistry) error {
 		return fmt.Errorf("constructing Kubernetes client: %w", err)
 	}
 
+	runnerNamespace, err := resolveRunnerNamespace(cfg.RunnerNamespace, kubernetesClientConfig())
+	if err != nil {
+		return err
+	}
+
 	orch := orchestrator.New(
 		appAuth,
 		lock.NewRedisLockManager(redisClient),
-		jobs.NewClient(clientset, cfg.KubernetesNamespace),
+		jobs.NewClient(clientset, runnerNamespace),
 		plugins,
 		cfg.Catalog,
 		redisClient,
@@ -115,13 +120,14 @@ func run(cfg orchestrator.Config, plugins orchestrator.PluginRegistry) error {
 		return fmt.Errorf("listening on %s: %w", cfg.GRPCAddr, err)
 	}
 	grpcServer := rpc.NewServer(orch,
-		rpc.WithAuthenticator(runnerauth.New(clientset, cfg.KubernetesNamespace)),
+		rpc.WithAuthenticator(runnerauth.New(clientset, runnerNamespace)),
 	)
 
 	slog.Info("server starting",
 		"http_addr", cfg.HTTPAddr,
 		"grpc_addr", grpcListener.Addr().String(),
-		"namespace", cfg.KubernetesNamespace,
+		"runner_namespace", runnerNamespace,
+		"runner_server_addr", cfg.RunnerServerAddr,
 		"log_level", cfg.LogLevel.String(),
 	)
 
@@ -207,9 +213,31 @@ func kubernetesConfig() (*rest.Config, error) {
 	if cfg, err := rest.InClusterConfig(); err == nil {
 		return cfg, nil
 	}
+	return kubernetesClientConfig().ClientConfig()
+}
+
+// kubernetesClientConfig is the deferred loading config the Server's
+// client is built from (KUBECONFIG, then ~/.kube/config), also asked for
+// the Server's own namespace.
+func kubernetesClientConfig() clientcmd.ClientConfig {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	overrides := &clientcmd.ConfigOverrides{}
-	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
+	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
+}
+
+// resolveRunnerNamespace returns set as is when non-empty, without
+// consulting kc. Otherwise it returns the namespace kc resolves (the
+// in-cluster ServiceAccount namespace, or the current kubeconfig
+// context's, or "default"). A failure names TURNIP_RUNNER_NAMESPACE.
+func resolveRunnerNamespace(set string, kc clientcmd.ClientConfig) (string, error) {
+	if set != "" {
+		return set, nil
+	}
+	ns, _, err := kc.Namespace()
+	if err != nil {
+		return "", fmt.Errorf("resolving the Server's namespace for Runner Jobs; set TURNIP_RUNNER_NAMESPACE: %w", err)
+	}
+	return ns, nil
 }
 
 // runConcurrently runs every fn concurrently, returning the first

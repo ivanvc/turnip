@@ -16,7 +16,7 @@ func envMap(overrides map[string]string) func(string) string {
 		"TURNIP_GITHUB_PRIVATE_KEY":    "fake-pem",
 		"TURNIP_GITHUB_WEBHOOK_SECRET": "secret",
 		"TURNIP_REDIS_ADDR":            "localhost:6379",
-		"TURNIP_K8S_NAMESPACE":         "turnip",
+		"TURNIP_RUNNER_NAMESPACE":      "turnip",
 		"TURNIP_HTTP_ADDR":             ":8080",
 		"TURNIP_GRPC_ADDR":             ":9090",
 		"TURNIP_RUNNER_SERVER_ADDR":    "turnip-server:9090",
@@ -39,7 +39,7 @@ func TestConfigFromEnv_FullyPopulated(t *testing.T) {
 	assert.Equal(t, []byte("fake-pem"), cfg.GitHubPrivateKey)
 	assert.Equal(t, "secret", cfg.GitHubWebhookSecret)
 	assert.Equal(t, "localhost:6379", cfg.RedisAddr)
-	assert.Equal(t, "turnip", cfg.KubernetesNamespace)
+	assert.Equal(t, "turnip", cfg.RunnerNamespace)
 	assert.Equal(t, ":8080", cfg.HTTPAddr)
 	assert.Equal(t, ":9090", cfg.GRPCAddr)
 	assert.Equal(t, "turnip-server:9090", cfg.RunnerServerAddr)
@@ -248,4 +248,19 @@ func TestConfigFromEnv_MaxCommentsPerProject(t *testing.T) {
 		assert.Contains(t, err.Error(), "TURNIP_MAX_COMMENTS_PER_PROJECT")
 		assert.Contains(t, err.Error(), `"`+bad+`"`)
 	}
+}
+
+func TestConfigFromEnv_RunnerNamespaceUnsetStaysEmpty(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(map[string]string{"TURNIP_RUNNER_NAMESPACE": ""}), NewPluginRegistry())
+	require.NoError(t, err)
+	assert.Empty(t, cfg.RunnerNamespace)
+}
+
+func TestConfigFromEnv_LegacyK8sNamespaceIgnored(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(map[string]string{
+		"TURNIP_RUNNER_NAMESPACE": "",
+		"TURNIP_K8S_NAMESPACE":    "legacy",
+	}), NewPluginRegistry())
+	require.NoError(t, err)
+	assert.Empty(t, cfg.RunnerNamespace)
 }

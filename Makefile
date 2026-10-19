@@ -121,15 +121,17 @@ test-kind:
 	docker build -f build/runner/Dockerfile -t ghcr.io/ivanvc/turnip-runner:dev .; \
 	kind load docker-image ghcr.io/ivanvc/turnip-server:dev --name $(KIND_CLUSTER); \
 	kind load docker-image ghcr.io/ivanvc/turnip-runner:dev --name $(KIND_CLUSTER); \
+	kubectl create namespace turnip-system; \
+	kubectl create namespace turnip-runners; \
 	KEY=$$(mktemp); \
 	openssl genrsa -out $$KEY 2048 2>/dev/null; \
-	kubectl create secret generic turnip-github-app \
+	kubectl create secret generic turnip-github-app -n turnip-system \
 		--from-literal=webhook-secret=test \
 		--from-file=private-key=$$KEY; \
 	rm -f $$KEY; \
-	kubectl apply -f test/load/redis.yaml; \
+	kubectl apply -n turnip-system -f test/load/redis.yaml; \
 	kubectl apply -k deploy/overlays/kind; \
-	kubectl wait --for=condition=available deployment/turnip-server --timeout=120s; \
+	kubectl wait -n turnip-system --for=condition=available deployment/turnip-server --timeout=120s; \
 	go test -tags kind -race ./test/load/... -timeout 360s
 
 lint: $(GOLANGCI_LINT)

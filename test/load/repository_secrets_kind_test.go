@@ -56,9 +56,11 @@ const (
 // Runner Pod has a clone init container and init containers change the
 // waiting reason the kubelet reports.
 func TestKind_RepositorySecretMount(t *testing.T) {
-	ns := os.Getenv("TURNIP_TEST_NAMESPACE")
+	// The Secret and the Pods live in the Runner namespace: that is where
+	// the kubelet resolves a Runner Pod's Secret volume.
+	ns := os.Getenv("TURNIP_TEST_RUNNER_NAMESPACE")
 	if ns == "" {
-		ns = "default"
+		ns = "turnip-runners"
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)

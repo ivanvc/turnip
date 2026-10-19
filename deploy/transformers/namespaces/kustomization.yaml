@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The transformer lives in a kustomization of its own because a
+# `replacements:` entry with `path:` cannot reference a file outside its
+# kustomization directory. Listing this directory under `transformers:`
+# works for local and remote paths alike.
+resources:
+  - namespaces.yaml

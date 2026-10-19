@@ -5,7 +5,7 @@ kind: Kustomization
 # committed as plain YAML): before `kubectl apply -k deploy/overlays/kind`,
 # create the Secret this overlay references by name:
 #
-#   kubectl create secret generic turnip-github-app \
+#   kubectl create secret generic turnip-github-app -n turnip-system \
 #     --from-literal=webhook-secret=<your-webhook-secret> \
 #     --from-file=private-key=<path-to-your-app-private-key.pem>
 #
@@ -16,6 +16,12 @@ kind: Kustomization
 
 resources:
   - ../../base
+
+# Separates the Runner namespace (turnip-runners, which must exist), so
+# `make test-kind` exercises the layout docs/operating/deployment.md
+# recommends rather than the base's single namespace.
+transformers:
+  - ../../transformers/runner-namespace
 
 replicas:
   - name: turnip-server
@@ -32,3 +38,4 @@ configMapGenerator:
       - TURNIP_REDIS_ADDR=redis:6379
       # Placeholder — replace with your GitHub App's real numeric ID.
       - TURNIP_GITHUB_APP_ID=0
+      - TURNIP_RUNNER_NAMESPACE=turnip-runners

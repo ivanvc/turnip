@@ -29,10 +29,13 @@ type Config struct {
 	// RedisCAPath is a PEM bundle of trusted roots for a rediss:// address,
 	// from TURNIP_REDIS_CA_PATH; empty uses the system roots. Set without a
 	// rediss:// address it is a startup error (it would verify nothing).
-	RedisCAPath         string
-	KubernetesNamespace string
-	HTTPAddr            string
-	GRPCAddr            string
+	RedisCAPath string
+	// RunnerNamespace is the namespace Runner Jobs are created in, from
+	// TURNIP_RUNNER_NAMESPACE. Optional: empty means the caller resolves
+	// the Server's own namespace.
+	RunnerNamespace string
+	HTTPAddr        string
+	GRPCAddr        string
 	// RunnerServerAddr is the address a Runner Pod dials to reach the
 	// Server's gRPC endpoint — not necessarily the same as GRPCAddr (the
 	// bind address), since a real deployment typically points Runners at
@@ -148,7 +151,7 @@ func ConfigFromEnv(env func(string) string, plugins PluginRegistry) (Config, err
 		GitHubWebhookSecret: env("TURNIP_GITHUB_WEBHOOK_SECRET"),
 		RedisAddr:           env("TURNIP_REDIS_ADDR"),
 		RedisCAPath:         env("TURNIP_REDIS_CA_PATH"),
-		KubernetesNamespace: env("TURNIP_K8S_NAMESPACE"),
+		RunnerNamespace:     env("TURNIP_RUNNER_NAMESPACE"),
 		HTTPAddr:            env("TURNIP_HTTP_ADDR"),
 		GRPCAddr:            env("TURNIP_GRPC_ADDR"),
 		RunnerServerAddr:    env("TURNIP_RUNNER_SERVER_ADDR"),
@@ -165,7 +168,6 @@ func ConfigFromEnv(env func(string) string, plugins PluginRegistry) (Config, err
 	}{
 		{"TURNIP_GITHUB_WEBHOOK_SECRET", cfg.GitHubWebhookSecret},
 		{"TURNIP_REDIS_ADDR", cfg.RedisAddr},
-		{"TURNIP_K8S_NAMESPACE", cfg.KubernetesNamespace},
 		{"TURNIP_HTTP_ADDR", cfg.HTTPAddr},
 		{"TURNIP_GRPC_ADDR", cfg.GRPCAddr},
 		{"TURNIP_RUNNER_SERVER_ADDR", cfg.RunnerServerAddr},

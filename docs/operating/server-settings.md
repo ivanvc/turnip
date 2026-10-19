@@ -16,14 +16,14 @@ one restart-and-discover-the-next-one at a time.
 | `TURNIP_REDIS_PASSWORD_PATH` | no | unset | path to a file holding the Redis AUTH password, typically a mounted Secret. Re-read for each new connection, so a rotated token needs no restart; a trailing newline is trimmed. The file must exist at startup. Recommended over the value form. Setting this and `TURNIP_REDIS_PASSWORD` is a startup error |
 | `TURNIP_REDIS_PASSWORD` | no | unset | the Redis AUTH password as a literal value. Prefer `TURNIP_REDIS_PASSWORD_PATH`; if you use this, deliver it from a Secret, never a ConfigMap. Not logged and never shown by `/readyz` |
 | `TURNIP_REDIS_CA_PATH` | no | unset | path to a PEM bundle of CA certificates that replaces the system roots when verifying a `rediss://` server. It must hold at least one certificate. Setting it with a bare or `redis://` address is a startup error |
-| `TURNIP_K8S_NAMESPACE` | yes, preset by `deploy/base` (`default`) | | namespace Runner Jobs are created in |
 | `TURNIP_HTTP_ADDR` | yes, preset by `deploy/base` (`:8080`) | | HTTP bind address (webhooks, `/healthz`, `/readyz`, `/metrics`) |
 | `TURNIP_GRPC_ADDR` | yes, preset by `deploy/base` (`:9090`) | | gRPC bind address (Runner to Server log/result streaming) |
-| `TURNIP_RUNNER_SERVER_ADDR` | yes, preset by `deploy/base` (`turnip-server:9090`) | | address a Runner Pod dials to reach this Server: a Service DNS name, not the bind address above |
+| `TURNIP_RUNNER_SERVER_ADDR` | yes, set by `deploy/base` in the Deployment's `env` (`turnip-server.<Server namespace>.svc:9090`) | | address a Runner Pod dials to reach this Server: a Service DNS name, not the bind address above. `deploy/base` builds it from the Pod's own namespace, so a value merged into the ConfigMap is ignored; to change it, patch that `env` entry (see [Choosing namespaces](deployment.md#choosing-namespaces)) |
 | `TURNIP_RUNNER_IMAGE` | yes, preset by `deploy/base` (`ghcr.io/ivanvc/turnip-runner:latest`) | | the Runner container image a deployed Server creates Jobs with |
 | `TURNIP_LOG_LEVEL` | no | `info` | [the Server's own log level](#log-level): `debug`, `info`, `warn` or `error`, case-insensitive; unset or unrecognized defaults to `info` |
 | `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` | no | `false` | collapse an older plan comment on the same pull request once a newer one supersedes it |
 | `TURNIP_MAX_COMMENTS_PER_PROJECT` | no | `5` | [the most comment bodies one project's output may take](#comment-size) in a results comment; a positive integer |
+| `TURNIP_RUNNER_NAMESPACE` | no | the Server's own namespace | namespace Runner Jobs are created in. `deploy/base` leaves it unset, so Runners run beside the Server; separating them is recommended, and with Kustomize also needs the `runner-namespace` transformer (see [Choosing namespaces](deployment.md#choosing-namespaces)) |
 | `TURNIP_RUNNER_SERVICE_ACCOUNT` | no | unset | [ServiceAccount every Runner Pod runs as](runner-access.md#which-serviceaccount): how a Runner gets cloud credentials (EKS Pod Identity/IRSA) and in-cluster API permissions. Unset leaves Pods on the namespace's `default` ServiceAccount, which normally has neither |
 | `TURNIP_CLONE_SUBMODULES` | no | `top-level` | [how far the clone initializes submodules](#clone-submodules): `none`, `top-level`, or `recursive` |
 | `TURNIP_ALLOWED_OVERRIDES` | no | permits nothing | [comma-separated list of the fields a repository's own config file may set](#allowed-overrides) |
@@ -32,11 +32,13 @@ one restart-and-discover-the-next-one at a time.
 
 "Default" is what the Server uses when the variable is unset; a
 required setting has none. "Preset by `deploy/base`" means the base's
-ConfigMap already supplies a value, so the setting is required by the
-Server but not something you must write yourself. Of those,
+ConfigMap already supplies a value, and "set by `deploy/base` in the
+Deployment's `env`" means the base's Deployment does; either way the
+setting is required by the Server but not something you must write
+yourself. Of those,
 `TURNIP_RUNNER_IMAGE` should be pinned to the same release tag as the
-Server, and `TURNIP_K8S_NAMESPACE` changed if you install outside
-`default` (see [Installing turnip](deployment.md#installing-turnip)).
+Server. To install outside the base's namespaces, see the namespace
+guidance in [Installing turnip](deployment.md#installing-turnip).
 
 In `deploy/base`, the two credential-shaped values
 (`TURNIP_GITHUB_WEBHOOK_SECRET`, `TURNIP_GITHUB_PRIVATE_KEY`) come from a

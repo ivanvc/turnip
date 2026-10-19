@@ -11,8 +11,8 @@ kind: Kustomization
 # It deliberately adds nothing else: TURNIP_REDIS_ADDR and
 # TURNIP_GITHUB_APP_ID have no sane cross-environment default (base's own
 # comment explains why), so the rendered manifest ships without them —
-# `kubectl apply -f` this and then `kubectl set env deployment/turnip-server
-# TURNIP_REDIS_ADDR=... TURNIP_GITHUB_APP_ID=...` (see
+# `kubectl apply -f` this and then `kubectl set env -n turnip-system
+# deployment/turnip-server TURNIP_REDIS_ADDR=... TURNIP_GITHUB_APP_ID=...` (see
 # docs/operating/deployment.md's "Quick install" section). Most operators
 # are better served by docs/operating/deployment.md's primary "With
 # Kustomize" section instead — a

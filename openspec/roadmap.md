@@ -17,10 +17,11 @@ new work gets a name, never a number.
 
 In the order discussed so far; reorder here.
 
-1. `fix-team-collaborators`: implemented, awaiting deploy
-2. `fix-comment-part-split`: implemented, awaiting deploy
-3. `fix-helmfile-diff-removals`: implemented, awaiting deploy
-4. `fix-apply-suggested-with-lock`: implemented, awaiting deploy
+1. `split-server-runner-namespaces`: implemented, awaiting deploy (pilot: create the Runner namespace and move the Runner ServiceAccount, grants and repository Secrets into it)
+2. `fix-team-collaborators`: implemented, awaiting deploy
+3. `fix-comment-part-split`: implemented, awaiting deploy
+4. `fix-helmfile-diff-removals`: implemented, awaiting deploy
+5. `fix-apply-suggested-with-lock`: implemented, awaiting deploy
 
 ## Open changes
 
@@ -32,7 +33,7 @@ In the order discussed so far; reorder here.
 | [`fix-lock-release-on-close`](changes/fix-lock-release-on-close/) | closing a pull request releases every Lock it holds, whatever its configuration | | proposal |
 | [`fix-invalid-config-check-on-comment`](changes/fix-invalid-config-check-on-comment/) | a comment that finds an invalid `turnip.yaml` marks the `turnip` check, as a push does | | proposal |
 | [`helmfile-hook-policy`](changes/helmfile-hook-policy/) | an operator setting that refuses helmfiles declaring hooks | | proposal |
-| [`split-server-runner-namespaces`](changes/split-server-runner-namespaces/) | the Server and its Secret in one namespace, Runner Jobs in another | | proposal |
+| [`split-server-runner-namespaces`](changes/split-server-runner-namespaces/) | the Server and its Secret in one namespace, Runner Jobs in another | | implemented |
 | [`operation-scheduling`](changes/operation-scheduling/) | a cap on how many Operations run at once, with a fair queue, and per-Project dependencies that order applies | `fix-concurrent-mutations`, `fix-invalid-config-check-on-comment`, `runner-timeouts` (in part) | proposal |
 | [`runner-server-tls`](changes/runner-server-tls/) | TLS on the Runner's gRPC channel, and a Runner that verifies the Server; where the certificate comes from is still open | | proposal |
 | [`org-images`](changes/org-images/) | the project under its organization, and multi-architecture images published on every push to `main` | | proposal |

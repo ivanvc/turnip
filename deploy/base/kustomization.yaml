@@ -1,6 +1,14 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Every namespaced resource lands in one namespace, and Runner Jobs run
+# there too (TURNIP_RUNNER_NAMESPACE is unset), so a first install needs
+# nothing else to exist. An operator renaming it lists
+# ../transformers/namespaces in their kustomization, and one separating
+# the Runner namespace lists ../transformers/runner-namespace instead;
+# see docs/operating/deployment.md.
+namespace: turnip-system
+
 resources:
   - deployment.yaml
   - service.yaml
@@ -22,8 +30,10 @@ configMapGenerator:
       - TURNIP_LOG_LEVEL=info
       - TURNIP_HTTP_ADDR=:8080
       - TURNIP_GRPC_ADDR=:9090
-      - TURNIP_K8S_NAMESPACE=default
-      - TURNIP_RUNNER_SERVER_ADDR=turnip-server:9090
+      # TURNIP_RUNNER_NAMESPACE is deliberately unset: Runner Jobs run in
+      # the Server's own namespace until an operator separates them.
+      # No TURNIP_RUNNER_SERVER_ADDR here: the Deployment builds it from
+      # its own Pod's namespace (POD_NAMESPACE).
       - TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS=false
       # TURNIP_CLONE_SUBMODULES defaults to `top-level`, which is what the
       # base wants, so it is left unset rather than restated here. Set it

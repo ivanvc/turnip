@@ -14,8 +14,10 @@ leaves Pods on the namespace's `default` ServiceAccount, which normally
 has neither.
 
 turnip creates no ServiceAccount for the Runner, so create one in the
-namespace Runner Jobs run in (`TURNIP_K8S_NAMESPACE`) and point the
-setting at it. The examples on these pages and the tool pages call it
+Runner namespace and point the setting at it. The Runner namespace is
+where Runner Jobs run: `TURNIP_RUNNER_NAMESPACE`, or the Server's own
+namespace while it is unset, as it is in `deploy/base` (see
+[Choosing namespaces](deployment.md#choosing-namespaces)). The examples on these pages and the tool pages call it
 `turnip-runner`:
 
 ```sh
@@ -71,7 +73,7 @@ from the Server (see
 [How a Runner gets its GitHub credential](#how-a-runner-gets-its-github-credential)),
 but only while the Runner's ServiceAccount can neither mint a clone
 identity nor reach into a Runner Pod. Any of these grants in the Runner
-namespace (`TURNIP_K8S_NAMESPACE`) lets that code get one:
+namespace lets that code get one:
 
 | Grant | What code in the tool container can do with it |
 |---|---|
@@ -83,14 +85,21 @@ This applies to `TURNIP_RUNNER_SERVICE_ACCOUNT` and, when
 `runner.serviceAccount` is allowed, to every ServiceAccount in the Runner
 namespace. `cluster-admin`, which
 [Helmfile's page](../plugins/helmfile.md#what-to-grant-it) recommends
-for a Runner that applies, includes all three. In `deploy/base` the
-Server runs in the Runner namespace too, so a Runner that can exec into
-Pods or read Secrets there can also reach the GitHub App's private key
-(the `turnip-github-app` Secret), which is worth more than any GitHub
-credential the Server mints. Giving a Runner any of these trusts the
-pull request's code with the GitHub App as well as with the cluster:
-that is the threat model in [`SECURITY.md`](../../SECURITY.md), and
-turnip cannot narrow it.
+for a Runner that applies, includes all three.
+
+**Until you separate the Runner namespace, these grants also reach the
+Server.** `deploy/base` leaves `TURNIP_RUNNER_NAMESPACE` unset, so
+Runners run beside the Server in `turnip-system`, and a Runner that can
+read Secrets or exec into Pods there reaches the GitHub App's private key
+(the `turnip-github-app` Secret), a key worth more than any GitHub
+credential the Server mints, and the Server Pod. Separating the Runner
+namespace, as
+[Choosing namespaces](deployment.md#choosing-namespaces) recommends,
+removes that exposure: the Runner namespace then holds nothing of the
+Server's. The grants in the table still trust the
+pull request's code with a GitHub credential for its own Operation: that
+is the threat model in [`SECURITY.md`](../../SECURITY.md), and turnip
+cannot narrow it.
 
 ## Cloud credentials
 
@@ -128,7 +137,8 @@ setting, and a repository without the Secret behaves as it always has.
 - **Name.** `turnip-repository-<id>`, where `<id>` is the repository's numeric
   GitHub id. The id survives renames and transfers, so the name does too.
   Look it up with `gh api repos/OWNER/REPO --jq .id`.
-- **Namespace.** The Runner namespace (`TURNIP_K8S_NAMESPACE`).
+- **Namespace.** The Runner namespace (`TURNIP_RUNNER_NAMESPACE`, or the
+  Server's own while it is unset).
 - **Creating it.** You create and fill it; turnip never reads, creates,
   changes or deletes a Secret, and the Server needs no permission on
   Secrets:
@@ -170,11 +180,12 @@ kubectl -n <runner-namespace> create secret generic "turnip-repository-$id" \
   another repository. This applies to `TURNIP_RUNNER_SERVICE_ACCOUNT` and,
   when `runner.serviceAccount` is allowed, to every ServiceAccount in the
   namespace.
-- **turnip's own Secret shares the namespace.** Until
-  `split-server-runner-namespaces` lands, the Runner namespace also holds
-  turnip's `turnip-github-app` Secret. A repository cannot name it (it
-  names only keys of its own Secret), but a Runner grant that reaches
-  Secrets in the namespace does. See
+- **turnip's own Secret is out of reach only once you separate the
+  Runner namespace.** `turnip-github-app` lives in the Server namespace.
+  In `deploy/base`, with `TURNIP_RUNNER_NAMESPACE` unset, that is also
+  the Runner namespace, so a grant on its Secrets reaches the GitHub
+  App's private key. Once separated, the Runner namespace holds none of
+  the Server's objects, and such a grant does not reach it. See
   [Grants that reach the GitHub credential](#grants-that-reach-the-github-credential).
 
 ## Running a custom image

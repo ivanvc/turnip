@@ -668,7 +668,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: turnip-runner
-    namespace: default   # the namespace Runner Jobs run in (TURNIP_K8S_NAMESPACE)
+    namespace: turnip-runners   # the Runner namespace: TURNIP_RUNNER_NAMESPACE, or the Server's namespace when unset
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole

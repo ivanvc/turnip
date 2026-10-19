@@ -17,20 +17,24 @@ step links to the page that explains it; this page only orders them.
    every plan a pull request is holding, which then has to plan again
    before it can apply. See
    [Prerequisites](../operating/deployment.md#prerequisites).
-3. **Choose a namespace and install turnip with Kustomize**, pointed at
-   a released version tag. `deploy/base` assumes `default`; anywhere
-   else needs `namespace:` in your `kustomization.yaml` and
-   `TURNIP_K8S_NAMESPACE` set to match. See
-   [Installing turnip](../operating/deployment.md#installing-turnip).
+3. **Create the `turnip-system` namespace and install turnip with
+   Kustomize**, pointed at a released version tag. `deploy/base` runs the
+   Server and its Runner Jobs in that one namespace; your
+   `kustomization.yaml` sets `namespace:` and lists the `namespaces`
+   transformer. Separating the Runner namespace is recommended, so that a
+   Runner's grants cannot reach the GitHub App's private key: see
+   [Choosing namespaces](../operating/deployment.md#choosing-namespaces),
+   and [Installing turnip](../operating/deployment.md#installing-turnip)
+   for the rest.
 4. **Set the required settings**: `TURNIP_REDIS_ADDR`,
    `TURNIP_GITHUB_APP_ID`, the GitHub App credentials from step 1, and
    `TURNIP_RUNNER_IMAGE` pinned to the same release tag as the Server.
    The other required settings come preset by `deploy/base`, and the rest
    are optional; see [Server settings](../operating/server-settings.md).
-5. **Create a ServiceAccount for the Runner** in turnip's namespace, set
+5. **Create a ServiceAccount for the Runner** in the Runner namespace, set
    `TURNIP_RUNNER_SERVICE_ACCOUNT` to its name, and grant it whatever
    your infrastructure projects need. Left unset, Runners run as the
-   namespace's `default` ServiceAccount. turnip ships no ServiceAccount
+   Runner namespace's `default` ServiceAccount. turnip ships no ServiceAccount
    and no RBAC for the Runner, deliberately: what it needs depends on the
    tool your projects run. See
    [Which ServiceAccount](../operating/runner-access.md#which-serviceaccount)

@@ -108,9 +108,19 @@ deliberate edit to this file, not something that happens underneath you:
 
 ```yaml
 # kustomization.yaml
+namespace: turnip-system
 resources:
   - github.com/ivanvc/turnip//deploy/base?ref=vX.Y.Z
+transformers:
+  - github.com/ivanvc/turnip//deploy/transformers/namespaces?ref=vX.Y.Z
 ```
+
+The `namespace:` and `transformers:` lines are both required, even if you
+keep the default name. Create the namespace before you apply
+(`kubectl create namespace turnip-system`). Out of the box the Server and
+its Runner Jobs share it; separating the Runner namespace is recommended
+and changes two lines. See [Choosing namespaces](#choosing-namespaces)
+below for both.
 
 **Step 2**: set your Server's own image tag to match, and three
 ConfigMap values: the two that have no sane shared default (every
@@ -141,26 +151,118 @@ Runner's ServiceAccount or its submodule depth) and `TURNIP_ALLOWED_IMAGES`
 as one with a cloud CLI added). Add them to the same `literals:` only
 after reading what each costs in [`SECURITY.md`](../../SECURITY.md).
 
-**Choosing a namespace.** `deploy/base` sets no namespace of its own, and
-assumes `default`: it presets `TURNIP_K8S_NAMESPACE=default` (where
-Runner Jobs are created, which must be the namespace the Server's Role is
-in), and its TokenReview ClusterRoleBinding names the Server's
-ServiceAccount in `default`. To install anywhere else, set `namespace:`
-in your `kustomization.yaml`, which Kustomize applies to every resource
-and to that binding's subject, and set `TURNIP_K8S_NAMESPACE` to the same
-value in the `literals:` above: Kustomize does not rewrite a ConfigMap
-value.
+#### Choosing namespaces
+
+Out of the box, turnip uses one namespace, `turnip-system`. The Server
+(its Deployment, Service, ServiceAccount and ConfigMap), your
+`turnip-github-app` Secret, the Server's Role and RoleBinding, and the
+Runner Jobs all run there: `deploy/base` leaves `TURNIP_RUNNER_NAMESPACE`
+unset, so the Server creates Runner Jobs in its own namespace. turnip
+does not create the namespace:
+
+```sh
+kubectl create namespace turnip-system
+```
+
+**Both lines in your `kustomization.yaml` are required**, even with the
+default name:
+
+- `namespace:` puts everything, including the Secret your
+  `secretGenerator` makes, beside the Deployment. Without it, the Secret
+  has no namespace and lands wherever `kubectl` points.
+- The `namespaces` transformer points the subjects of the Server's
+  RoleBinding and ClusterRoleBinding at the namespace its ServiceAccount
+  ends up in. A `namespace:` in your kustomization moves every resource
+  but leaves those subjects naming `turnip-system`, the base's namespace.
+  With the default name that changes nothing, and the line is there so
+  that renaming later is a one-word edit rather than a second step that
+  is easy to miss. It reads no setting.
+
+**Renaming the namespace.** Edit `namespace:`, create the new namespace,
+and keep the `namespaces` line:
 
 ```yaml
-namespace: turnip
+namespace: ops
+resources:
+  - github.com/ivanvc/turnip//deploy/base?ref=vX.Y.Z
+transformers:
+  - github.com/ivanvc/turnip//deploy/transformers/namespaces?ref=vX.Y.Z
+```
 
+The Server, its Role and RoleBinding, and the Runner Jobs all move to
+`ops`, and both bindings' subjects follow.
+
+**Separating the Runner namespace (recommended).** A Runner runs a pull
+request's code, and an operator often gives its ServiceAccount broad
+rights in its own namespace. While Runners share the Server's namespace,
+a Runner ServiceAccount granted `get` on Secrets or `exec` on Pods there
+reaches the `turnip-github-app` Secret, which holds the GitHub App's
+private key, and the Server Pod. With the Runners in a namespace of their
+own, that namespace holds nothing of the Server's, and the same grants
+reach neither. See
+[Runner access](runner-access.md#grants-that-reach-the-github-credential)
+for what a Runner's grants mean.
+
+Separating changes two lines of your kustomization: merge
+`TURNIP_RUNNER_NAMESPACE` into the Server's ConfigMap, and list the
+`runner-namespace` transformer in place of `namespaces`:
+
+```yaml
+namespace: turnip-system
+resources:
+  - github.com/ivanvc/turnip//deploy/base?ref=vX.Y.Z
+transformers:
+  - github.com/ivanvc/turnip//deploy/transformers/runner-namespace?ref=vX.Y.Z
 configMapGenerator:
   - name: turnip-server-config
     behavior: merge
     literals:
       # ...the values from step 2, plus:
-      - TURNIP_K8S_NAMESPACE=turnip
+      - TURNIP_RUNNER_NAMESPACE=turnip-runners
 ```
+
+Create the Runner namespace before you apply. turnip does not create it:
+it is where you attach your own policies, quotas and cloud identity
+bindings, and its lifetime should not be tied to turnip's manifests.
+
+```sh
+kubectl create namespace turnip-runners
+```
+
+`runner-namespace` does what `namespaces` does and also moves the
+Server's Role and RoleBinding into `TURNIP_RUNNER_NAMESPACE`, so the
+Server's permissions on Jobs and Pods are granted there and nowhere in
+its own namespace. The Runner's ServiceAccount and your repositories'
+Secrets go in the Runner namespace too (see
+[Runner access](runner-access.md)). Any names work: `namespace: ops` with
+`TURNIP_RUNNER_NAMESPACE=ops-runners` separates the same way.
+
+**A missing or wrong transformer line** shows up only when the Server
+first creates a Runner Job, as a Forbidden error (see
+[Troubleshooting](troubleshooting.md#forbidden-creating-a-runner-job)),
+except for the last case below, which fails the build:
+
+- **A renamed `namespace:` with no transformer line.** Both bindings'
+  subjects still name `turnip-system`, so the Server is forbidden from
+  creating Runner Jobs, and from the token reviews that authenticate a
+  Runner.
+- **A separated Runner namespace with `namespaces` instead of
+  `runner-namespace`.** The Role and RoleBinding stay in the Server
+  namespace, so the Server is forbidden from creating Jobs in the Runner
+  namespace.
+- **`runner-namespace` without `TURNIP_RUNNER_NAMESPACE`.** `kubectl
+  apply -k` fails with ``fieldPath `data.TURNIP_RUNNER_NAMESPACE` is
+  missing``. Merge the setting, or list `namespaces` instead.
+
+**The Runner's address follows the Server namespace.** The Deployment
+sets `TURNIP_RUNNER_SERVER_ADDR` from the Pod's own namespace
+(`turnip-server.<namespace>.svc:9090`, using the Downward API), so
+renaming the Server namespace needs no edit. The ConfigMap does not carry
+the address, and a value merged into it is ignored, because the
+Deployment's `env` wins over the ConfigMap. To point Runners somewhere
+else, patch the `TURNIP_RUNNER_SERVER_ADDR` entry in the Deployment's
+`env`. The Server logs the address at startup (`runner_server_addr`), and
+the Runner namespace it resolved (`runner_namespace`).
 
 **Step 3**: generate the GitHub App credentials Secret from local files:
 `files:`, not `literals:`, for both, so the actual secret material never
@@ -206,24 +308,25 @@ apply time, so the two required ConfigMap values and the credentials
 Secret have to be layered on afterward:
 
 ```sh
-kubectl set env deployment/turnip-server \
+kubectl create namespace turnip-system
+
+kubectl set env deployment/turnip-server -n turnip-system \
   TURNIP_REDIS_ADDR=<your-redis-host>:6379 \
   TURNIP_GITHUB_APP_ID=<your-github-app-id>
 
-kubectl create secret generic turnip-github-app \
+kubectl create secret generic turnip-github-app -n turnip-system \
   --from-literal=webhook-secret=<your-webhook-secret> \
   --from-file=private-key=<path-to-your-app-private-key.pem>
 ```
 
-Order doesn't matter between the three commands above: the Pod won't
-come up `Ready` until all of it is in place, and it'll retry on its own
-until then.
+Create the namespace first; after that, order doesn't matter between the
+other commands above: the Pod won't come up `Ready` until all of it is in
+place, and it'll retry on its own until then.
 
-The single file assumes the `default` namespace, as `deploy/base` does
-(see "Choosing a namespace" under
-[With Kustomize](#with-kustomize-recommended)), so apply
-it and run the commands above with `-n default`, or use the Kustomize
-path to install anywhere else.
+The single file uses one namespace, `turnip-system`, as `deploy/base`
+does, and runs Runner Jobs beside the Server. Use the Kustomize path to
+install under another name or to separate the Runner namespace, which is
+recommended (see [Choosing namespaces](#choosing-namespaces)).
 
 ## Connecting to ElastiCache
 
@@ -268,11 +371,11 @@ node-based replication group with cluster mode disabled.
 
 The Server exposes `/healthz` (always 200 once the process is up) and
 `/readyz` (200 only when it can currently reach Redis). Port-forward and
-check both (add `-n <namespace>` to every `kubectl` command here if you
-installed outside your current namespace):
+check both (add `-n turnip-system`, or your Server namespace, to every
+`kubectl` command here):
 
 ```sh
-kubectl port-forward svc/turnip-server 8080:8080 &
+kubectl port-forward -n turnip-system svc/turnip-server 8080:8080 &
 curl -i localhost:8080/healthz   # expect: HTTP/1.1 200 OK
 curl -i localhost:8080/readyz    # expect: HTTP/1.1 200 OK once Redis is reachable
 ```
@@ -344,8 +447,12 @@ Two grants, in `deploy/base`:
 
 | Scope | Grant | Why |
 |---|---|---|
-| Namespaced (`Role`) | `jobs` create/delete/get/list/watch, `pods` get/list | dispatching Runners, diagnosing ones that never start, and resolving which Pod belongs to which operation |
+| Namespaced (`Role`, in the Runner namespace: the Server's own unless you [separate it](#choosing-namespaces)) | `jobs` create/delete/get/list/watch, `pods` get/list | dispatching Runners, diagnosing ones that never start, and resolving which Pod belongs to which operation |
 | Cluster (`ClusterRole`) | `tokenreviews` create | validating a Runner identity against turnip's two audiences (clone and report) |
+
+Both are bound to the Server's ServiceAccount in the Server namespace.
+Once the Runner namespace is separated, the Server holds no grant in its
+own namespace.
 
 The `tokenreviews` grant is turnip's only cluster-scoped ask, and it has
 to be: `TokenReview` is a cluster-scoped API, so the permission to create
@@ -407,7 +514,7 @@ state lives in Redis, so there's no coordination between replicas to
 configure:
 
 ```sh
-kubectl scale deployment/turnip-server --replicas=3
+kubectl scale -n turnip-system deployment/turnip-server --replicas=3
 ```
 
 No replica owns a pull request's work. What a trigger (an automatic

@@ -7,11 +7,10 @@ roleRef:
   kind: ClusterRole
   name: turnip-server-token-review
 subjects:
-  # Spelled out because a ClusterRoleBinding is cluster-scoped: unlike the
-  # namespaced RoleBinding, there is no surrounding namespace for this
-  # subject to inherit. Installing turnip elsewhere means setting
-  # `namespace:` in your own kustomization, which kustomize propagates to
-  # this subject along with everything else.
+  # Spelled out because a ClusterRoleBinding is cluster-scoped: there is no
+  # surrounding namespace for this subject to inherit. Kustomize does not
+  # rename it for a `namespace:`; the namespaces transformer sets it from
+  # the ServiceAccount's namespace.
   - kind: ServiceAccount
     name: turnip-server
-    namespace: default
+    namespace: turnip-system

@@ -27,6 +27,12 @@ spec:
             - configMapRef:
                 name: turnip-server-config
           env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: TURNIP_RUNNER_SERVER_ADDR
+              value: turnip-server.$(POD_NAMESPACE).svc:9090
             - name: TURNIP_GITHUB_WEBHOOK_SECRET
               valueFrom:
                 secretKeyRef:

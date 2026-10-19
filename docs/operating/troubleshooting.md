@@ -39,6 +39,31 @@ or nothing happens for several minutes before a timeout is reported.
   cluster. Check the Server's own ServiceAccount has the permissions
   `deploy/base/role.yaml` grants (Jobs create/delete/get/list/watch, Pods
   get/list) and that the namespace isn't at a resource quota limit.
+- <a id="forbidden-creating-a-runner-job"></a>**`jobs.batch is forbidden`
+  when creating a Runner Job** (the message names the Server's
+  ServiceAccount and a namespace): the Server may not create Jobs in the
+  Runner namespace. Three causes, all in your `kustomization.yaml` (see
+  [Choosing namespaces](deployment.md#choosing-namespaces)):
+  - **You renamed `namespace:` without a transformer line.** Both
+    bindings' subjects still name `turnip-system`, so the Server may not
+    create Jobs, and its token reviews are forbidden as well: it logs
+    `token review failed` with
+    `tokenreviews.authentication.k8s.io is forbidden` and refuses every
+    Runner stream. List the `namespaces` transformer under
+    `transformers:`; that fixes both.
+  - **You separated the Runner namespace but list `namespaces` instead
+    of `runner-namespace`.** The Role and RoleBinding stay in the Server
+    namespace. List `runner-namespace` in its place.
+  - **`TURNIP_RUNNER_NAMESPACE` names a namespace other than the one the
+    Role is in**, or one that does not exist. The Server's startup line
+    shows `runner_namespace`; check that
+    `kubectl get role,rolebinding -n <that namespace>` lists
+    `turnip-server`, and that the namespace exists.
+
+  The opposite mistake, `runner-namespace` with no
+  `TURNIP_RUNNER_NAMESPACE` merged, never reaches the cluster: the build
+  fails with ``fieldPath `data.TURNIP_RUNNER_NAMESPACE` is missing``.
+  Merge the setting, or list `namespaces` instead.
 - **Timeout ("didn't start within 5 minutes")**: the Job never got a Pod
   scheduled, or the Pod never reached the Server over gRPC in time. Check
   `kubectl get pods` in the Runner namespace for `Pending`/`ImagePullBackOff`

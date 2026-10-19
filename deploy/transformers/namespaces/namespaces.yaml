@@ -1,0 +1,19 @@
+# Points both bindings' turnip-server subject at the namespace the
+# ServiceAccount ended up in. A `namespace:` in an operator's
+# kustomization moves the bindings but leaves their subjects naming the
+# base's namespace, so an operator who sets one lists this transformer
+# after it. It reads no setting, so it is safe in every install.
+apiVersion: builtin
+kind: ReplacementTransformer
+metadata:
+  name: turnip-namespaces
+replacements:
+  - source:
+      kind: ServiceAccount
+      name: turnip-server
+      fieldPath: metadata.namespace
+    targets:
+      - select: {kind: RoleBinding, name: turnip-server}
+        fieldPaths: ["subjects.[name=turnip-server].namespace"]
+      - select: {kind: ClusterRoleBinding, name: turnip-server-token-review}
+        fieldPaths: ["subjects.[name=turnip-server].namespace"]

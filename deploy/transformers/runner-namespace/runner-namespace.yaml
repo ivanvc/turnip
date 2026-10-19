@@ -1,0 +1,17 @@
+# Moves the Server's Role and RoleBinding into TURNIP_RUNNER_NAMESPACE,
+# where Runner Jobs are created, after the operator's `namespace:` has
+# put them beside the Server.
+apiVersion: builtin
+kind: ReplacementTransformer
+metadata:
+  name: turnip-runner-namespace
+replacements:
+  - source:
+      kind: ConfigMap
+      name: turnip-server-config
+      fieldPath: data.TURNIP_RUNNER_NAMESPACE
+    targets:
+      - select: {kind: Role, name: turnip-server}
+        fieldPaths: [metadata.namespace]
+      - select: {kind: RoleBinding, name: turnip-server}
+        fieldPaths: [metadata.namespace]
