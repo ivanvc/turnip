@@ -105,7 +105,7 @@ Known issue: a push invalidates only the plans of Projects the automatic plan ma
 - **THEN** the Lock stays `plan_ready` and an apply replays the plan recorded on the earlier commit
 
 ### Requirement: The plan record
-When a plan succeeds with something to apply, the Lock SHALL record, alongside the move to `plan_ready`: the arguments the plan ran with (as the Runner received them), the plan artifact the Runner returned (which may be empty, as for Helmfile), the plan's add, change and destroy counts, and the sha256 digest of the image the plan's Pod ran. The digest SHALL be read from the plan's Pod when the result arrives; when it cannot be read it SHALL be recorded as empty and the plan still succeeds. No other event SHALL write the plan record. What a mutating command does with the recorded digest is the `tool-images` capability's.
+When a plan succeeds with something to apply, the Lock SHALL record, alongside the move to `plan_ready`: the arguments the plan ran with (as the Runner received them), the plan artifact the Runner returned (which may be empty, as for Helmfile), the plan's add, change and destroy counts, whether those counts were reported (see the `plugins` capability), and the sha256 digest of the image the plan's Pod ran. The digest SHALL be read from the plan's Pod when the result arrives; when it cannot be read it SHALL be recorded as empty and the plan still succeeds. No other event SHALL write the plan record. What a mutating command does with the recorded digest is the `tool-images` capability's.
 
 #### Scenario: A scoped plan is recorded
 - **WHEN** `/helmfile diff web -- -l name=api` succeeds with changes
@@ -114,6 +114,10 @@ When a plan succeeds with something to apply, the Lock SHALL record, alongside t
 #### Scenario: The digest cannot be read
 - **WHEN** a plan succeeds but its Pod is gone before the digest is read
 - **THEN** the Lock moves to `plan_ready` with an empty digest
+
+#### Scenario: A plan whose counts were not reported
+- **WHEN** `/helmfile diff web -- -q` succeeds, so its counts are not reported, and `/helmfile apply web` then replays it
+- **THEN** the Lock records that the counts were not reported, and the apply's running check is titled `running the recorded plan, succeeded, -q`, never `no changes`
 
 ### Requirement: Admitting a mutating command
 A mutating command (any Operation other than the tool's plan) SHALL run only when the requesting pull request holds the Project's Lock in state `plan_ready` with a non-empty recorded image digest. It SHALL then run with the recorded arguments and plan artifact, and its check SHALL show the recorded counts while it runs (see the `project-checks` capability). Otherwise it SHALL be refused before any Runner Job or check is created, leaving the Lock and the `turnip` check unchanged, with one of these reasons in the Project's row of the results comment:
