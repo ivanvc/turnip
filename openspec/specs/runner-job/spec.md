@@ -6,11 +6,11 @@ Defines the Kubernetes Job and Pod the Server creates for each Operation: its co
 ## Requirements
 
 ### Requirement: One Job per Operation
-The Server SHALL create exactly one Kubernetes Job for each dispatched Operation, in the namespace named by `TURNIP_K8S_NAMESPACE`, with a name generated from the prefix `turnip-runner-`. The Job SHALL carry the labels `app.kubernetes.io/name: turnip-runner`, `turnip.ivan.vc/operation-id` (the Operation's id) and `turnip.ivan.vc/project` (the Project's name as written, unaltered). The Server SHALL NOT create the Job when the Operation is refused before dispatch (see the `locking`, `authorization` and `runner-access` capabilities).
+The Server SHALL create exactly one Kubernetes Job for each dispatched Operation, in the Runner namespace (`TURNIP_RUNNER_NAMESPACE`, or the Server's own namespace when it is unset; see the `server` capability), with a name generated from the prefix `turnip-runner-`. The Job SHALL carry the labels `app.kubernetes.io/name: turnip-runner`, `turnip.ivan.vc/operation-id` (the Operation's id) and `turnip.ivan.vc/project` (the Project's name as written, unaltered). The Server SHALL NOT create the Job when the Operation is refused before dispatch (see the `locking`, `authorization` and `runner-access` capabilities).
 
 #### Scenario: A plan for one Project
 - **WHEN** a plan for Project `web` is dispatched
-- **THEN** one Job named `turnip-runner-<suffix>` is created in the `TURNIP_K8S_NAMESPACE` namespace
+- **THEN** one Job named `turnip-runner-<suffix>` is created in the Runner namespace
 - **AND** it is labeled `app.kubernetes.io/name=turnip-runner`, `turnip.ivan.vc/operation-id=<operation id>` and `turnip.ivan.vc/project=web`
 
 #### Scenario: Several Projects in one trigger

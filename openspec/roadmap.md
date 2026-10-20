@@ -17,7 +17,7 @@ new work gets a name, never a number.
 
 In the order discussed so far; reorder here.
 
-1. `split-server-runner-namespaces`: implemented, awaiting deploy (pilot: create the Runner namespace and move the Runner ServiceAccount, grants and repository Secrets into it)
+1. `fix-single-config-surface`: proposal, in review
 2. `fix-team-collaborators`: implemented, awaiting deploy
 3. `fix-comment-part-split`: implemented, awaiting deploy
 4. `fix-helmfile-diff-removals`: implemented, awaiting deploy
@@ -33,21 +33,20 @@ In the order discussed so far; reorder here.
 | [`fix-lock-release-on-close`](changes/fix-lock-release-on-close/) | closing a pull request releases every Lock it holds, whatever its configuration | | proposal |
 | [`fix-invalid-config-check-on-comment`](changes/fix-invalid-config-check-on-comment/) | a comment that finds an invalid `turnip.yaml` marks the `turnip` check, as a push does | | proposal |
 | [`helmfile-hook-policy`](changes/helmfile-hook-policy/) | an operator setting that refuses helmfiles declaring hooks | | proposal |
-| [`split-server-runner-namespaces`](changes/split-server-runner-namespaces/) | the Server and its Secret in one namespace, Runner Jobs in another | | implemented |
 | [`operation-scheduling`](changes/operation-scheduling/) | a cap on how many Operations run at once, with a fair queue, and per-Project dependencies that order applies | `fix-concurrent-mutations`, `fix-invalid-config-check-on-comment`, `runner-timeouts` (in part) | proposal |
 | [`runner-server-tls`](changes/runner-server-tls/) | TLS on the Runner's gRPC channel, and a Runner that verifies the Server; where the certificate comes from is still open | | proposal |
 | [`org-images`](changes/org-images/) | the project under its organization, and multi-architecture images published on every push to `main` | | proposal |
 | [`fix-comment-part-split`](changes/fix-comment-part-split/) | an output part ends at a whole line, never inside a line or a character | | implemented; archived once deployed |
 | [`fix-helmfile-diff-removals`](changes/fix-helmfile-diff-removals/) | a Helmfile plan counts the releases it will remove | | implemented; archived once a plan removing a release reads -1 |
 | [`fix-apply-suggested-with-lock`](changes/fix-apply-suggested-with-lock/) | a plan whose Lock is held offers the apply; an apply never offers itself again | | implemented; archived once deployed |
+| [`fix-single-config-surface`](changes/fix-single-config-surface/) | settings in one ConfigMap, secret material in one Secret, no Deployment patches, under Kustomize and Helmfile alike | | proposal |
 | [`fix-team-collaborators`](changes/fix-team-collaborators/) | an author with access through a team may trigger commands; a failed permission check says so | | implemented; archived once the refused author's diff runs |
 
 Changes that overlap without depending on each other are best done
 one at a time: `fix-plan-survives-push`, `fix-lock-release-on-close` and
-`fix-concurrent-mutations` all change the Lock's transitions;
-`split-server-runner-namespaces` before `runner-server-tls`, which has to
-reach the Runner's namespace; and `org-images`, which changes every Go
-file, when nothing else is in flight. Each proposal's Dependencies
+`fix-concurrent-mutations` all change the Lock's transitions; and
+`org-images`, which changes every Go file, when nothing else is in
+flight. Each proposal's Dependencies
 section says why.
 
 ## Planned work without a change yet
@@ -127,3 +126,14 @@ is still fresh at apply).
 - The tests that need a real Redis do not run in CI: `ha_test.go` is
   skipped unless `TURNIP_TEST_REDIS_ADDR` is set, which let its fakes
   rot unnoticed until 2026-10-13
+- A Helm chart whose values file is turnip's configuration surface:
+  decided against until turnip has a beta, since releasing a chart
+  adds work (2026-10-19, raised by `fix-single-config-surface`)
+- The Runner image following the Server's version, so a deployment
+  states turnip's version once rather than in the Server image and
+  `TURNIP_RUNNER_IMAGE` (raised 2026-10-19)
+- The operator docs warn that separating the Runner namespace reaches
+  the cloud identity bindings: an EKS Pod Identity association and any
+  `kubernetes-namespace` condition in its role's trust policy, GKE
+  Workload Identity, Azure federated credentials, IRSA's `sub` claim
+  (found 2026-10-19 at the pilot's namespace move)

@@ -6,7 +6,7 @@ Defines how the turnip Server process is configured, starts, serves GitHub webho
 ## Requirements
 
 ### Requirement: Settings loader
-The Server SHALL read its configuration once, at startup, from environment variables, and SHALL NOT reload it while running. An empty value SHALL count as unset. These settings SHALL be required, and every unset one SHALL be named together in a single startup error (`missing required environment variable(s): <names>`): `TURNIP_GITHUB_APP_ID`, `TURNIP_GITHUB_WEBHOOK_SECRET`, `TURNIP_REDIS_ADDR`, `TURNIP_K8S_NAMESPACE`, `TURNIP_HTTP_ADDR`, `TURNIP_GRPC_ADDR`, `TURNIP_RUNNER_SERVER_ADDR`, `TURNIP_RUNNER_IMAGE`, and one of `TURNIP_GITHUB_PRIVATE_KEY` (inline PEM) or `TURNIP_GITHUB_PRIVATE_KEY_PATH` (a file holding the PEM). When both key settings are set, `TURNIP_GITHUB_PRIVATE_KEY_PATH` SHALL be used. A malformed value SHALL stop the Server from starting with an error naming the setting; this includes a non-integer `TURNIP_GITHUB_APP_ID`, an unreadable key file, a `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` that is not a boolean, and an unrecognized value of any enumerated setting (`TURNIP_CLONE_SUBMODULES`, `TURNIP_ALLOWED_OVERRIDES`, `TURNIP_MUTATION_REQUIREMENTS`, `TURNIP_ALLOWED_IMAGES`). The one exception SHALL be `TURNIP_LOG_LEVEL`, where an unrecognized value falls back to `info`. A non-integer `TURNIP_GITHUB_APP_ID` or an unreadable key file SHALL be reported on its own, without the list of unset settings. The remaining values SHALL be checked only once no required setting is unset, and the first malformed one SHALL be reported on its own.
+The Server SHALL read its configuration once, at startup, from environment variables, and SHALL NOT reload it while running. An empty value SHALL count as unset. These settings SHALL be required, and every unset one SHALL be named together in a single startup error (`missing required environment variable(s): <names>`): `TURNIP_GITHUB_APP_ID`, `TURNIP_GITHUB_WEBHOOK_SECRET`, `TURNIP_REDIS_ADDR`, `TURNIP_HTTP_ADDR`, `TURNIP_GRPC_ADDR`, `TURNIP_RUNNER_SERVER_ADDR`, `TURNIP_RUNNER_IMAGE`, and one of `TURNIP_GITHUB_PRIVATE_KEY` (inline PEM) or `TURNIP_GITHUB_PRIVATE_KEY_PATH` (a file holding the PEM). When both key settings are set, `TURNIP_GITHUB_PRIVATE_KEY_PATH` SHALL be used. When `TURNIP_RUNNER_NAMESPACE` is unset, the Runner namespace SHALL be the namespace the Server runs in: in a cluster, `POD_NAMESPACE` when set, otherwise the namespace of the Server's ServiceAccount; outside one, the namespace of the current kubeconfig context, or `default` when it names none. The Server SHALL log the Runner namespace it resolved at startup. A malformed value SHALL stop the Server from starting with an error naming the setting; this includes a non-integer `TURNIP_GITHUB_APP_ID`, an unreadable key file, a `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` that is not a boolean, and an unrecognized value of any enumerated setting (`TURNIP_CLONE_SUBMODULES`, `TURNIP_ALLOWED_OVERRIDES`, `TURNIP_MUTATION_REQUIREMENTS`, `TURNIP_ALLOWED_IMAGES`). The one exception SHALL be `TURNIP_LOG_LEVEL`, where an unrecognized value falls back to `info`. A non-integer `TURNIP_GITHUB_APP_ID` or an unreadable key file SHALL be reported on its own, without the list of unset settings. The remaining values SHALL be checked only once no required setting is unset, and the first malformed one SHALL be reported on its own.
 
 #### Scenario: Several required settings missing
 - **WHEN** the Server starts with `TURNIP_REDIS_ADDR` and `TURNIP_GITHUB_APP_ID` unset
@@ -24,6 +24,14 @@ The Server SHALL read its configuration once, at startup, from environment varia
 - **WHEN** `TURNIP_LOG_LEVEL=verbose`
 - **THEN** the Server starts and logs at `info`
 
+#### Scenario: Runner namespace omitted
+- **WHEN** a Server running in namespace `turnip-system` starts with `TURNIP_RUNNER_NAMESPACE` unset
+- **THEN** it creates Runner Jobs in `turnip-system` and logs that namespace at startup
+
+#### Scenario: The old namespace setting
+- **WHEN** a Server is started with `TURNIP_K8S_NAMESPACE=ops-runners` and `TURNIP_RUNNER_NAMESPACE` unset
+- **THEN** it ignores `TURNIP_K8S_NAMESPACE` and creates Runner Jobs in its own namespace
+
 ### Requirement: Settings index
 Every `TURNIP_*` setting the Server reads SHALL be one of those below, with its behavior owned by the named capability:
 
@@ -37,7 +45,7 @@ Every `TURNIP_*` setting the Server reads SHALL be one of those below, with its 
 | `TURNIP_REDIS_CA_PATH` | no | `server` |
 | `TURNIP_HTTP_ADDR` | yes | `server` |
 | `TURNIP_GRPC_ADDR` | yes | `server` |
-| `TURNIP_K8S_NAMESPACE` | yes | `runner-job` |
+| `TURNIP_RUNNER_NAMESPACE` | no (the Server's own namespace) | `runner-job` |
 | `TURNIP_RUNNER_SERVER_ADDR` | yes | `runner-job` |
 | `TURNIP_RUNNER_IMAGE` | yes | `runner-job` |
 | `TURNIP_LOG_LEVEL` | no | `observability` |
