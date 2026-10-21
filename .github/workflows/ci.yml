@@ -46,6 +46,9 @@ jobs:
 
       - name: Install kubectl
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        with:
+          # Keep equal to kubectl in .tool-versions.
+          version: v1.37.1
 
       - name: Validate Kustomize manifests
         run: make manifests-check
