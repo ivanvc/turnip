@@ -387,18 +387,3 @@ func TestResolveTargets_StarReachesPathShapedNames(t *testing.T) {
 	assert.Equal(t, []string{"gcp/vpc", "gcp/gke", "aws/vpc"}, names(targets),
 		`"*" must reach every project, including those whose names contain a separator`)
 }
-
-func TestResolveUnlockCandidates_SkipsOperationValidation(t *testing.T) {
-	cfg := testConfig()
-	candidates, err := resolveUnlockCandidates(cfg, &github.TriggerCommand{Tool: "turnip", Operation: "unlock"})
-	require.NoError(t, err)
-	assert.Len(t, candidates, 3)
-}
-
-func TestResolveUnlockCandidates_NamedProjectNarrows(t *testing.T) {
-	cfg := testConfig()
-	candidates, err := resolveUnlockCandidates(cfg, &github.TriggerCommand{Tool: "turnip", Operation: "unlock", Projects: []string{"helm-a"}})
-	require.NoError(t, err)
-	require.Len(t, candidates, 1)
-	assert.Equal(t, "helm-a", candidates[0].Name)
-}

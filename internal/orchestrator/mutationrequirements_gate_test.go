@@ -197,6 +197,7 @@ func TestMutationRequirementsGate_PlanRunsAndAsksNothing(t *testing.T) {
 // the requirements, so it is never gated.
 func TestMutationRequirementsGate_UnlockRuns(t *testing.T) {
 	f := newGateFixture(t, validTurnipYAML, boolPtr(false))
+	f.locks.listLocksFunc = listHeld(map[string]int{"helm-a": 42})
 
 	require.NoError(t, callHandleIssueComment(f.o, f.client, commentEvent("/turnip unlock", "alice")))
 

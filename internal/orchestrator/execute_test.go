@@ -33,6 +33,7 @@ type fakeLockManager struct {
 	releaseLockFunc   func(ctx context.Context, projectKey string, prNumber int) error
 	getLockStatusFunc func(ctx context.Context, projectKey string) (*lock.LockStatus, error)
 	isLockedByPRFunc  func(ctx context.Context, projectKey string, prNumber int) (bool, error)
+	listLocksFunc     func(ctx context.Context, keyPrefix string) ([]lock.ListedLock, error)
 
 	acquireForPlanFunc func(ctx context.Context, projectKey string, prNumber int, url, lockedBy string) (bool, lock.Transition, error)
 	applyFunc          func(ctx context.Context, projectKey string, prNumber int, ev lock.Event, plan *lock.PlanRecord) (lock.Transition, error)
@@ -191,6 +192,24 @@ func (f *fakeLockManager) IsLockedByPR(ctx context.Context, projectKey string, p
 		return f.isLockedByPRFunc(ctx, projectKey, prNumber)
 	}
 	return true, nil
+}
+
+// ListLocks returns the Locks the fake models whose key begins with
+// keyPrefix, unless listLocksFunc scripts it.
+func (f *fakeLockManager) ListLocks(ctx context.Context, keyPrefix string) ([]lock.ListedLock, error) {
+	if f.listLocksFunc != nil {
+		return f.listLocksFunc(ctx, keyPrefix)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []lock.ListedLock
+	for key, state := range f.states {
+		if strings.HasPrefix(key, keyPrefix) {
+			out = append(out, lock.ListedLock{ProjectKey: key, Status: lock.LockStatus{Locked: true, PRNumber: 99, State: state}})
+		}
+	}
+	return out, nil
 }
 
 var _ lock.LockManager = (*fakeLockManager)(nil)

@@ -52,6 +52,10 @@ error with a line number, instead of a plan.
   `directory`). Fix that project's entry. Every one of these fails the
   `turnip` check as `invalid turnip.yaml`.
 
+`/turnip unlock` still works while the configuration is missing or
+invalid, since it never reads the file. If a broken change left a plan's
+lock held, comment `/turnip unlock` to release it, then fix the file.
+
 ## Lock contention
 
 **Symptom**: a PR comment saying a project is locked by another PR,

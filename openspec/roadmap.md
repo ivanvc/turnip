@@ -17,10 +17,11 @@ new work gets a name, never a number.
 
 In the order discussed so far; reorder here.
 
-1. `fix-single-config-surface`: proposal, in review
-2. `fix-team-collaborators`: implemented, awaiting deploy
-3. `fix-comment-part-split`: implemented, awaiting deploy
-4. `fix-apply-suggested-with-lock`: implemented, awaiting deploy
+1. `fix-single-config-surface`: specs drafted, in review; design next
+2. `fix-unlock-without-config`: implemented, awaiting deploy (then unlock the blocked pilot pull request)
+3. `fix-rendered-capitalization`: proposal, in review
+4. `fix-team-collaborators`: implemented, awaiting deploy
+5. `fix-comment-part-split`: implemented, awaiting deploy
 
 ## Open changes
 
@@ -29,15 +30,16 @@ In the order discussed so far; reorder here.
 | [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized | | proposal |
 | [`fix-plan-survives-push`](changes/fix-plan-survives-push/) | every push marks the pull request's ready plans stale, and says so | | proposal |
 | [`fix-concurrent-mutations`](changes/fix-concurrent-mutations/) | a second mutating command for a Project is refused while the first runs | | proposal |
-| [`fix-lock-release-on-close`](changes/fix-lock-release-on-close/) | closing a pull request releases every Lock it holds, whatever its configuration | | proposal |
+| [`fix-lock-release-on-close`](changes/fix-lock-release-on-close/) | closing a pull request releases every Lock it holds, whatever its configuration | `fix-unlock-without-config` (in part) | proposal |
 | [`fix-invalid-config-check-on-comment`](changes/fix-invalid-config-check-on-comment/) | a comment that finds an invalid `turnip.yaml` marks the `turnip` check, as a push does | | proposal |
 | [`helmfile-hook-policy`](changes/helmfile-hook-policy/) | an operator setting that refuses helmfiles declaring hooks | | proposal |
 | [`operation-scheduling`](changes/operation-scheduling/) | a cap on how many Operations run at once, with a fair queue, and per-Project dependencies that order applies | `fix-concurrent-mutations`, `fix-invalid-config-check-on-comment`, `runner-timeouts` (in part) | proposal |
 | [`runner-server-tls`](changes/runner-server-tls/) | TLS on the Runner's gRPC channel, and a Runner that verifies the Server; where the certificate comes from is still open | | proposal |
 | [`org-images`](changes/org-images/) | the project under its organization, and multi-architecture images published on every push to `main` | | proposal |
 | [`fix-comment-part-split`](changes/fix-comment-part-split/) | an output part ends at a whole line, never inside a line or a character | | implemented; archived once deployed |
-| [`fix-apply-suggested-with-lock`](changes/fix-apply-suggested-with-lock/) | a plan whose Lock is held offers the apply; an apply never offers itself again | | implemented; archived once deployed |
-| [`fix-single-config-surface`](changes/fix-single-config-surface/) | settings in one ConfigMap, secret material in one Secret, no Deployment patches, under Kustomize and Helmfile alike | | proposal |
+| [`fix-single-config-surface`](changes/fix-single-config-surface/) | settings in one ConfigMap, secret material in one Secret, no Deployment patches, under Kustomize and Helmfile alike | | specs |
+| [`fix-unlock-without-config`](changes/fix-unlock-without-config/) | `unlock` works whatever the configuration says | | implemented; archived once the blocked pull request unlocks |
+| [`fix-rendered-capitalization`](changes/fix-rendered-capitalization/) | rendered text writes project, lock and operation in lowercase mid-sentence | | proposal |
 | [`fix-team-collaborators`](changes/fix-team-collaborators/) | an author with access through a team may trigger commands; a failed permission check says so | | implemented; archived once the refused author's diff runs |
 
 Changes that overlap without depending on each other are best done
@@ -130,6 +132,13 @@ is still fresh at apply).
 - The Runner image following the Server's version, so a deployment
   states turnip's version once rather than in the Server image and
   `TURNIP_RUNNER_IMAGE` (raised 2026-10-19)
+- A tool's trigger word narrows `unlock` to that tool's Locks again,
+  by recording each Lock's tool when its plan takes it; until then
+  `/<tool> unlock` acts as `/turnip unlock` (decided 2026-10-20 in
+  `fix-unlock-without-config`). Needed once a second tool's Plugin
+  exists
+- The image-policy refusal's example names the Project's tool rather
+  than the placeholder `<tool>:` (found 2026-10-20)
 - The operator docs warn that separating the Runner namespace reaches
   the cloud identity bindings: an EKS Pod Identity association and any
   `kubernetes-namespace` condition in its role's trust policy, GKE

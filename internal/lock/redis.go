@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -255,6 +256,68 @@ func (m *RedisLockManager) IsLockedByPR(ctx context.Context, projectKey string, 
 	}
 
 	return status.Locked && status.PRNumber == prNumber, nil
+}
+
+// listBatchSize is how many keys one SCAN step hints at and how many
+// one MGET reads.
+const listBatchSize = 100
+
+// globEscaper escapes the characters a Redis MATCH pattern treats as
+// special, so a project key prefix is matched literally.
+var globEscaper = strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`, "]", `\]`)
+
+// ListLocks scans for lock:<keyPrefix>* and reads the matches in batches.
+// A key released between the scan and the read is skipped.
+func (m *RedisLockManager) ListLocks(ctx context.Context, keyPrefix string) ([]ListedLock, error) {
+	pattern := lockKey(globEscaper.Replace(keyPrefix)) + "*"
+
+	seen := map[string]struct{}{}
+	var keys []string
+	iter := m.client.Scan(ctx, 0, pattern, listBatchSize).Iterator()
+	for iter.Next(ctx) {
+		// SCAN may return a key more than once.
+		if _, dup := seen[iter.Val()]; dup {
+			continue
+		}
+		seen[iter.Val()] = struct{}{}
+		keys = append(keys, iter.Val())
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("lock: scanning locks under %q: %w", keyPrefix, err)
+	}
+
+	var out []ListedLock
+	for start := 0; start < len(keys); start += listBatchSize {
+		batch := keys[start:min(start+listBatchSize, len(keys))]
+		vals, err := m.client.MGet(ctx, batch...).Result()
+		if err != nil {
+			return nil, fmt.Errorf("lock: reading locks under %q: %w", keyPrefix, err)
+		}
+		for i, v := range vals {
+			if v == nil {
+				continue
+			}
+			raw, ok := v.(string)
+			if !ok {
+				return nil, fmt.Errorf("lock: reading %q: unexpected value type %T", batch[i], v)
+			}
+			projectKey := strings.TrimPrefix(batch[i], "lock:")
+			var data LockData
+			if err := json.Unmarshal([]byte(raw), &data); err != nil {
+				return nil, fmt.Errorf("lock: decoding lock for %q: %w", projectKey, err)
+			}
+			out = append(out, ListedLock{ProjectKey: projectKey, Status: LockStatus{
+				Locked:         true,
+				PRNumber:       data.PRNumber,
+				PullRequestURL: data.PullRequestURL,
+				LockedAt:       data.LockedAt,
+				LockedBy:       data.LockedBy,
+				PlanSummary:    data.PlanSummary,
+				State:          data.DecodedState(),
+			}})
+		}
+	}
+	return out, nil
 }
 
 // getLockData fetches and decodes the raw Lock at projectKey, returning

@@ -163,6 +163,16 @@ longer applies) without merging or closing the PR first. Needs write
 permission (see below), and never runs a tool or creates a Job; it's a
 pure Redis operation.
 
+`unlock` works whatever the PR's `turnip.yaml` says: it never reads the
+file, so a missing or invalid configuration does not stop it. A bare
+`/turnip unlock` releases every lock this PR holds. With names, it
+releases the lock of each named project that this PR holds; a name is
+compared as written, so patterns and `*` match nothing. A lock held by
+another PR is kept and listed as such, and a name with no lock goes
+unmentioned. When nothing is released or listed, the reply is `No
+projects matched this unlock command.` A tool's trigger word acts as
+`/turnip` here: `/helmfile unlock` releases the same locks.
+
 ## Who can trigger what
 
 turnip recognizes three roles, and does not distinguish further:

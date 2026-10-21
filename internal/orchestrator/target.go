@@ -419,18 +419,6 @@ func unmatchedPatternNotice(pattern string) string {
 	return fmt.Sprintf("No project matched `%s`.", pattern)
 }
 
-// resolveUnlockCandidates implements Requirement 5.1: the same target
-// resolution as resolve's 4.1-4.4 (tool/name filtering), but
-// skipping 4.5's Plugin-operation validation entirely — "unlock" is never
-// a Plugin operation.
-func resolveUnlockCandidates(cfg *config.Config, cmd *github.TriggerCommand) ([]config.Project, error) {
-	candidates := toolCandidates(cfg, cmd.Tool)
-	if len(cmd.Projects) == 0 {
-		return candidates, nil
-	}
-	return narrowByName(candidates, cmd.Projects)
-}
-
 // toolCandidates implements Requirement 4.1/4.2: "turnip" considers every
 // configured Project regardless of tool; a specific tool name narrows to
 // Projects using exactly that tool.

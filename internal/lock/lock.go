@@ -136,6 +136,13 @@ type LockStatus struct {
 	State LockState
 }
 
+// ListedLock is one Lock found by ListLocks: the project key it is
+// stored under and its status, as GetLockStatus would report it.
+type ListedLock struct {
+	ProjectKey string
+	Status     LockStatus
+}
+
 // LockManager prevents concurrent operations on the same Project and
 // carries plan data from a plan operation through to its apply.
 type LockManager interface {
@@ -172,4 +179,9 @@ type LockManager interface {
 	// IsLockedByPR reports whether projectKey's lock (if any) is held by
 	// exactly prNumber.
 	IsLockedByPR(ctx context.Context, projectKey string, prNumber int) (bool, error)
+
+	// ListLocks returns every Lock whose project key begins with
+	// keyPrefix, in no particular order. A failure to read any of them
+	// fails the whole call.
+	ListLocks(ctx context.Context, keyPrefix string) ([]ListedLock, error)
 }

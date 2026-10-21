@@ -349,7 +349,7 @@ func TestHandleIssueComment_SequentialCommandsOrdered(t *testing.T) {
 }
 
 func TestHandleIssueComment_UnlockNeverCreatesJobOrRecord(t *testing.T) {
-	locks := &fakeLockManager{}
+	locks := &fakeLockManager{listLocksFunc: listHeld(map[string]int{"helm-a": 42})}
 	o := testCommentOrchestrator(t, locks)
 	client := &fakeCommentEventClient{
 		permission: "write",

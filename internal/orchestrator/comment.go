@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/ivanvc/turnip/internal/config"
@@ -129,50 +130,43 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 		return github.ErrRefused
 	}
 
-	cfg, err := fetchConfig(ctx, client, owner, repoName, pr.HeadSHA, o.catalog)
-	if err != nil {
-		_, postErr := client.PostComment(ctx, owner, repoName, event.PullRequest.Number, configErrorComment(err))
-		return postErr
+	// unlock never reads the configuration, so it is fetched only when the
+	// comment holds some other command, and then once. When it cannot be
+	// used, the loop below still runs: each unlock is handled, every other
+	// command is skipped, and configReply stands in for the first skipped
+	// command's replies, so replies keep the comment's command order.
+	needsConfig := false
+	for _, cmd := range commands {
+		if cmd.Operation != "unlock" {
+			needsConfig = true
+			break
+		}
+	}
+	var configReply string
+	var sel *selection
+	if needsConfig {
+		cfg, err := fetchConfig(ctx, client, owner, repoName, pr.HeadSHA, o.catalog)
+		if err != nil {
+			configReply = configErrorComment(err)
+		} else {
+			sel = o.commentSelection(client, authorizer, event, pr, cfg)
+		}
 	}
 
 	repo := event.Repository
-	// Assembled once, then asked about each command in turn — see
-	// selection's own comment for why this is a value rather than a
-	// parameter list.
-	sel := &selection{
-		cfg:         cfg,
-		plugins:     o.plugins,
-		owner:       owner,
-		repo:        repoName,
-		author:      event.Comment.Author,
-		prNumber:    pr.Number,
-		authorizer:  authorizer,
-		locks:       o.locks,
-		modifiedSet: memoModifiedFiles(client, owner, repoName, pr.Number),
-	}
-	if len(o.mutationRequirements) > 0 {
-		sel.unmetRequirements = memoMutationRequirements(&mutationRequirementCheck{
-			client:     client,
-			authorizer: authorizer,
-			owner:      owner,
-			repo:       repoName,
-			pr:         pr,
-			sleep:      o.requirementSleep,
-		}, o.mutationRequirements)
-	}
 	// targetGroups preserves per-TriggerCommand grouping: each command's
 	// Targets must finish executing (Requirement 6's Lock semantics)
 	// before the next command's begin, so a "diff" followed by "apply" on
 	// the same Project in one comment behaves predictably rather than
 	// racing (see design.md's Edge Cases). Concurrency still applies
-	// *within* one command's own Targets (Requirement 17.1) — only the
+	// *within* one command's own Targets (Requirement 17.1); only the
 	// commands themselves are sequenced. Each group is one command of the
 	// trigger, begun by whichever replica finishes the one before it.
 	var targetGroups [][]Target
 	var preResults []github.ProjectResult
 	var replies []string
-	// selectionNotices are command-level caveats — a pattern that matched
-	// nothing — which ride at the top of the consolidated comment rather
+	// selectionNotices are command-level caveats (a pattern that matched
+	// nothing) which ride at the top of the consolidated comment rather
 	// than generating a notification of their own.
 	var selectionNotices []string
 
@@ -182,8 +176,18 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 
 	for _, cmd := range commands {
 		if cmd.Operation == "unlock" {
-			reply := o.handleUnlock(ctx, cfg, cmd, repo, pr.Number, event.Comment.Author, authorizer)
+			reply := o.handleUnlock(ctx, cmd, repo, pr.Number, event.Comment.Author, authorizer)
 			replies = append(replies, reply)
+			continue
+		}
+
+		if sel == nil {
+			// The configuration is not usable: this command is skipped,
+			// and the first one skipped carries the configuration reply.
+			if configReply != "" {
+				replies = append(replies, configReply)
+				configReply = ""
+			}
 			continue
 		}
 
@@ -231,7 +235,7 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 	}
 
 	// A notice has nowhere to ride when nothing ran, so it becomes a reply
-	// of its own — the same reasoning that makes UnmatchedProjectError
+	// of its own, the same reasoning that makes UnmatchedProjectError
 	// standalone: there is no result row to attach it to.
 	if len(targetGroups) == 0 && len(preResults) == 0 && len(selectionNotices) > 0 {
 		replies = append(replies, strings.Join(selectionNotices, "\n"))
@@ -258,6 +262,35 @@ func (o *Orchestrator) HandleIssueComment(ctx context.Context, event *github.Web
 		Notices:        selectionNotices,
 		Commands:       targetGroups,
 	}, preResults)
+}
+
+// commentSelection assembles the selection a comment's commands are
+// resolved against, once per comment. See selection's own comment for why
+// this is a value rather than a parameter list.
+func (o *Orchestrator) commentSelection(client github.GitHubClient, authorizer *github.Authorizer, event *github.WebhookEvent, pr *github.PullRequest, cfg *config.Config) *selection {
+	owner, repoName := event.Repository.Owner, event.Repository.Name
+	sel := &selection{
+		cfg:         cfg,
+		plugins:     o.plugins,
+		owner:       owner,
+		repo:        repoName,
+		author:      event.Comment.Author,
+		prNumber:    pr.Number,
+		authorizer:  authorizer,
+		locks:       o.locks,
+		modifiedSet: memoModifiedFiles(client, owner, repoName, pr.Number),
+	}
+	if len(o.mutationRequirements) > 0 {
+		sel.unmetRequirements = memoMutationRequirements(&mutationRequirementCheck{
+			client:     client,
+			authorizer: authorizer,
+			owner:      owner,
+			repo:       repoName,
+			pr:         pr,
+			sleep:      o.requirementSleep,
+		}, o.mutationRequirements)
+	}
+	return sel
 }
 
 // memoModifiedFiles returns a lookup that fetches the pull request's
@@ -305,58 +338,90 @@ func memoMutationRequirements(check *mutationRequirementCheck, requirements []st
 	}
 }
 
-// handleUnlock implements Requirement 5: resolve candidates (5.1),
-// require write permission (5.2), release each candidate's Lock (5.3),
-// and build a single reply naming what was unlocked or who actually
-// holds it (5.4). No Runner Job, check run, or Operation Record is ever
-// created (5.5).
-func (o *Orchestrator) handleUnlock(ctx context.Context, cfg *config.Config, cmd *github.TriggerCommand, repo github.Repository, prNumber int, author string, authorizer *github.Authorizer) string {
-	candidates, err := resolveUnlockCandidates(cfg, cmd)
-	if err != nil {
-		var unmatched *UnmatchedProjectError
-		if errors.As(err, &unmatched) {
-			return fmt.Sprintf("Project %q not found in turnip.yaml.", unmatched.Name)
-		}
-		return fmt.Sprintf("Resolving unlock targets failed: %v", err)
-	}
-
+// handleUnlock releases this pull request's locks without reading
+// turnip.yaml: the write check comes first, so a refused author causes no
+// lock reads; then the locks are found among the repository's own (a
+// named unlock reads each named lock, a bare one lists the repository's
+// and keeps the pull request's), and each release goes through the
+// transition table. The trigger word does not narrow it. No Runner Job,
+// check run, or Operation Record is ever created.
+func (o *Orchestrator) handleUnlock(ctx context.Context, cmd *github.TriggerCommand, repo github.Repository, prNumber int, author string, authorizer *github.Authorizer) string {
 	hasWrite, err := authorizer.HasWritePermission(ctx, repo.Owner, repo.Name, author)
 	if err != nil {
 		slog.ErrorContext(ctx, "checking write permission for unlock",
 			"owner", repo.Owner, "repo", repo.Name, "pr_number", prNumber, "actor", author, "error", err)
-	} else if !hasWrite {
-		slog.InfoContext(ctx, "refusing unlock from an author without write permission",
-			"owner", repo.Owner, "repo", repo.Name, "pr_number", prNumber, "actor", author)
-	}
-	if err != nil {
 		return fmt.Sprintf("@%s: turnip could not check your write permission, so nothing was unlocked. Comment again to retry.", author)
 	}
 	if !hasWrite {
+		slog.InfoContext(ctx, "refusing unlock from an author without write permission",
+			"owner", repo.Owner, "repo", repo.Name, "pr_number", prNumber, "actor", author)
 		return fmt.Sprintf("@%s does not have write permission required to unlock.", author)
 	}
 
+	const couldNotRead = "turnip could not read this pull request's locks, so nothing was unlocked. Comment again to retry."
+
+	// held is the lock of each selected project, in the order to report.
+	type heldLock struct {
+		name   string
+		status lock.LockStatus
+	}
+	var found []heldLock
+	if len(cmd.Projects) == 0 {
+		prefix := projectKey(repo.Owner, repo.Name, "")
+		listed, err := o.locks.ListLocks(ctx, prefix)
+		if err != nil {
+			slog.ErrorContext(ctx, "listing locks for unlock", "owner", repo.Owner, "repo", repo.Name, "pr_number", prNumber, "error", err)
+			return couldNotRead
+		}
+		for _, l := range listed {
+			if l.Status.Locked && l.Status.PRNumber == prNumber {
+				found = append(found, heldLock{name: strings.TrimPrefix(l.ProjectKey, prefix), status: l.Status})
+			}
+		}
+		sort.Slice(found, func(i, j int) bool { return found[i].name < found[j].name })
+	} else {
+		// Every read happens before any release, so a failed read
+		// releases nothing.
+		seen := make(map[string]bool, len(cmd.Projects))
+		for _, name := range cmd.Projects {
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			status, err := o.locks.GetLockStatus(ctx, projectKey(repo.Owner, repo.Name, name))
+			if err != nil {
+				slog.ErrorContext(ctx, "reading lock for unlock", "owner", repo.Owner, "repo", repo.Name, "project", name, "error", err)
+				return couldNotRead
+			}
+			if status != nil && status.Locked {
+				found = append(found, heldLock{name: name, status: *status})
+			}
+		}
+	}
+
 	var unlocked, heldByOther []string
-	for _, project := range candidates {
-		key := projectKey(repo.Owner, repo.Name, project.Name)
+	for _, h := range found {
+		key := projectKey(repo.Owner, repo.Name, h.name)
+		if h.status.PRNumber != prNumber {
+			heldByOther = append(heldByOther, fmt.Sprintf("%s (held by #%d)", h.name, h.status.PRNumber))
+			continue
+		}
 		// Through the transition table like every other lifecycle change.
-		// It decides nothing today — an unlock releases from any state —
-		// and takes this path anyway, because two callers that never
-		// consult the table are how the table stops being the whole story.
+		// It also guards the race in which the lock changed hands since
+		// the read.
 		tr, err := o.locks.Apply(ctx, key, prNumber, lock.EventUnlocked, nil)
 		switch {
 		case err == nil && tr.Released:
 			slog.InfoContext(ctx, "lock released via unlock command", "lock_key", key, "pr_number", prNumber, "actor", author)
-			unlocked = append(unlocked, project.Name)
+			unlocked = append(unlocked, h.name)
 		case err == nil:
-			// No Lock was held for this Project. Releasing reported success
-			// here before, so the reply named Projects that had never been
-			// locked; saying nothing about them is the honest report.
+			// Released meanwhile: nothing to report.
 		case errors.Is(err, lock.ErrLockedByOtherPR):
 			status, statusErr := o.locks.GetLockStatus(ctx, key)
-			if statusErr == nil && status.Locked {
-				heldByOther = append(heldByOther, fmt.Sprintf("%s (held by #%d)", project.Name, status.PRNumber))
+			if statusErr == nil && status != nil && status.Locked {
+				heldByOther = append(heldByOther, fmt.Sprintf("%s (held by #%d)", h.name, status.PRNumber))
 			} else {
-				heldByOther = append(heldByOther, project.Name)
+				heldByOther = append(heldByOther, h.name)
 			}
 		default:
 			slog.ErrorContext(ctx, "releasing lock via unlock command", "lock_key", key, "error", err)
@@ -377,7 +442,7 @@ func (o *Orchestrator) handleUnlock(ctx context.Context, cfg *config.Config, cmd
 		}
 	}
 	if body == "" {
-		body = "No Projects matched this unlock command."
+		body = "No projects matched this unlock command."
 	}
 	return body
 }
