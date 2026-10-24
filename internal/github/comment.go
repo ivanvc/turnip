@@ -592,7 +592,7 @@ func buildFooter(results []ProjectResult) string {
 	// would be offering something turnip rejects.
 	for _, r := range results {
 		if r.Locked && len(r.ScopeArgs) > 0 {
-			body += "\nApplying replays the scope each plan recorded, which may be narrower than the whole Project."
+			body += "\nApplying replays the scope each plan recorded, which may be narrower than the whole project."
 			break
 		}
 	}

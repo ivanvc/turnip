@@ -19,7 +19,7 @@ In the order discussed so far; reorder here.
 
 1. `fix-single-config-surface`: implemented, awaiting the pilot migration (guide in docs/internal)
 2. `fix-unlock-without-config`: implemented, awaiting deploy (then unlock the blocked pilot pull request)
-3. `fix-rendered-capitalization`: proposal, in review
+3. `fix-rendered-capitalization`: implemented, awaiting deploy
 4. `fix-team-collaborators`: implemented, awaiting deploy
 5. `fix-comment-part-split`: implemented, awaiting deploy
 
@@ -39,7 +39,7 @@ In the order discussed so far; reorder here.
 | [`fix-comment-part-split`](changes/fix-comment-part-split/) | an output part ends at a whole line, never inside a line or a character | | implemented; archived once deployed |
 | [`fix-single-config-surface`](changes/fix-single-config-surface/) | settings in one ConfigMap, secret material in one Secret, no Deployment patches, under Kustomize and Helmfile alike | | implemented; archived once the pilot runs on one ConfigMap and one Secret |
 | [`fix-unlock-without-config`](changes/fix-unlock-without-config/) | `unlock` works whatever the configuration says | | implemented; archived once the blocked pull request unlocks |
-| [`fix-rendered-capitalization`](changes/fix-rendered-capitalization/) | rendered text writes project, lock and operation in lowercase mid-sentence | | proposal |
+| [`fix-rendered-capitalization`](changes/fix-rendered-capitalization/) | rendered text writes project, lock and operation in lowercase mid-sentence | | implemented; archived once deployed |
 | [`fix-team-collaborators`](changes/fix-team-collaborators/) | an author with access through a team may trigger commands; a failed permission check says so | | implemented; archived once the refused author's diff runs |
 
 Changes that overlap without depending on each other are best done

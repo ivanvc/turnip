@@ -1,0 +1,13 @@
+package fixture
+
+import "log/slog"
+
+func f(logger *slog.Logger) string {
+	slog.Info("Completing a Project", "key", "the Lock")
+	logger.WarnContext(nil, "waiting on the Lock")
+	log := slog.With("k", "v")
+	log.ErrorContext(nil, "failed for this Project")
+	_ = status.Error(0, "denied for this Project")
+	http.Error(nil, "the Lock is held", 409)
+	return "The result is narrower than the whole Project."
+}

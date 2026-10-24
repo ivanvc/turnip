@@ -17,7 +17,7 @@ var (
 
 	operationsDispatchedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "turnip_operations_dispatched_total",
-		Help: "Total number of Operations dispatched, by Project tool, Operation, and outcome.",
+		Help: "Total number of operations dispatched, by project tool, operation, and outcome.",
 	}, []string{"tool", "operation", "outcome"})
 
 	lockAttemptsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -27,7 +27,7 @@ var (
 
 	operationDurationSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "turnip_operation_duration_seconds",
-		Help: "Webhook-to-Operation-result latency, by Project tool and Operation.",
+		Help: "Webhook-to-operation-result latency, by project tool and operation.",
 	}, []string{"tool", "operation"})
 
 	runnerJobStartLatencySeconds = promauto.NewHistogram(prometheus.HistogramOpts{

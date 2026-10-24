@@ -267,7 +267,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		HeadSHA: pr.HeadSHA,
 		Status:  "in_progress",
 		Title:   title,
-		Summary: fmt.Sprintf("Running `%s` for Project `%s`.", t.Operation, t.Project.Name),
+		Summary: fmt.Sprintf("Running `%s` for project `%s`.", t.Operation, t.Project.Name),
 	})
 	if checkRunErr != nil {
 		// Soft failure (Decision 3): the Operation still runs.
@@ -537,7 +537,7 @@ func appendCheckRunNote(result github.ProjectResult, action checkAction, err err
 		joiner = ", "
 	}
 	result.Output += fmt.Sprintf(
-		"\n\nNote: this Project's GitHub check run could not be %s (%v). "+
+		"\n\nNote: this project's GitHub check run could not be %s (%v). "+
 			"The operation itself is unaffected%s%s",
 		action, err, joiner, consequence,
 	)

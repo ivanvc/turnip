@@ -194,7 +194,7 @@ func (o *Orchestrator) reportTimeout(ctx context.Context, operationID string, re
 // the recorded digest's doing, and gets the generic diagnostic.
 func timeoutDiagnostic(jobName string, status *jobs.JobStatus, mutating bool) string {
 	if status == nil || !status.JobFound {
-		return "No Job/Pod found for this Operation; it may have been deleted or never successfully scheduled"
+		return "No Job/Pod found for this operation; it may have been deleted or never successfully scheduled"
 	}
 	if mutating && status.ToolWaiting && isImagePullFailure(status.PodReason) {
 		return fmt.Sprintf("Job %s: the image could not be pulled (%s). The image digest the plan recorded may no longer exist in the registry; re-plan", jobName, status.PodReason)
@@ -221,7 +221,7 @@ func (o *Orchestrator) repositorySecretHint(rec *OperationRecord, status *jobs.J
 		return ""
 	}
 	return fmt.Sprintf(
-		"\nThis Project mounts keys %s of Secret %s in namespace %s; if that Secret or one of those keys is missing, the Pod cannot start.",
+		"\nThis project mounts keys %s of Secret %s in namespace %s; if that Secret or one of those keys is missing, the Pod cannot start.",
 		strings.Join(keys, ", "), jobs.RepositorySecretName(rec.RepositoryID), o.runnerNamespace,
 	)
 }

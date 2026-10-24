@@ -221,7 +221,7 @@ func TestSweep_PendingPodWithKeysAddsTheSecretHint(t *testing.T) {
 
 	diagnostic := "Job turnip-runner-op-1: Pod still Pending after 5 minutes"
 	assert.Equal(t, diagnostic+"\n"+
-		"This Project mounts keys lab-kubeconfig, cloud-key of Secret turnip-repository-123456789 in namespace turnip-runners; if that Secret or one of those keys is missing, the Pod cannot start.",
+		"This project mounts keys lab-kubeconfig, cloud-key of Secret turnip-repository-123456789 in namespace turnip-runners; if that Secret or one of those keys is missing, the Pod cannot start.",
 		result.Output)
 	assert.Equal(t, diagnostic, check.Title, "the check's title is the diagnostic alone")
 }
@@ -234,7 +234,7 @@ func TestSweep_PendingPodWithAWaitingContainerAddsTheSecretHint(t *testing.T) {
 
 	diagnostic := "Job turnip-runner-op-1: container stuck (ContainerCreating)"
 	assert.Equal(t, diagnostic+"\n"+
-		"This Project mounts keys lab-kubeconfig of Secret turnip-repository-123456789 in namespace turnip-runners; if that Secret or one of those keys is missing, the Pod cannot start.",
+		"This project mounts keys lab-kubeconfig of Secret turnip-repository-123456789 in namespace turnip-runners; if that Secret or one of those keys is missing, the Pod cannot start.",
 		result.Output)
 	assert.Equal(t, diagnostic, check.Title)
 }
@@ -259,7 +259,7 @@ func TestSweep_PodNotPendingWithKeysHasNoHint(t *testing.T) {
 		"running": {&jobs.JobStatus{JobFound: true, PodPhase: corev1.PodRunning}, "Job turnip-runner-op-1: Pod still Running after 5 minutes"},
 		"failed":  {&jobs.JobStatus{JobFound: true, PodPhase: corev1.PodFailed}, "Job turnip-runner-op-1: Pod still Failed after 5 minutes"},
 		"no pod":  {&jobs.JobStatus{JobFound: true}, "Job turnip-runner-op-1: no Pod found yet after 5 minutes"},
-		"no job":  {&jobs.JobStatus{JobFound: false}, "No Job/Pod found for this Operation; it may have been deleted or never successfully scheduled"},
+		"no job":  {&jobs.JobStatus{JobFound: false}, "No Job/Pod found for this operation; it may have been deleted or never successfully scheduled"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			result, _ := sweepRecord(t, secretsSweepRecord("lab-kubeconfig"), tc.status)
@@ -279,6 +279,6 @@ func TestSweep_AMissingRepositorySecret(t *testing.T) {
 	assert.Equal(t, "lab", result.ProjectName)
 	assert.False(t, result.Success)
 	assert.True(t, strings.HasSuffix(result.Output,
-		"\nThis Project mounts keys lab-kubeconfig of Secret turnip-repository-123456789 in namespace turnip-runners; if that Secret or one of those keys is missing, the Pod cannot start."),
+		"\nThis project mounts keys lab-kubeconfig of Secret turnip-repository-123456789 in namespace turnip-runners; if that Secret or one of those keys is missing, the Pod cannot start."),
 		"lab's output ends with the hint line: %q", result.Output)
 }

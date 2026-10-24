@@ -62,13 +62,13 @@ func lockNoteFor(ev lock.Event, tr lock.Transition) string {
 	if tr.Released {
 		switch ev {
 		case lock.EventPlanFailed:
-			return "Lock released: the plan failed, so nothing was recorded. This Project is free for another pull request to plan against."
+			return "Lock released: the plan failed, so nothing was recorded. This project is free for another pull request to plan against."
 		case lock.EventPlanNothingToApply:
-			return "Lock released: the plan found nothing to apply. This Project is free for another pull request to plan against."
+			return "Lock released: the plan found nothing to apply. This project is free for another pull request to plan against."
 		case lock.EventMutatingSucceeded:
-			return "Lock released: the operation completed. This Project is free for another pull request to plan against."
+			return "Lock released: the operation completed. This project is free for another pull request to plan against."
 		default:
-			return "Lock released. This Project is free for another pull request to plan against."
+			return "Lock released. This project is free for another pull request to plan against."
 		}
 	}
 
@@ -77,16 +77,16 @@ func lockNoteFor(ev lock.Event, tr lock.Transition) string {
 	if tr.To == lock.StatePlanStale && tr.From != lock.StatePlanStale {
 		switch ev {
 		case lock.EventMutatingFailed:
-			return "The stored plan is no longer valid: this operation failed part-way, so infrastructure may have changed since it was planned. Re-plan before retrying. The Lock is still held, so no other pull request can act on this Project meanwhile."
+			return "The stored plan is no longer valid: this operation failed part-way, so infrastructure may have changed since it was planned. Re-plan before retrying. The lock is still held, so no other pull request can act on this project meanwhile."
 		case lock.EventMutatingTimedOut:
-			return "The stored plan is no longer valid: no result arrived, and the operation may still be running. Re-plan before retrying. The Lock is still held."
+			return "The stored plan is no longer valid: no result arrived, and the operation may still be running. Re-plan before retrying. The lock is still held."
 		case lock.EventPlanDispatched:
 			return "The stored plan was superseded by a new commit. Re-plan before applying."
 		}
 	}
 
 	if tr.From == lock.StatePlanStale && ev == lock.EventPlanFailed {
-		return "The plan failed, so the previously stored plan is still unusable. The Lock is still held; a successful plan is required before applying."
+		return "The plan failed, so the previously stored plan is still unusable. The lock is still held; a successful plan is required before applying."
 	}
 
 	return ""

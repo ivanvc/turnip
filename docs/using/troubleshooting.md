@@ -132,11 +132,11 @@ that its GitHub check run could not be created or completed. The
 operation itself is unaffected and its output is in the comment; the
 note says what the failure left in the PR's checks tab.
 
-- **`Note: this Project's GitHub check run could not be created (<error>).
+- **`Note: this project's GitHub check run could not be created (<error>).
   The operation itself is unaffected; only its entry in the PR's checks tab
   is missing.`**: the check was never created, so the tab has no entry for
   this operation. Read the result in the comment.
-- **`Note: this Project's GitHub check run could not be completed (<error>).
+- **`Note: this project's GitHub check run could not be completed (<error>).
   The operation itself is unaffected, but its check stays in progress in
   the PR's checks tab until the operation runs again.`**: the check exists
   but was never finished. A plan's check is replaced by running the plan
@@ -275,7 +275,7 @@ gives a shorter output that fits.
 
 **Symptom**: the check fails with a title like `Job <name>: container
 stuck (PodInitializing)`, and the Project's output ends with `This
-Project mounts keys <keys> of Secret <secret> in namespace <namespace>;
+project mounts keys <keys> of Secret <secret> in namespace <namespace>;
 if that Secret or one of those keys is missing, the Pod cannot start.`
 
 The Secret belongs to the operator, not the repository, and turnip

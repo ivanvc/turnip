@@ -814,7 +814,7 @@ func TestExecuteOne_CheckRunCreationFailureIsNotedInResult(t *testing.T) {
 	assert.True(t, result.Success, "a failed check run must not fail the operation")
 	assert.Contains(t, result.Output, "diff output", "the Runner's own output is kept")
 	assert.Contains(t, result.Output, `422 "summary", "title" weren't supplied`, "the underlying GitHub error is included")
-	assert.True(t, strings.HasSuffix(result.Output, "\n\nNote: this Project's GitHub check run could not be created ("+
+	assert.True(t, strings.HasSuffix(result.Output, "\n\nNote: this project's GitHub check run could not be created ("+
 		`422 "summary", "title" weren't supplied`+"). The operation itself is unaffected; "+
 		"only its entry in the PR's checks tab is missing."), "the create note, exactly: %q", result.Output)
 	assert.Equal(t, 1, jobsClient.createCount(), "the Runner Job still runs")
@@ -952,14 +952,14 @@ func TestExecuteOne_CheckRunCreatedWithRunningTitle(t *testing.T) {
 func TestAppendCheckRunNote_CompleteNoteText(t *testing.T) {
 	got := appendCheckRunNote(github.ProjectResult{Output: "out"}, checkComplete, errors.New("boom"))
 
-	assert.Equal(t, "out\n\nNote: this Project's GitHub check run could not be completed (boom). "+
+	assert.Equal(t, "out\n\nNote: this project's GitHub check run could not be completed (boom). "+
 		"The operation itself is unaffected, but its check stays in progress in the PR's checks tab until the operation runs again.", got.Output)
 }
 
 func TestAppendCheckRunNote_CreateNoteText(t *testing.T) {
 	got := appendCheckRunNote(github.ProjectResult{Output: "out"}, checkCreate, errors.New("boom"))
 
-	assert.Equal(t, "out\n\nNote: this Project's GitHub check run could not be created (boom). "+
+	assert.Equal(t, "out\n\nNote: this project's GitHub check run could not be created (boom). "+
 		"The operation itself is unaffected; only its entry in the PR's checks tab is missing.", got.Output)
 }
 

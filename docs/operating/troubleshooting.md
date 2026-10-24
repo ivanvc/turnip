@@ -185,7 +185,7 @@ causes this (it is cut first); a tool's plan data that large does.
 the results comment ends with this line, with the placeholders filled in:
 
 ```text
-This Project mounts keys <keys> of Secret <secret> in namespace <namespace>; if that Secret or one of those keys is missing, the Pod cannot start.
+This project mounts keys <keys> of Secret <secret> in namespace <namespace>; if that Secret or one of those keys is missing, the Pod cannot start.
 ```
 
 It means the Project lists keys of

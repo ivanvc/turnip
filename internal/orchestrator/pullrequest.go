@@ -201,7 +201,7 @@ func (o *Orchestrator) handlePRClosed(ctx context.Context, client github.GitHubC
 	}
 
 	if len(unlocked) > 0 {
-		body := "Unlocked the following Projects since this PR closed:\n"
+		body := "Unlocked the following projects since this PR closed:\n"
 		for _, name := range unlocked {
 			body += fmt.Sprintf("- %s\n", name)
 		}
