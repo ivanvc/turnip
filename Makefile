@@ -125,8 +125,9 @@ test-kind:
 	kubectl create namespace turnip-runners; \
 	KEY=$$(mktemp); \
 	openssl genrsa -out $$KEY 2048 2>/dev/null; \
-	kubectl create secret generic turnip-github-app -n turnip-system \
+	kubectl create secret generic turnip-server-secrets -n turnip-system \
 		--from-literal=webhook-secret=test \
+		--from-literal=redis-password=test \
 		--from-file=private-key=$$KEY; \
 	rm -f $$KEY; \
 	kubectl apply -n turnip-system -f test/load/redis.yaml; \

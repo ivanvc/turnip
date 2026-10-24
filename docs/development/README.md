@@ -207,7 +207,7 @@ or working on it, not for a real deployment (it pins a locally-built
 repository:
 
 ```sh
-kubectl create secret generic turnip-github-app \
+kubectl create secret generic turnip-server-secrets \
   --from-literal=webhook-secret=<your-webhook-secret> \
   --from-file=private-key=<path-to-your-app-private-key.pem>
 

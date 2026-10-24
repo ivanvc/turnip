@@ -91,7 +91,7 @@ for a Runner that applies, includes all three.
 Server.** `deploy/base` leaves `TURNIP_RUNNER_NAMESPACE` unset, so
 Runners run beside the Server in `turnip-system`, and a Runner that can
 read Secrets or exec into Pods there reaches the GitHub App's private key
-(the `turnip-github-app` Secret), a key worth more than any GitHub
+(the `turnip-server-secrets` Secret), a key worth more than any GitHub
 credential the Server mints, and the Server Pod. Separating the Runner
 namespace, as
 [Choosing namespaces](deployment.md#choosing-namespaces) recommends,
@@ -181,7 +181,7 @@ kubectl -n <runner-namespace> create secret generic "turnip-repository-$id" \
   when `runner.serviceAccount` is allowed, to every ServiceAccount in the
   namespace.
 - **turnip's own Secret is out of reach only once you separate the
-  Runner namespace.** `turnip-github-app` lives in the Server namespace.
+  Runner namespace.** `turnip-server-secrets` lives in the Server namespace.
   In `deploy/base`, with `TURNIP_RUNNER_NAMESPACE` unset, that is also
   the Runner namespace, so a grant on its Secrets reaches the GitHub
   App's private key. Once separated, the Runner namespace holds none of

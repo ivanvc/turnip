@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
+	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -45,6 +48,7 @@ func main() {
 		os.Exit(1)
 	}
 	slog.SetDefault(logging.New(os.Stderr, cfg.LogLevel))
+	warnUnknownSettings(os.Environ())
 
 	if err := run(cfg, plugins); err != nil {
 		slog.Error("running server", "error", err)
@@ -273,4 +277,35 @@ func runConcurrently(ctx context.Context, fns ...func(context.Context) error) er
 	}
 	wg.Wait()
 	return firstErr
+}
+
+// serviceVarShape matches the variables Kubernetes injects for a Service:
+// _SERVICE_HOST, _SERVICE_PORT, _SERVICE_PORT_<name>, _PORT, and
+// <prefix>_PORT_<number>_<protocol> optionally followed by _PROTO, _PORT
+// or _ADDR. They are not settings.
+var serviceVarShape = regexp.MustCompile(
+	`_SERVICE_HOST$|_SERVICE_PORT(_[A-Z0-9_]+)?$|_PORT$|_PORT_[0-9]+_[A-Z]+(_PROTO|_PORT|_ADDR)?$`)
+
+// unknownSettings returns, in the order given, the TURNIP_* names in
+// environ ("NAME=value" entries) that are not a Server setting and not
+// a Service-variable shape.
+func unknownSettings(environ []string) []string {
+	known := orchestrator.SettingNames()
+	var unknown []string
+	for _, kv := range environ {
+		name, _, _ := strings.Cut(kv, "=")
+		if !strings.HasPrefix(name, "TURNIP_") || slices.Contains(known, name) || serviceVarShape.MatchString(name) {
+			continue
+		}
+		unknown = append(unknown, name)
+	}
+	return unknown
+}
+
+// warnUnknownSettings logs one warning naming every unknown TURNIP_*
+// variable, and nothing when there are none.
+func warnUnknownSettings(environ []string) {
+	if names := unknownSettings(environ); len(names) > 0 {
+		slog.Warn("unknown settings", "names", names)
+	}
 }

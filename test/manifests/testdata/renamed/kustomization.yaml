@@ -14,7 +14,7 @@ configMapGenerator:
       - TURNIP_REDIS_ADDR=redis:6379
       - TURNIP_GITHUB_APP_ID=1
 secretGenerator:
-  - name: turnip-github-app
+  - name: turnip-server-secrets
     literals:
       - webhook-secret=dummy
       - private-key=dummy

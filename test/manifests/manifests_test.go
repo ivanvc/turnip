@@ -28,7 +28,24 @@ type object struct {
 	Spec struct {
 		Template struct {
 			Spec struct {
+				EnableServiceLinks *bool `yaml:"enableServiceLinks"`
+				Volumes            []struct {
+					Name   string `yaml:"name"`
+					Secret *struct {
+						SecretName string `yaml:"secretName"`
+					} `yaml:"secret"`
+				} `yaml:"volumes"`
 				Containers []struct {
+					VolumeMounts []struct {
+						Name      string `yaml:"name"`
+						MountPath string `yaml:"mountPath"`
+						ReadOnly  bool   `yaml:"readOnly"`
+					} `yaml:"volumeMounts"`
+					EnvFrom []struct {
+						ConfigMapRef *struct {
+							Name string `yaml:"name"`
+						} `yaml:"configMapRef"`
+					} `yaml:"envFrom"`
 					Env []struct {
 						Name      string `yaml:"name"`
 						Value     string `yaml:"value"`
@@ -89,7 +106,8 @@ func TestRenderedNamespaces(t *testing.T) {
 	cases := []struct {
 		name, dir, server, runner string
 		// secret is true where the kustomization generates the
-		// turnip-github-app Secret, as the documented one does.
+		// turnip-server-secrets Secret, as the documented one does; its name then
+		// carries a hash, which Kustomize propagates to the references.
 		secret bool
 	}{
 		{"base", "../../deploy/base", "turnip-system", "turnip-system", false},
@@ -124,6 +142,8 @@ func TestRenderedNamespaces(t *testing.T) {
 			assert.Empty(t, find(t, objs, "ClusterRole", "turnip-server-token-review").Metadata.Namespace)
 
 			cm := find(t, objs, "ConfigMap", "turnip-server-config")
+			// The name is fixed, with no hash, merged or not.
+			assert.Equal(t, "turnip-server-config", cm.Metadata.Name)
 			// Unset unless the Runner namespace is separated: the Server
 			// then uses its own namespace.
 			if tc.runner == tc.server {
@@ -149,19 +169,51 @@ func TestRenderedNamespaces(t *testing.T) {
 			assert.Equal(t, "TURNIP_RUNNER_SERVER_ADDR", env[i+1].Name)
 			assert.Equal(t, "turnip-server.$(POD_NAMESPACE).svc:9090", env[i+1].Value)
 
-			if !tc.secret {
-				return
+			podSpec := dep.Spec.Template.Spec
+			require.NotNil(t, podSpec.EnableServiceLinks)
+			assert.False(t, *podSpec.EnableServiceLinks, "enableServiceLinks")
+			require.Len(t, podSpec.Containers[0].EnvFrom, 1)
+			require.NotNil(t, podSpec.Containers[0].EnvFrom[0].ConfigMapRef)
+			assert.Equal(t, "turnip-server-config", podSpec.Containers[0].EnvFrom[0].ConfigMapRef.Name)
+
+			// The Secret's name: turnip-server-secrets as the base writes it, or
+			// the generated name where the kustomization generates it.
+			secretName := "turnip-server-secrets"
+			if tc.secret {
+				secret := find(t, objs, "Secret", "turnip-server-secrets")
+				assert.Equal(t, tc.server, secret.Metadata.Namespace)
+				secretName = secret.Metadata.Name
+				assert.NotEqual(t, "turnip-server-secrets", secretName, "generated name carries a hash")
 			}
-			secret := find(t, objs, "Secret", "turnip-github-app")
-			assert.Equal(t, tc.server, secret.Metadata.Namespace)
 			var refs int
 			for _, e := range env {
 				if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
 					refs++
-					assert.Equal(t, secret.Metadata.Name, e.ValueFrom.SecretKeyRef.Name, e.Name)
+					assert.Equal(t, secretName, e.ValueFrom.SecretKeyRef.Name, e.Name)
 				}
 			}
 			assert.Equal(t, 2, refs, "secretKeyRef entries")
+
+			var vols int
+			var volName string
+			for _, v := range podSpec.Volumes {
+				if v.Secret != nil {
+					vols++
+					volName = v.Name
+					assert.Equal(t, secretName, v.Secret.SecretName, "volume %s", v.Name)
+				}
+			}
+			require.Equal(t, 1, vols, "secret volumes")
+			require.Len(t, podSpec.Containers[0].VolumeMounts, 1)
+			m := podSpec.Containers[0].VolumeMounts[0]
+			assert.Equal(t, volName, m.Name)
+			assert.Equal(t, "/etc/turnip/secrets", m.MountPath)
+			assert.True(t, m.ReadOnly, "mount is read-only")
+
+			if tc.name == "operator" {
+				secret := find(t, objs, "Secret", "turnip-server-secrets")
+				assert.Contains(t, secret.Data, "redis-password")
+			}
 		})
 	}
 }

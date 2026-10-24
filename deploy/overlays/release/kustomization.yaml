@@ -11,14 +11,17 @@ kind: Kustomization
 # It deliberately adds nothing else: TURNIP_REDIS_ADDR and
 # TURNIP_GITHUB_APP_ID have no sane cross-environment default (base's own
 # comment explains why), so the rendered manifest ships without them —
-# `kubectl apply -f` this and then `kubectl set env -n turnip-system
-# deployment/turnip-server TURNIP_REDIS_ADDR=... TURNIP_GITHUB_APP_ID=...` (see
-# docs/operating/deployment.md's "Quick install" section). Most operators
-# are better served by docs/operating/deployment.md's primary "With
-# Kustomize" section instead — a
-# remote-base reference plus a configMapGenerator/secretGenerator of their
-# own, generating everything (including the credentials Secret) in one
-# `kubectl apply -k .` with no imperative follow-up commands at all.
+# `kubectl apply -f` this, set those values in the ConfigMap with
+# `kubectl patch configmap -n turnip-system turnip-server-config --patch
+# '{"data":{"TURNIP_REDIS_ADDR":"...","TURNIP_GITHUB_APP_ID":"..."}}'`,
+# create the Secret `turnip-server-secrets` (keys webhook-secret and private-key),
+# and run `kubectl rollout restart -n turnip-system
+# deployment/turnip-server` (see docs/operating/deployment.md's "Quick
+# install" section). Most operators are better served by
+# docs/operating/deployment.md's primary "With Kustomize" section
+# instead: a remote-base reference plus a configMapGenerator/secretGenerator
+# of their own, generating everything (including the credentials Secret)
+# in one `kubectl apply -k .` with no imperative follow-up commands at all.
 
 resources:
   - ../../base

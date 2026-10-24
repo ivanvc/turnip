@@ -16,7 +16,7 @@ configMapGenerator:
       - TURNIP_GITHUB_APP_ID=1
       - TURNIP_RUNNER_NAMESPACE=ops-runners
 secretGenerator:
-  - name: turnip-github-app
+  - name: turnip-server-secrets
     literals:
       - webhook-secret=dummy
       - private-key=dummy

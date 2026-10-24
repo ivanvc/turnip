@@ -15,6 +15,9 @@ spec:
         app.kubernetes.io/name: turnip-server
     spec:
       serviceAccountName: turnip-server
+      # The Server reads none of the variables Kubernetes injects for
+      # Services, and they would read like mistyped TURNIP_* settings.
+      enableServiceLinks: false
       containers:
         - name: server
           image: ghcr.io/ivanvc/turnip-server:latest
@@ -33,16 +36,26 @@ spec:
                   fieldPath: metadata.namespace
             - name: TURNIP_RUNNER_SERVER_ADDR
               value: turnip-server.$(POD_NAMESPACE).svc:9090
+            # All of the Server's secret material comes from one Secret,
+            # turnip-server-secrets, which the operator creates beside this base.
+            # It must hold the keys webhook-secret and private-key. Any
+            # further key (for example redis-password) is mounted as a
+            # file under /etc/turnip/secrets, read through a *_PATH
+            # setting such as TURNIP_REDIS_PASSWORD_PATH.
             - name: TURNIP_GITHUB_WEBHOOK_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: turnip-github-app
+                  name: turnip-server-secrets
                   key: webhook-secret
             - name: TURNIP_GITHUB_PRIVATE_KEY
               valueFrom:
                 secretKeyRef:
-                  name: turnip-github-app
+                  name: turnip-server-secrets
                   key: private-key
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/turnip/secrets
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /readyz
@@ -53,3 +66,7 @@ spec:
               path: /healthz
               port: http
             periodSeconds: 5
+      volumes:
+        - name: secrets
+          secret:
+            secretName: turnip-server-secrets

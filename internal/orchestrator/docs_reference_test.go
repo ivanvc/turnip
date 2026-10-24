@@ -57,3 +57,21 @@ func TestServerSettingsReference_MatchesConfigFromEnv(t *testing.T) {
 	assert.Empty(t, missing, "%s is missing a row for: %v", serverSettingsReferencePath, missing)
 	assert.Empty(t, extra, "%s has a row naming a variable ConfigFromEnv never reads: %v", serverSettingsReferencePath, extra)
 }
+
+// Feature: fix-single-config-surface, SettingNames: the list the Server
+// compares its environment against equals the names ConfigFromEnv reads,
+// so the list, the code and the settings Reference cannot drift apart.
+func TestSettingNamesReference_MatchesConfigFromEnv(t *testing.T) {
+	getenv, seen := recordingGetenv(envMap(nil))
+
+	_, err := ConfigFromEnv(getenv, NewPluginRegistry())
+	require.NoError(t, err)
+
+	var read []string
+	for name := range seen() {
+		read = append(read, name)
+	}
+
+	assert.ElementsMatch(t, read, SettingNames())
+	assert.Len(t, SettingNames(), len(read), "SettingNames has a duplicate")
+}

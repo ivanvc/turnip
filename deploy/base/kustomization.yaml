@@ -26,6 +26,13 @@ resources:
 # configMapGenerator with `behavior: merge`.
 configMapGenerator:
   - name: turnip-server-config
+    # A fixed name, with no hash of the contents: Helmfile applies a
+    # release's transformers to the rendered base, and a patch or
+    # transformer selecting turnip-server-config by name must still find
+    # it there. A changed setting takes effect on
+    # `kubectl rollout restart deployment/turnip-server`.
+    options:
+      disableNameSuffixHash: true
     literals:
       - TURNIP_LOG_LEVEL=info
       - TURNIP_HTTP_ADDR=:8080

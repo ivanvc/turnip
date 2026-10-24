@@ -31,6 +31,12 @@ step links to the page that explains it; this page only orders them.
    `TURNIP_RUNNER_IMAGE` pinned to the same release tag as the Server.
    The other required settings come preset by `deploy/base`, and the rest
    are optional; see [Server settings](../operating/server-settings.md).
+   Put the GitHub App's webhook secret and private key in the
+   `turnip-server-secrets` Secret, and every setting in `turnip-server-config`;
+   after changing either, run
+   `kubectl rollout restart deployment/turnip-server`. Installing with
+   Helmfile instead of Kustomize:
+   [Installing with Helmfile](../operating/deployment.md#installing-with-helmfile).
 5. **Create a ServiceAccount for the Runner** in the Runner namespace, set
    `TURNIP_RUNNER_SERVICE_ACCOUNT` to its name, and grant it whatever
    your infrastructure projects need. Left unset, Runners run as the

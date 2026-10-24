@@ -17,7 +17,7 @@ new work gets a name, never a number.
 
 In the order discussed so far; reorder here.
 
-1. `fix-single-config-surface`: specs drafted, in review; design next
+1. `fix-single-config-surface`: implemented, awaiting the pilot migration (guide in docs/internal)
 2. `fix-unlock-without-config`: implemented, awaiting deploy (then unlock the blocked pilot pull request)
 3. `fix-rendered-capitalization`: proposal, in review
 4. `fix-team-collaborators`: implemented, awaiting deploy
@@ -37,7 +37,7 @@ In the order discussed so far; reorder here.
 | [`runner-server-tls`](changes/runner-server-tls/) | TLS on the Runner's gRPC channel, and a Runner that verifies the Server; where the certificate comes from is still open | | proposal |
 | [`org-images`](changes/org-images/) | the project under its organization, and multi-architecture images published on every push to `main` | | proposal |
 | [`fix-comment-part-split`](changes/fix-comment-part-split/) | an output part ends at a whole line, never inside a line or a character | | implemented; archived once deployed |
-| [`fix-single-config-surface`](changes/fix-single-config-surface/) | settings in one ConfigMap, secret material in one Secret, no Deployment patches, under Kustomize and Helmfile alike | | specs |
+| [`fix-single-config-surface`](changes/fix-single-config-surface/) | settings in one ConfigMap, secret material in one Secret, no Deployment patches, under Kustomize and Helmfile alike | | implemented; archived once the pilot runs on one ConfigMap and one Secret |
 | [`fix-unlock-without-config`](changes/fix-unlock-without-config/) | `unlock` works whatever the configuration says | | implemented; archived once the blocked pull request unlocks |
 | [`fix-rendered-capitalization`](changes/fix-rendered-capitalization/) | rendered text writes project, lock and operation in lowercase mid-sentence | | proposal |
 | [`fix-team-collaborators`](changes/fix-team-collaborators/) | an author with access through a team may trigger commands; a failed permission check says so | | implemented; archived once the refused author's diff runs |
@@ -128,7 +128,13 @@ is still fresh at apply).
   rot unnoticed until 2026-10-13
 - A Helm chart whose values file is turnip's configuration surface:
   decided against until turnip has a beta, since releasing a chart
-  adds work (2026-10-19, raised by `fix-single-config-surface`)
+  adds work (2026-10-19, raised by `fix-single-config-surface`). The
+  intended way, when it comes (2026-10-20): generate the chart in CI
+  from the rendered Kustomize base, with a converter such as helmify,
+  and publish it to an OCI registry with each release, so the base
+  stays the one source and the chart is a by-product. Still to check:
+  how the converter maps `turnip-server-config`'s data and the
+  `turnip-server-secrets` Secret into values
 - The Runner image following the Server's version, so a deployment
   states turnip's version once rather than in the Server image and
   `TURNIP_RUNNER_IMAGE` (raised 2026-10-19)

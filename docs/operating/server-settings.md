@@ -7,15 +7,28 @@ Read once, at startup, by `internal/orchestrator.ConfigFromEnv`, which
 fails fast, naming every missing required variable together rather than
 one restart-and-discover-the-next-one at a time.
 
+**A changed setting takes effect after a restart.** Change a setting in
+`turnip-server-config` (the ConfigMap is named that under every install
+method) and then run `kubectl rollout restart deployment/turnip-server`.
+Nothing restarts the Server for you. For where to make the change, see
+[Installing turnip](deployment.md#installing-turnip).
+
+**An unknown `TURNIP_*` variable is reported, not obeyed.** At startup
+the Server logs one `unknown settings` warning naming every `TURNIP_*`
+variable in its environment that is not in the table below (a mistyped
+name, or a setting turnip no longer reads), and otherwise ignores it.
+Variables Kubernetes injects for a Service named `turnip-...` are left
+out of the warning.
+
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
 | `TURNIP_GITHUB_APP_ID` | yes | | [your GitHub App's numeric ID](#the-github-app-credentials) |
 | `TURNIP_GITHUB_PRIVATE_KEY` or `TURNIP_GITHUB_PRIVATE_KEY_PATH` | yes (one of) | | [the App's private key](#the-github-app-credentials): inline PEM or a file path |
 | `TURNIP_GITHUB_WEBHOOK_SECRET` | yes | | [the secret your GitHub App's webhook is configured with](#the-github-app-credentials) (HMAC-verified on every delivery) |
 | `TURNIP_REDIS_ADDR` | yes | | [Redis/Valkey address](deployment.md#prerequisites); the Server's only state store. Three forms: a bare `host:port` (no TLS, no AUTH, as always); `redis://[user@]host:port[/db]` (plaintext); `rediss://[user@]host:port[/db]` (TLS, certificate always verified). The URL may also carry a database number and the tuning parameters go-redis's [connection URL](https://pkg.go.dev/github.com/redis/go-redis/v9#ParseURL) lists; an unknown parameter is refused. Two things are refused at startup: `skip_verify` (any value) and a password in the URL (use the two password settings below). Any scheme other than `redis` and `rediss` is refused |
-| `TURNIP_REDIS_PASSWORD_PATH` | no | unset | path to a file holding the Redis AUTH password, typically a mounted Secret. Re-read for each new connection, so a rotated token needs no restart; a trailing newline is trimmed. The file must exist at startup. Recommended over the value form. Setting this and `TURNIP_REDIS_PASSWORD` is a startup error |
+| `TURNIP_REDIS_PASSWORD_PATH` | no | unset | path to a file holding the Redis AUTH password, typically the `redis-password` key of the mounted `turnip-server-secrets` Secret, at `/etc/turnip/secrets/redis-password`. Re-read for each new connection, so a rotated token needs no restart; a trailing newline is trimmed. The file must exist at startup. Recommended over the value form. Setting this and `TURNIP_REDIS_PASSWORD` is a startup error |
 | `TURNIP_REDIS_PASSWORD` | no | unset | the Redis AUTH password as a literal value. Prefer `TURNIP_REDIS_PASSWORD_PATH`; if you use this, deliver it from a Secret, never a ConfigMap. Not logged and never shown by `/readyz` |
-| `TURNIP_REDIS_CA_PATH` | no | unset | path to a PEM bundle of CA certificates that replaces the system roots when verifying a `rediss://` server. It must hold at least one certificate. Setting it with a bare or `redis://` address is a startup error |
+| `TURNIP_REDIS_CA_PATH` | no | unset | path to a PEM bundle of CA certificates (a key of the mounted `turnip-server-secrets` Secret, under `/etc/turnip/secrets`, or a file you mount) that replaces the system roots when verifying a `rediss://` server. It must hold at least one certificate. Setting it with a bare or `redis://` address is a startup error |
 | `TURNIP_HTTP_ADDR` | yes, preset by `deploy/base` (`:8080`) | | HTTP bind address (webhooks, `/healthz`, `/readyz`, `/metrics`) |
 | `TURNIP_GRPC_ADDR` | yes, preset by `deploy/base` (`:9090`) | | gRPC bind address (Runner to Server log/result streaming) |
 | `TURNIP_RUNNER_SERVER_ADDR` | yes, set by `deploy/base` in the Deployment's `env` (`turnip-server.<Server namespace>.svc:9090`) | | address a Runner Pod dials to reach this Server: a Service DNS name, not the bind address above. `deploy/base` builds it from the Pod's own namespace, so a value merged into the ConfigMap is ignored; to change it, patch that `env` entry (see [Choosing namespaces](deployment.md#choosing-namespaces)) |
@@ -41,8 +54,13 @@ Server. To install outside the base's namespaces, see the namespace
 guidance in [Installing turnip](deployment.md#installing-turnip).
 
 In `deploy/base`, the two credential-shaped values
-(`TURNIP_GITHUB_WEBHOOK_SECRET`, `TURNIP_GITHUB_PRIVATE_KEY`) come from a
-Secret; everything else comes from a ConfigMap an overlay fills in; see
+(`TURNIP_GITHUB_WEBHOOK_SECRET`, `TURNIP_GITHUB_PRIVATE_KEY`) come from
+the `turnip-server-secrets` Secret; everything else comes from the
+`turnip-server-config` ConfigMap an overlay fills in. The base also
+mounts the whole `turnip-server-secrets` Secret at `/etc/turnip/secrets`, so a
+setting that names a file points into it (for example
+`TURNIP_REDIS_PASSWORD_PATH=/etc/turnip/secrets/redis-password`, with
+`redis-password` a key of that Secret); see
 [Installing turnip](deployment.md#installing-turnip) for the two values
 (`TURNIP_REDIS_ADDR`, `TURNIP_GITHUB_APP_ID`) that have no preset and a
 real deployment always needs to set itself, whichever install path you

@@ -7,6 +7,30 @@
 What to check in the Server's own logs and the cluster when something
 goes wrong beneath what a pull request sees.
 
+## The Server Pod does not start
+
+**Symptom**: `kubectl get pods` shows the Server Pod in
+`CreateContainerConfigError`, or in `ContainerCreating` for a long time.
+
+- **`secret "turnip-server-secrets" not found`** (in `kubectl describe pod`): the
+  Server reads the GitHub App's credentials from a Secret named
+  `turnip-server-secrets`, which you create beside the base. Create it with the
+  keys `webhook-secret` and `private-key`; see
+  [Installing turnip](deployment.md#installing-turnip).
+- **`couldn't find key webhook-secret in Secret <namespace>/turnip-server-secrets`**
+  (or the same for `private-key`): the Secret exists but lacks a required
+  key. Add it, then run `kubectl rollout restart deployment/turnip-server`.
+
+## An unknown settings warning at startup
+
+**Symptom**: the Server runs, but its log has an `unknown settings`
+warning with `names=[...]`.
+
+- A `TURNIP_*` variable in the Server's environment is mistyped or no
+  longer read. The Server ignores it and starts anyway, so the setting
+  you meant to change keeps its default. Fix the name; see
+  [Server settings](server-settings.md).
+
 ## GitHub API errors
 
 **Symptom**: a check run or comment never appears at all, or appears much
@@ -198,7 +222,10 @@ them print the password.
   `user:password@`. The address is delivered through a ConfigMap, so a
   password there would not be secret. Keep the username if you need one
   (`rediss://user@host:6379`) and set `TURNIP_REDIS_PASSWORD_PATH` (a
-  mounted Secret file) or `TURNIP_REDIS_PASSWORD`.
+  file in the mounted `turnip-server-secrets` Secret, such as
+  `/etc/turnip/secrets/redis-password`) or `TURNIP_REDIS_PASSWORD`.
+  After changing a setting, run
+  `kubectl rollout restart deployment/turnip-server`.
 - **`must not set skip_verify`**: the address has `skip_verify` with any
   value. turnip always verifies the Redis certificate. Remove it; for a
   private CA, set `TURNIP_REDIS_CA_PATH` instead.

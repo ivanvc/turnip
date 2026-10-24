@@ -141,6 +141,35 @@ func (e *MissingEnvVarsError) Error() string {
 // TURNIP_MAX_COMMENTS_PER_PROJECT is unset.
 const defaultMaxCommentsPerProject = 5
 
+// SettingNames is every TURNIP_* variable the Server reads, in the
+// settings index's order. docs_reference_test.go checks it against both
+// what ConfigFromEnv reads and the settings Reference.
+func SettingNames() []string {
+	return []string{
+		"TURNIP_GITHUB_APP_ID",
+		"TURNIP_GITHUB_PRIVATE_KEY",
+		"TURNIP_GITHUB_PRIVATE_KEY_PATH",
+		"TURNIP_GITHUB_WEBHOOK_SECRET",
+		"TURNIP_REDIS_ADDR",
+		"TURNIP_REDIS_PASSWORD",
+		"TURNIP_REDIS_PASSWORD_PATH",
+		"TURNIP_REDIS_CA_PATH",
+		"TURNIP_HTTP_ADDR",
+		"TURNIP_GRPC_ADDR",
+		"TURNIP_RUNNER_NAMESPACE",
+		"TURNIP_RUNNER_SERVER_ADDR",
+		"TURNIP_RUNNER_IMAGE",
+		"TURNIP_LOG_LEVEL",
+		"TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS",
+		"TURNIP_MAX_COMMENTS_PER_PROJECT",
+		"TURNIP_RUNNER_SERVICE_ACCOUNT",
+		"TURNIP_ALLOWED_OVERRIDES",
+		"TURNIP_CLONE_SUBMODULES",
+		"TURNIP_ALLOWED_IMAGES",
+		"TURNIP_MUTATION_REQUIREMENTS",
+	}
+}
+
 // ConfigFromEnv builds a Config from env, an injectable lookup function
 // (mirroring internal/runner.ConfigFromEnv's testability-seam convention)
 // rather than calling os.Getenv directly. plugins is the registry the

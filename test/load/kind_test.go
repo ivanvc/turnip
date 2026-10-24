@@ -83,6 +83,11 @@ func TestKind_RBACAndNetworking(t *testing.T) {
 	t.Run("Server log reports the Runner namespace and Server address", func(t *testing.T) {
 		checkServerLog(t, ctx, serverNS, runnerNS, serverAddr)
 	})
+	// The base mounts every Secret key and sets only known settings, so
+	// the Server has no unknown TURNIP_* variable to warn about.
+	t.Run("Server log has no unknown settings warning", func(t *testing.T) {
+		checkNoUnknownSettings(t, ctx, serverNS)
+	})
 }
 
 func envOr(name, def string) string {
@@ -157,6 +162,20 @@ func checkServerLog(t *testing.T, ctx context.Context, serverNS, runnerNS, serve
 		pattern := regexp.MustCompile(`"?` + regexp.QuoteMeta(field) + `"?[=:]"?` + regexp.QuoteMeta(want) + `"?(\s|,|}|$)`)
 		assert.Regexp(t, pattern, logs, "Server log lacks %s=%s", field, want)
 	}
+}
+
+// checkNoUnknownSettings requires the Server's log to hold no
+// "unknown settings" line, which the Server logs when the environment
+// holds a TURNIP_* name it does not read.
+func checkNoUnknownSettings(t *testing.T, ctx context.Context, serverNS string) {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, "kubectl", "-n", serverNS, "logs", "deployment/turnip-server")
+	out, err := cmd.CombinedOutput()
+	if handleKindTimeout(t, ctx, "kubectl logs deployment/turnip-server", err) {
+		return
+	}
+	require.NoError(t, err, "kubectl logs deployment/turnip-server: %s", out)
+	assert.NotContains(t, string(out), "unknown settings", "Server log has an unknown settings warning")
 }
 
 // handleKindTimeout reports a context-deadline failure as an inconclusive

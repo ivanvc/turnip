@@ -5,7 +5,7 @@ kind: Kustomization
 # committed as plain YAML): before `kubectl apply -k deploy/overlays/kind`,
 # create the Secret this overlay references by name:
 #
-#   kubectl create secret generic turnip-github-app -n turnip-system \
+#   kubectl create secret generic turnip-server-secrets -n turnip-system \
 #     --from-literal=webhook-secret=<your-webhook-secret> \
 #     --from-file=private-key=<path-to-your-app-private-key.pem>
 #
