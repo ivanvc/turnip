@@ -27,6 +27,11 @@ const (
 	// FailureToolNotStarted: the Plugin could not start the tool, so there
 	// is no exit code.
 	FailureToolNotStarted
+	// FailureTimedOut: the tool wrote nothing for the idle timeout and the
+	// Runner stopped it. The timeout is in the result's error message.
+	FailureTimedOut
+	// FailureStopped: the Runner was told to stop and stopped the tool.
+	FailureStopped
 )
 
 var failureToProto = map[FailureCategory]pb.FailureCategory{
@@ -35,6 +40,8 @@ var failureToProto = map[FailureCategory]pb.FailureCategory{
 	FailureCloneFailed:     pb.FailureCategory_FAILURE_CATEGORY_CLONE_FAILED,
 	FailureWorkspaceFailed: pb.FailureCategory_FAILURE_CATEGORY_WORKSPACE_FAILED,
 	FailureToolNotStarted:  pb.FailureCategory_FAILURE_CATEGORY_TOOL_NOT_STARTED,
+	FailureTimedOut:        pb.FailureCategory_FAILURE_CATEGORY_TIMED_OUT,
+	FailureStopped:         pb.FailureCategory_FAILURE_CATEGORY_STOPPED,
 }
 
 // FailureCategoryToProto translates for the wire. An unknown value sends

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -263,4 +264,43 @@ func TestConfigFromEnv_LegacyK8sNamespaceIgnored(t *testing.T) {
 	}), NewPluginRegistry())
 	require.NoError(t, err)
 	assert.Empty(t, cfg.RunnerNamespace)
+}
+
+func TestConfigFromEnv_RunnerTimeoutDefaults(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(nil), NewPluginRegistry())
+	require.NoError(t, err)
+	assert.Equal(t, 30*time.Minute, cfg.RunnerIdleTimeout)
+	assert.Equal(t, 4*time.Hour, cfg.RunnerDeadline)
+}
+
+func TestConfigFromEnv_RunnerTimeoutsParse(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(map[string]string{
+		"TURNIP_RUNNER_IDLE_TIMEOUT": "10m",
+		"TURNIP_RUNNER_DEADLINE":     "90m",
+	}), NewPluginRegistry())
+	require.NoError(t, err)
+	assert.Equal(t, 10*time.Minute, cfg.RunnerIdleTimeout)
+	assert.Equal(t, 90*time.Minute, cfg.RunnerDeadline)
+}
+
+func TestConfigFromEnv_RunnerDeadlineNotLongerThanIdleTimeout(t *testing.T) {
+	for _, deadline := range []string{"1h", "2h"} {
+		_, err := ConfigFromEnv(envMap(map[string]string{
+			"TURNIP_RUNNER_IDLE_TIMEOUT": "2h",
+			"TURNIP_RUNNER_DEADLINE":     deadline,
+		}), NewPluginRegistry())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "TURNIP_RUNNER_DEADLINE")
+		assert.Contains(t, err.Error(), "TURNIP_RUNNER_IDLE_TIMEOUT")
+	}
+}
+
+func TestConfigFromEnv_RunnerTimeoutMalformed(t *testing.T) {
+	for _, name := range []string{"TURNIP_RUNNER_IDLE_TIMEOUT", "TURNIP_RUNNER_DEADLINE"} {
+		for _, raw := range []string{"four hours", "0s", "-5m", "30"} {
+			_, err := ConfigFromEnv(envMap(map[string]string{name: raw}), NewPluginRegistry())
+			require.Error(t, err, "%s=%s", name, raw)
+			assert.Contains(t, err.Error(), name)
+		}
+	}
 }

@@ -96,6 +96,11 @@ enum FailureCategory {
   FAILURE_CATEGORY_WORKSPACE_FAILED = 3;
   // The Plugin could not start the tool, so no exit code exists.
   FAILURE_CATEGORY_TOOL_NOT_STARTED = 4;
+  // The tool wrote nothing for the idle timeout and the Runner stopped it.
+  // The idle timeout is carried in the result's error message.
+  FAILURE_CATEGORY_TIMED_OUT = 5;
+  // The Runner was told to stop (SIGTERM) and stopped the tool.
+  FAILURE_CATEGORY_STOPPED = 6;
 }
 
 message ChangeSummary {

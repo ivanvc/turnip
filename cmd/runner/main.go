@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/ivanvc/turnip/internal/logging"
 	"github.com/ivanvc/turnip/internal/runner"
@@ -36,5 +38,18 @@ func main() {
 		os.Exit(runner.RunCredential(ctx, cfg, os.Args[2], os.Stdin, os.Stdout, os.Stderr))
 	}
 
-	os.Exit(runner.Run(ctx, cfg))
+	// The kubelet sends SIGTERM at the Job's deadline, on an eviction, or
+	// when the Pod is deleted. Caught here, it stops the tool rather than
+	// the Runner, which then still reports the result within the Pod's
+	// grace period. Only this mode catches it: a clone told to stop simply
+	// ends, and the sweep finalizes its Job.
+	stop := make(chan struct{})
+	terms := make(chan os.Signal, 1)
+	signal.Notify(terms, syscall.SIGTERM)
+	go func() {
+		<-terms
+		close(stop)
+	}()
+
+	os.Exit(runner.RunWithStop(ctx, cfg, stop))
 }

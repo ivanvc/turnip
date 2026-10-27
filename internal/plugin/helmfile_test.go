@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,13 +23,13 @@ type recordedCall struct {
 // what a Plugin is handed.
 func fakeRunner(t *testing.T, calls *[]recordedCall, lines []Line, exitCode int, err error) commandRunner {
 	t.Helper()
-	return func(ctx context.Context, dir, name string, args []string, version string, rec *Record) (int, error) {
+	return func(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, rec *Record) (int, StopReason, error) {
 		*calls = append(*calls, recordedCall{dir: dir, name: name, args: args})
 		for _, l := range lines {
 			rec.Append(l.Stream, l.Text)
 		}
 		rec.Close()
-		return exitCode, err
+		return exitCode, StopNone, err
 	}
 }
 
@@ -739,4 +740,20 @@ func TestHelmfilePlugin_ChangeCountIgnoresStderrBetweenReleases(t *testing.T) {
 	result, err := p.Execute(context.Background(), "diff", ExecuteOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.ChangeSummary.Change, "web is unchanged; only api has a body")
+}
+
+func TestHelmfilePlugin_PassesTheIdleTimeoutAndReportsTheStop(t *testing.T) {
+	var gotIdle time.Duration
+	p := &HelmfilePlugin{run: func(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, rec *Record) (int, StopReason, error) {
+		gotIdle = idle
+		rec.Append(Stderr, "interrupted")
+		rec.Close()
+		return 130, StopIdle, nil
+	}}
+
+	result, err := p.Execute(context.Background(), "diff", ExecuteOptions{IdleTimeout: 30 * time.Minute})
+	require.NoError(t, err)
+	assert.Equal(t, 30*time.Minute, gotIdle)
+	assert.Equal(t, StopIdle, result.Stopped)
+	assert.Equal(t, 130, result.ExitCode)
 }

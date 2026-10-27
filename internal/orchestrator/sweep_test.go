@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/ivanvc/turnip/internal/config"
 	"github.com/ivanvc/turnip/internal/github"
@@ -89,7 +90,7 @@ func TestSweepOnce_LeavesNotYetExpiredRecordUntouched(t *testing.T) {
 }
 
 func TestSweepOnce_LeavesStartedRecordUntouched(t *testing.T) {
-	o, client := testSweepOrchestrator(t, &fakeJobCreator{t: t})
+	o, client := testSweepOrchestrator(t, runningJob(t))
 	require.NoError(t, o.records.Create(context.Background(), sweepTestRecord("op-1", time.Now().Add(-time.Minute), true)))
 
 	o.sweepOnce(context.Background())
@@ -162,6 +163,7 @@ func TestSweepOnce_TimeoutCheckRunTitleIsTheDiagnostic(t *testing.T) {
 	assert.Contains(t, client.updatedCheckRun.Title, "Pod still Pending")
 	assert.NotEmpty(t, client.updatedCheckRun.Summary, "GitHub rejects check-run output without a summary")
 	assert.Equal(t, "The Runner never reported back within the start timeout.", client.updatedCheckRun.Summary)
+	assert.Equal(t, "failure", client.updatedCheckRun.Conclusion)
 }
 
 func TestSweepOnce_TimeoutCompletionFailureIsNotedAsInProgress(t *testing.T) {
@@ -211,7 +213,7 @@ func (u *untouchedLocks) ReleaseLock(ctx context.Context, projectKey string, prN
 }
 
 func TestSweepOnce_AbandonsStartedRecordAfter24Hours(t *testing.T) {
-	o, client := testSweepOrchestrator(t, &fakeJobCreator{t: t})
+	o, client := testSweepOrchestrator(t, runningJob(t))
 	o.locks = &untouchedLocks{t: t}
 	require.NoError(t, o.records.Create(context.Background(), abandonableRecord("op-1", abandonAfter+time.Minute)))
 
@@ -227,7 +229,7 @@ func TestSweepOnce_AbandonsStartedRecordAfter24Hours(t *testing.T) {
 }
 
 func TestSweepOnce_LeavesRecordStartedLessThan24HoursAgo(t *testing.T) {
-	o, client := testSweepOrchestrator(t, &fakeJobCreator{t: t})
+	o, client := testSweepOrchestrator(t, runningJob(t))
 	require.NoError(t, o.records.Create(context.Background(), abandonableRecord("op-1", 23*time.Hour)))
 
 	o.sweepOnce(context.Background())
@@ -239,7 +241,7 @@ func TestSweepOnce_LeavesRecordStartedLessThan24HoursAgo(t *testing.T) {
 }
 
 func TestSweepOnce_ResultAfterAbandonmentIsIgnored(t *testing.T) {
-	o, client := testSweepOrchestrator(t, &fakeJobCreator{t: t})
+	o, client := testSweepOrchestrator(t, runningJob(t))
 	require.NoError(t, o.records.Create(context.Background(), abandonableRecord("op-1", abandonAfter+time.Minute)))
 	r := publishedSweep(t, o, "op-1")
 	require.Equal(t, abandonedOutput, r.Output)
@@ -251,7 +253,7 @@ func TestSweepOnce_ResultAfterAbandonmentIsIgnored(t *testing.T) {
 }
 
 func TestSweepOnce_ConcurrentSweepsAbandonOnce(t *testing.T) {
-	o, _ := testSweepOrchestrator(t, &fakeJobCreator{t: t})
+	o, _ := testSweepOrchestrator(t, runningJob(t))
 	require.NoError(t, o.records.Create(context.Background(), abandonableRecord("op-1", abandonAfter+time.Minute)))
 
 	r := finalizedResult(t, o, "op-1", func() {
@@ -267,4 +269,216 @@ func TestSweepOnce_ConcurrentSweepsAbandonOnce(t *testing.T) {
 	})
 
 	assert.Equal(t, abandonedOutput, r.Output, "finalizedResult requires exactly one result")
+}
+
+// runningJob is a Job client whose every Job is still running its Pod.
+func runningJob(t *testing.T) *fakeJobCreator {
+	return &fakeJobCreator{t: t, statusFn: func(ctx context.Context, jobName string) (*jobs.JobStatus, error) {
+		return &jobs.JobStatus{JobFound: true, Active: 1, PodPhase: corev1.PodRunning}, nil
+	}}
+}
+
+// jobWithStatus is a Job client reporting status for every Job.
+func jobWithStatus(t *testing.T, status *jobs.JobStatus) *fakeJobCreator {
+	return &fakeJobCreator{t: t, statusFn: func(ctx context.Context, jobName string) (*jobs.JobStatus, error) {
+		return status, nil
+	}}
+}
+
+// startedSweepRecord is a started record dispatched an hour ago: past its
+// start deadline, far from abandonment.
+func startedSweepRecord(operationID string) *OperationRecord {
+	rec := sweepTestRecord(operationID, time.Now().Add(-55*time.Minute), true)
+	rec.CreatedAt = time.Now().Add(-time.Hour)
+	return rec
+}
+
+// Each row of the stopped diagnostics, as the sweep finalizes a started
+// Operation whose Job ended without a result.
+func TestSweepOnce_FinalizesStartedOperationWhoseJobEnded(t *testing.T) {
+	failed := func(reason string) jobs.JobStatus {
+		return jobs.JobStatus{JobFound: true, Finished: true, FailedReason: reason, Failed: 1}
+	}
+	tests := []struct {
+		name   string
+		status func() *jobs.JobStatus
+		want   string
+	}{
+		{"the Job is gone", func() *jobs.JobStatus {
+			return &jobs.JobStatus{JobFound: false}
+		}, "No Job/Pod found for this operation; it may have been deleted or never successfully scheduled"},
+		{"the Pod is gone", func() *jobs.JobStatus {
+			return &jobs.JobStatus{JobFound: true, Active: 1}
+		}, "No Job/Pod found for this operation; it may have been deleted or never successfully scheduled"},
+		{"the Job's deadline, its Pod already deleted", func() *jobs.JobStatus {
+			s := failed("DeadlineExceeded")
+			s.Deadline = 4 * time.Hour
+			return &s
+		}, "Job turnip-runner-op-1: stopped at its deadline of 4h0m0s"},
+		{"the Job's deadline, its Pod gone before the Failed condition", func() *jobs.JobStatus {
+			return &jobs.JobStatus{JobFound: true, FailedReason: "DeadlineExceeded", Deadline: 4 * time.Hour}
+		}, "Job turnip-runner-op-1: stopped at its deadline of 4h0m0s"},
+		{"the Job's deadline, read from the setting", func() *jobs.JobStatus {
+			s := failed("DeadlineExceeded")
+			s.PodPhase = corev1.PodFailed
+			s.TerminatedContainer, s.TerminatedReason = "runner", "Error"
+			return &s
+		}, "Job turnip-runner-op-1: stopped at its deadline of 2h0m0s"},
+		{"an out-of-memory Runner", func() *jobs.JobStatus {
+			s := failed("BackoffLimitExceeded")
+			s.PodPhase = corev1.PodFailed
+			s.TerminatedContainer, s.TerminatedReason = "runner", "OOMKilled"
+			return &s
+		}, "Job turnip-runner-op-1: container runner terminated (OOMKilled)"},
+		{"an evicted Pod", func() *jobs.JobStatus {
+			s := failed("BackoffLimitExceeded")
+			s.PodPhase = corev1.PodFailed
+			s.Evicted = true
+			return &s
+		}, "Job turnip-runner-op-1: Pod evicted"},
+		{"a Job that completed", func() *jobs.JobStatus {
+			return &jobs.JobStatus{JobFound: true, Finished: true, Succeeded: 1, PodPhase: corev1.PodSucceeded}
+		}, "Job turnip-runner-op-1: finished without reporting a result"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o, client := testSweepOrchestrator(t, jobWithStatus(t, tt.status()))
+			o.runnerDeadline = 2 * time.Hour
+			locks := &fakeLockManager{}
+			o.locks = locks
+			require.NoError(t, o.records.Create(context.Background(), startedSweepRecord("op-1")))
+
+			r := publishedSweep(t, o, "op-1")
+
+			assert.Equal(t, tt.want, r.Output, "the diagnostic is the Project's output")
+			assert.False(t, r.Success)
+			assert.Equal(t, 1, client.updateCheckRunCalled)
+			assert.Equal(t, "failure", client.updatedCheckRun.Conclusion)
+			assert.Equal(t, tt.want, client.updatedCheckRun.Title)
+			assert.Equal(t, "The Runner stopped before reporting a result.", client.updatedCheckRun.Summary)
+			assert.Equal(t, []lock.Event{lock.EventPlanTimedOut}, locks.appliedEvents(), "a plan takes the plan timeout event")
+			rec, err := o.records.get(context.Background(), "op-1")
+			require.NoError(t, err)
+			assert.Nil(t, rec, "the record is deleted")
+		})
+	}
+}
+
+func TestSweepOnce_StoppedMutatingOperationTakesTheMutatingEvent(t *testing.T) {
+	o, _ := testSweepOrchestrator(t, jobWithStatus(t, &jobs.JobStatus{JobFound: true, Finished: true, FailedReason: "DeadlineExceeded", Deadline: time.Hour}))
+	locks := &fakeLockManager{}
+	o.locks = locks
+	rec := startedSweepRecord("op-1")
+	rec.Operation = "apply"
+	require.NoError(t, o.records.Create(context.Background(), rec))
+
+	r := publishedSweep(t, o, "op-1")
+
+	assert.Equal(t, "Job turnip-runner-op-1: stopped at its deadline of 1h0m0s", r.Output)
+	assert.Equal(t, []lock.Event{lock.EventMutatingTimedOut}, locks.appliedEvents())
+}
+
+// A started Operation whose Job still runs is the Runner's to finish:
+// whether its Pod is running, or its Job has failed (or has only a
+// FailureTarget) while its Pod is given its grace period to report.
+func TestSweepOnce_LeavesStartedOperationWhoseJobRuns(t *testing.T) {
+	tests := []struct {
+		name   string
+		status *jobs.JobStatus
+		err    error
+	}{
+		{"running", &jobs.JobStatus{JobFound: true, Active: 1, PodPhase: corev1.PodRunning}, nil},
+		{"its Pod stopping, not yet failed", &jobs.JobStatus{JobFound: true, Active: 1, PodPhase: corev1.PodRunning, TerminatedContainer: "runner", TerminatedReason: "Error"}, nil},
+		{"its deadline reached, its Pod still terminating", &jobs.JobStatus{JobFound: true, FailedReason: "DeadlineExceeded", PodPhase: corev1.PodRunning}, nil},
+		{"failed, its Pod still running", &jobs.JobStatus{JobFound: true, Finished: true, Failed: 1, FailedReason: "DeadlineExceeded", PodPhase: corev1.PodRunning}, nil},
+		{"failed, its Pod still pending", &jobs.JobStatus{JobFound: true, Finished: true, Failed: 1, FailedReason: "DeadlineExceeded", PodPhase: corev1.PodPending}, nil},
+		{"its status unreadable", nil, errors.New("apiserver unavailable")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			read := 0
+			jobsClient := &fakeJobCreator{t: t, statusFn: func(ctx context.Context, jobName string) (*jobs.JobStatus, error) {
+				read++
+				assert.Equal(t, "turnip-runner-op-1", jobName)
+				return tt.status, tt.err
+			}}
+			o, client := testSweepOrchestrator(t, jobsClient)
+			o.locks = &untouchedLocks{t: t}
+			require.NoError(t, o.records.Create(context.Background(), startedSweepRecord("op-1")))
+
+			o.sweepOnce(context.Background())
+
+			assert.Equal(t, 1, read, "the sweep reads the Job of a started Operation")
+			assert.Zero(t, client.updateCheckRunCalled)
+			rec, err := o.records.get(context.Background(), "op-1")
+			require.NoError(t, err)
+			require.NotNil(t, rec)
+			assert.False(t, rec.Finalized)
+		})
+	}
+}
+
+// A started record with no Job name has no Job to read; it is left to
+// abandonment rather than taken for a Runner that ended.
+func TestSweepOnce_LeavesStartedOperationWithoutJobName(t *testing.T) {
+	jobsClient := &fakeJobCreator{t: t, statusFn: func(ctx context.Context, jobName string) (*jobs.JobStatus, error) {
+		t.Error("no Job name, nothing to read")
+		return nil, nil
+	}}
+	o, client := testSweepOrchestrator(t, jobsClient)
+	rec := startedSweepRecord("op-1")
+	rec.JobName = ""
+	require.NoError(t, o.records.Create(context.Background(), rec))
+
+	o.sweepOnce(context.Background())
+
+	assert.Zero(t, client.updateCheckRunCalled)
+	got, err := o.records.get(context.Background(), "op-1")
+	require.NoError(t, err)
+	assert.NotNil(t, got)
+}
+
+// A Runner that reported on its way out finalized the Operation as the
+// sweep read its ended Job: the sweep's claim loses, and nothing is
+// finalized twice.
+func TestSweepOnce_StoppedClaimLosesToResult(t *testing.T) {
+	var o *Orchestrator
+	jobsClient := &fakeJobCreator{t: t, statusFn: func(ctx context.Context, jobName string) (*jobs.JobStatus, error) {
+		_, claimed, err := o.records.ClaimForResult(ctx, "op-1")
+		require.NoError(t, err)
+		assert.True(t, claimed, "the result claims first")
+		return &jobs.JobStatus{JobFound: true, Finished: true, FailedReason: "DeadlineExceeded"}, nil
+	}}
+	o, client := testSweepOrchestrator(t, jobsClient)
+	o.locks = &untouchedLocks{t: t}
+	require.NoError(t, o.records.Create(context.Background(), startedSweepRecord("op-1")))
+
+	o.sweepOnce(context.Background())
+
+	assert.Zero(t, client.updateCheckRunCalled, "the sweep leaves the check to the result")
+	rec, err := o.records.get(context.Background(), "op-1")
+	require.NoError(t, err)
+	require.NotNil(t, rec, "the result's finalization deletes it, not the sweep")
+	assert.True(t, rec.Finalized)
+}
+
+// Two replicas finding the same ended Job: exactly one finalizes it.
+func TestSweepOnce_ConcurrentSweepsFinalizeStoppedOnce(t *testing.T) {
+	o, client := testSweepOrchestrator(t, jobWithStatus(t, &jobs.JobStatus{JobFound: true, Finished: true, FailedReason: "DeadlineExceeded", Deadline: time.Hour}))
+	require.NoError(t, o.records.Create(context.Background(), startedSweepRecord("op-1")))
+
+	r := finalizedResult(t, o, "op-1", func() {
+		var wg sync.WaitGroup
+		for range 2 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				o.sweepOnce(context.Background())
+			}()
+		}
+		wg.Wait()
+	})
+
+	assert.Equal(t, "Job turnip-runner-op-1: stopped at its deadline of 1h0m0s", r.Output, "finalizedResult requires exactly one result")
+	assert.Equal(t, 1, client.updateCheckRunCalled)
 }

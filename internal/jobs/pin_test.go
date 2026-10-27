@@ -132,10 +132,12 @@ func TestBuildJob_PinnedHelmfileJob(t *testing.T) {
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            ptr.To(int32(0)),
 			TTLSecondsAfterFinished: ptr.To(int32(900)),
+			ActiveDeadlineSeconds:   ptr.To(int64(4 * 3600)),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					ServiceAccountName: "turnip-runner",
-					RestartPolicy:      corev1.RestartPolicyNever,
+					ServiceAccountName:            "turnip-runner",
+					RestartPolicy:                 corev1.RestartPolicyNever,
+					TerminationGracePeriodSeconds: ptr.To(int64(60)),
 					InitContainers: []corev1.Container{
 						{
 							Name:         "copy-runner",
@@ -157,7 +159,7 @@ func TestBuildJob_PinnedHelmfileJob(t *testing.T) {
 							Image:           "ghcr.io/helmfile/helmfile:v1.7.4",
 							ImagePullPolicy: corev1.PullAlways,
 							Command:         []string{"/turnip/bin/runner"},
-							Env:             env(),
+							Env:             env(corev1.EnvVar{Name: "TURNIP_IDLE_TIMEOUT", Value: "30m0s"}),
 							VolumeMounts:    []corev1.VolumeMount{binMount, workspaceMount, reportIdentityMount},
 						},
 					},

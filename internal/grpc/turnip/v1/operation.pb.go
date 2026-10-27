@@ -36,6 +36,11 @@ const (
 	FailureCategory_FAILURE_CATEGORY_WORKSPACE_FAILED FailureCategory = 3
 	// The Plugin could not start the tool, so no exit code exists.
 	FailureCategory_FAILURE_CATEGORY_TOOL_NOT_STARTED FailureCategory = 4
+	// The tool wrote nothing for the idle timeout and the Runner stopped it.
+	// The idle timeout is carried in the result's error message.
+	FailureCategory_FAILURE_CATEGORY_TIMED_OUT FailureCategory = 5
+	// The Runner was told to stop (SIGTERM) and stopped the tool.
+	FailureCategory_FAILURE_CATEGORY_STOPPED FailureCategory = 6
 )
 
 // Enum value maps for FailureCategory.
@@ -46,6 +51,8 @@ var (
 		2: "FAILURE_CATEGORY_CLONE_FAILED",
 		3: "FAILURE_CATEGORY_WORKSPACE_FAILED",
 		4: "FAILURE_CATEGORY_TOOL_NOT_STARTED",
+		5: "FAILURE_CATEGORY_TIMED_OUT",
+		6: "FAILURE_CATEGORY_STOPPED",
 	}
 	FailureCategory_value = map[string]int32{
 		"FAILURE_CATEGORY_UNSPECIFIED":      0,
@@ -53,6 +60,8 @@ var (
 		"FAILURE_CATEGORY_CLONE_FAILED":     2,
 		"FAILURE_CATEGORY_WORKSPACE_FAILED": 3,
 		"FAILURE_CATEGORY_TOOL_NOT_STARTED": 4,
+		"FAILURE_CATEGORY_TIMED_OUT":        5,
+		"FAILURE_CATEGORY_STOPPED":          6,
 	}
 )
 
@@ -707,13 +716,15 @@ const file_turnip_v1_operation_proto_rawDesc = "" +
 	"\x03add\x18\x01 \x01(\x05R\x03add\x12\x16\n" +
 	"\x06change\x18\x02 \x01(\x05R\x06change\x12\x18\n" +
 	"\adestroy\x18\x03 \x01(\x05R\adestroy\"\x1a\n" +
-	"\x18ExecuteOperationResponse*\xc6\x01\n" +
+	"\x18ExecuteOperationResponse*\x84\x02\n" +
 	"\x0fFailureCategory\x12 \n" +
 	"\x1cFAILURE_CATEGORY_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cFAILURE_CATEGORY_TOOL_EXITED\x10\x01\x12!\n" +
 	"\x1dFAILURE_CATEGORY_CLONE_FAILED\x10\x02\x12%\n" +
 	"!FAILURE_CATEGORY_WORKSPACE_FAILED\x10\x03\x12%\n" +
-	"!FAILURE_CATEGORY_TOOL_NOT_STARTED\x10\x042\xda\x01\n" +
+	"!FAILURE_CATEGORY_TOOL_NOT_STARTED\x10\x04\x12\x1e\n" +
+	"\x1aFAILURE_CATEGORY_TIMED_OUT\x10\x05\x12\x1c\n" +
+	"\x18FAILURE_CATEGORY_STOPPED\x10\x062\xda\x01\n" +
 	"\x10OperationService\x12]\n" +
 	"\x10ExecuteOperation\x12\".turnip.v1.ExecuteOperationRequest\x1a#.turnip.v1.ExecuteOperationResponse(\x01\x12g\n" +
 	"\x14FetchCloneCredential\x12&.turnip.v1.FetchCloneCredentialRequest\x1a'.turnip.v1.FetchCloneCredentialResponseB2Z0github.com/ivanvc/turnip/internal/grpc/turnip/v1b\x06proto3"

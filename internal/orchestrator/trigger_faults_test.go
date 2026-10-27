@@ -139,7 +139,7 @@ func TestSweepOnce_StopAfterATimeoutClaimStillFinalizesTheOperation(t *testing.T
 func TestSweepOnce_StopAfterAnAbandonClaimStillDeletesTheRecord(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	o, _ := testSweepOrchestrator(t, &fakeJobCreator{t: t})
+	o, _ := testSweepOrchestrator(t, runningJob(t))
 	o.redis.AddHook(&redisFaults{after: func(cmd redis.Cmder) {
 		// The claim's mode is an argument of its own; the script's text
 		// names every mode.
@@ -155,6 +155,35 @@ func TestSweepOnce_StopAfterAnAbandonClaimStillDeletesTheRecord(t *testing.T) {
 
 	require.Error(t, ctx.Err(), "the stop landed inside the tick")
 	assert.Equal(t, abandonedOutput, r.Output)
+	rec, err := o.records.get(context.Background(), "op-1")
+	require.NoError(t, err)
+	assert.Nil(t, rec, "the record is deleted, not left finalized until it expires")
+}
+
+func TestSweepOnce_StopAfterAStoppedClaimStillFinalizes(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	o, client := testSweepOrchestrator(t, jobWithStatus(t, &jobs.JobStatus{JobFound: false}))
+	var lockCtxErr error
+	o.locks = &fakeLockManager{applyFunc: func(ctx context.Context, _ string, _ int, _ lock.Event, _ *lock.PlanRecord) (lock.Transition, error) {
+		lockCtxErr = ctx.Err()
+		return lock.Transition{From: lock.StatePlanning, To: lock.StatePlanStale}, nil
+	}}
+	o.redis.AddHook(&redisFaults{after: func(cmd redis.Cmder) {
+		for _, arg := range cmd.Args() {
+			if arg == "stopped" {
+				cancel()
+			}
+		}
+	}})
+	require.NoError(t, o.records.Create(context.Background(), startedSweepRecord("op-1")))
+
+	r := finalizedResult(t, o, "op-1", func() { o.sweepOnce(ctx) })
+
+	require.Error(t, ctx.Err(), "the stop landed inside the tick")
+	assert.Equal(t, noJobDiagnostic, r.Output)
+	require.NoError(t, lockCtxErr, "the Lock event is applied on a context the stop does not cancel")
+	assert.Equal(t, 1, client.updateCheckRunCalled)
 	rec, err := o.records.get(context.Background(), "op-1")
 	require.NoError(t, err)
 	assert.Nil(t, rec, "the record is deleted, not left finalized until it expires")

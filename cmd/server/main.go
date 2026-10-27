@@ -102,7 +102,7 @@ func run(cfg orchestrator.Config, plugins orchestrator.PluginRegistry) error {
 		cfg.AllowedOverrides,
 		cfg.CloneSubmodules,
 		cfg.MutationRequirements,
-	)
+	).WithRunnerTimeouts(cfg.RunnerIdleTimeout, cfg.RunnerDeadline)
 
 	pingRedis := func(ctx context.Context) error { return redisClient.Ping(ctx).Err() }
 	readyTransport := health.RedisTransport{

@@ -42,6 +42,8 @@ out of the warning.
 | `TURNIP_ALLOWED_OVERRIDES` | no | permits nothing | [comma-separated list of the fields a repository's own config file may set](#allowed-overrides) |
 | `TURNIP_ALLOWED_IMAGES` | no | only the built-in aliases | [comma-separated `tool:image@glob` entries](runner-access.md#running-a-custom-image), each allowing a fully qualified image for one tool |
 | `TURNIP_MUTATION_REQUIREMENTS` | no | requires nothing | [comma-separated conditions a pull request must meet](#mutation-requirements) before turnip runs a mutating command |
+| `TURNIP_RUNNER_IDLE_TIMEOUT` | no | `30m` | how long a Runner lets its tool write nothing before stopping it; a positive Go duration (`30m`, `2h`). A safety bound, not a sizing choice: raise it for a tool that stays quiet through a long step |
+| `TURNIP_RUNNER_DEADLINE` | no | `4h` | the longest a Runner Job may live, set as the Job's `activeDeadlineSeconds` so Kubernetes stops it even when no Server is running; a positive Go duration that must be longer than `TURNIP_RUNNER_IDLE_TIMEOUT`, so a silent tool is stopped with the clearer idle message first |
 
 "Default" is what the Server uses when the variable is unset; a
 required setting has none. "Preset by `deploy/base`" means the base's

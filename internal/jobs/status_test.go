@@ -3,11 +3,14 @@ package jobs
 import (
 	"context"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/utils/ptr"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -216,4 +219,126 @@ func TestClient_StatusToolWaiting(t *testing.T) {
 			assert.Equal(t, tt.want, status.ToolWaiting)
 		})
 	}
+}
+
+// statusOfJob returns the Status of job, with pod as its one Pod when not
+// nil.
+func statusOfJob(t *testing.T, job *batchv1.Job, pod *corev1.PodStatus) *JobStatus {
+	t.Helper()
+	job.ObjectMeta = metav1.ObjectMeta{Name: "turnip-runner-abc", Namespace: "turnip"}
+	objects := []runtime.Object{job}
+	if pod != nil {
+		objects = append(objects, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "turnip-runner-abc-xyz",
+				Namespace: "turnip",
+				Labels:    map[string]string{"batch.kubernetes.io/job-name": "turnip-runner-abc"},
+			},
+			Status: *pod,
+		})
+	}
+	status, err := NewClient(fake.NewSimpleClientset(objects...), "turnip").Status(context.Background(), "turnip-runner-abc")
+	require.NoError(t, err)
+	return status
+}
+
+func TestClient_StatusDeadlineExceeded(t *testing.T) {
+	status := statusOfJob(t, &batchv1.Job{
+		Spec: batchv1.JobSpec{ActiveDeadlineSeconds: ptr.To(int64(14400))},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{
+			{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: "DeadlineExceeded"},
+			{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "DeadlineExceeded"},
+		}},
+	}, nil)
+	assert.True(t, status.Finished)
+	assert.Equal(t, "DeadlineExceeded", status.FailedReason)
+	assert.Equal(t, 4*time.Hour, status.Deadline)
+}
+
+// Only a Failed or Complete condition that is true ends the Job: a
+// FailureTarget is set while its Pod is still being stopped, and the
+// Runner may yet report in its grace period. Its reason is still read, so
+// a tick that finds the Pod gone before the Failed condition is set can
+// name the deadline.
+func TestClient_StatusNotFinished(t *testing.T) {
+	tests := []struct {
+		name       string
+		conditions []batchv1.JobCondition
+		wantReason string
+	}{
+		{"no conditions", nil, ""},
+		{"failure target only", []batchv1.JobCondition{
+			{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: "DeadlineExceeded"},
+		}, "DeadlineExceeded"},
+		{"failure target false", []batchv1.JobCondition{
+			{Type: batchv1.JobFailureTarget, Status: corev1.ConditionFalse, Reason: "DeadlineExceeded"},
+		}, ""},
+		{"failed condition false", []batchv1.JobCondition{
+			{Type: batchv1.JobFailed, Status: corev1.ConditionFalse, Reason: "DeadlineExceeded"},
+		}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status := statusOfJob(t, &batchv1.Job{Status: batchv1.JobStatus{Conditions: tt.conditions}}, nil)
+			assert.False(t, status.Finished)
+			assert.Equal(t, tt.wantReason, status.FailedReason)
+			assert.Zero(t, status.Deadline)
+		})
+	}
+}
+
+// The Failed condition's reason wins over the FailureTarget's, whichever
+// comes first in the list.
+func TestClient_StatusFailedReasonWinsOverFailureTarget(t *testing.T) {
+	status := statusOfJob(t, &batchv1.Job{Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{
+		{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"},
+		{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: "PodFailurePolicy"},
+	}}}, nil)
+	assert.True(t, status.Finished)
+	assert.Equal(t, "BackoffLimitExceeded", status.FailedReason)
+}
+
+func TestClient_StatusComplete(t *testing.T) {
+	status := statusOfJob(t, &batchv1.Job{Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{
+		{Type: batchv1.JobComplete, Status: corev1.ConditionTrue},
+	}}}, nil)
+	assert.True(t, status.Finished)
+	assert.Empty(t, status.FailedReason)
+}
+
+func TestClient_StatusTerminatedContainer(t *testing.T) {
+	terminated := func(name, reason string, code int32) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: name, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: reason, ExitCode: code}}}
+	}
+	tests := []struct {
+		name          string
+		pod           corev1.PodStatus
+		wantContainer string
+		wantReason    string
+	}{
+		{"runner out of memory after a clean clone", corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{terminated("clone", "Completed", 0)},
+			ContainerStatuses:     []corev1.ContainerStatus{terminated("runner", "OOMKilled", 137)},
+		}, "runner", "OOMKilled"},
+		{"init container first", corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{terminated("clone", "Error", 1)},
+			ContainerStatuses:     []corev1.ContainerStatus{terminated("runner", "Error", 2)},
+		}, "clone", "Error"},
+		{"every container exited 0", corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{terminated("clone", "Completed", 0)},
+			ContainerStatuses:     []corev1.ContainerStatus{terminated("runner", "Completed", 0)},
+		}, "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status := statusWithPod(t, tt.pod)
+			assert.Equal(t, tt.wantContainer, status.TerminatedContainer)
+			assert.Equal(t, tt.wantReason, status.TerminatedReason)
+		})
+	}
+}
+
+func TestClient_StatusEvicted(t *testing.T) {
+	assert.True(t, statusWithPod(t, corev1.PodStatus{Phase: corev1.PodFailed, Reason: "Evicted"}).Evicted)
+	assert.False(t, statusWithPod(t, corev1.PodStatus{Phase: corev1.PodFailed}).Evicted)
 }

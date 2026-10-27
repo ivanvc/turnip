@@ -253,6 +253,7 @@ func TestRecordStore_ClaimModes_AgainstRecordStates(t *testing.T) {
 		gone   bool
 		result bool
 		timout bool
+		stop   bool
 		aband  bool
 	}{
 		{name: "not started, past start deadline", setup: func(r *OperationRecord) {
@@ -264,10 +265,10 @@ func TestRecordStore_ClaimModes_AgainstRecordStates(t *testing.T) {
 		}, result: true, timout: true},
 		{name: "started, 23 hours old", start: true, setup: func(r *OperationRecord) {
 			r.CreatedAt = now.Add(-23 * time.Hour)
-		}, result: true},
+		}, result: true, stop: true},
 		{name: "started, 24 hours old", start: true, setup: func(r *OperationRecord) {
 			r.CreatedAt = now.Add(-24 * time.Hour)
-		}, result: true, aband: true},
+		}, result: true, stop: true, aband: true},
 		{name: "gone", gone: true},
 	}
 	modes := []struct {
@@ -283,6 +284,10 @@ func TestRecordStore_ClaimModes_AgainstRecordStates(t *testing.T) {
 			_, c, err := s.ClaimForTimeout(ctx, "op-1", now)
 			return c, err
 		}, func(i int) bool { return states[i].timout }},
+		{"stopped", func(s *recordStore, ctx context.Context) (bool, error) {
+			_, c, err := s.ClaimForStopped(ctx, "op-1")
+			return c, err
+		}, func(i int) bool { return states[i].stop }},
 		{"abandon", func(s *recordStore, ctx context.Context) (bool, error) {
 			_, c, err := s.ClaimForAbandon(ctx, "op-1", now)
 			return c, err
@@ -330,7 +335,87 @@ func TestRecordStore_Claim_FinalizedRefusedByEveryMode(t *testing.T) {
 	_, claimed, err = s.ClaimForTimeout(ctx, "op-1", now)
 	require.NoError(t, err)
 	assert.False(t, claimed)
+	_, claimed, err = s.ClaimForStopped(ctx, "op-1")
+	require.NoError(t, err)
+	assert.False(t, claimed)
 	_, claimed, err = s.ClaimForAbandon(ctx, "op-1", now)
 	require.NoError(t, err)
 	assert.False(t, claimed)
+}
+
+// startedRecord creates a started record op-1 in s.
+func startedRecord(t *testing.T, s *recordStore) {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, s.Create(ctx, testRecord("op-1")))
+	_, _, err := s.MarkStarted(ctx, "op-1")
+	require.NoError(t, err)
+}
+
+// A Runner told to stop may report just as the sweep finds its Job
+// ended: whichever claims first finalizes, and the other is refused.
+func TestRecordStore_ClaimForStopped_LosesToResult(t *testing.T) {
+	s, _ := newTestRecordStore(t)
+	ctx := context.Background()
+	startedRecord(t, s)
+
+	_, claimed, err := s.ClaimForResult(ctx, "op-1")
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	rec, claimed, err := s.ClaimForStopped(ctx, "op-1")
+	require.NoError(t, err)
+	assert.False(t, claimed)
+	assert.Nil(t, rec)
+}
+
+func TestRecordStore_ClaimForStopped_ResultLosesAfterIt(t *testing.T) {
+	s, _ := newTestRecordStore(t)
+	ctx := context.Background()
+	startedRecord(t, s)
+
+	rec, claimed, err := s.ClaimForStopped(ctx, "op-1")
+	require.NoError(t, err)
+	require.True(t, claimed)
+	assert.Equal(t, "op-1", rec.OperationID)
+
+	_, claimed, err = s.ClaimForResult(ctx, "op-1")
+	require.NoError(t, err)
+	assert.False(t, claimed)
+}
+
+// Two replicas, and a result, racing for the same started record: exactly
+// one of them claims it.
+func TestRecordStore_ClaimForStopped_ExactlyOneWinsTheRace(t *testing.T) {
+	for range 20 {
+		s, _ := newTestRecordStore(t)
+		ctx := context.Background()
+		startedRecord(t, s)
+
+		claims := []func() (bool, error){
+			func() (bool, error) { _, c, err := s.ClaimForStopped(ctx, "op-1"); return c, err },
+			func() (bool, error) { _, c, err := s.ClaimForStopped(ctx, "op-1"); return c, err },
+			func() (bool, error) { _, c, err := s.ClaimForResult(ctx, "op-1"); return c, err },
+		}
+		var (
+			wg   sync.WaitGroup
+			mu   sync.Mutex
+			wins int
+		)
+		for _, claim := range claims {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				c, err := claim()
+				assert.NoError(t, err)
+				if c {
+					mu.Lock()
+					wins++
+					mu.Unlock()
+				}
+			}()
+		}
+		wg.Wait()
+		require.Equal(t, 1, wins)
+	}
 }

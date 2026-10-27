@@ -256,7 +256,7 @@ func resultTitle(rec *OperationRecord, result rpc.OperationResult, changes githu
 	if result.Success {
 		return completedTitle(changes, rec.ExtraArgs)
 	}
-	return failedTitle(rec.Project.Tool, result.FailureCategory, result.ExitCode)
+	return failedTitle(rec.Project.Tool, result.FailureCategory, result.ExitCode, result.ErrorMessage)
 }
 
 func checkRunResultSummary(success bool, changes github.ChangeCounts) string {

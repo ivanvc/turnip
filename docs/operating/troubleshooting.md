@@ -212,6 +212,63 @@ stay `Pending` for other reasons (no node fits it, for one).
   references non-existent secret key: <key>`. Other events there (for
   example `FailedScheduling`) point to the other reasons.
 
+## Runner timeouts
+
+**Symptom**: a per-project check failed with a title that says a tool or
+Runner stopped. The end-user side of each is under
+[Reading a failed check's title](../using/troubleshooting.md#reading-a-failed-checks-title).
+Two settings bound a Runner: `TURNIP_RUNNER_IDLE_TIMEOUT` (30 minutes by
+default) and `TURNIP_RUNNER_DEADLINE` (4 hours by default); see
+[Server settings](server-settings.md).
+
+### A tool stopped for silence
+
+**Symptom**: the check is titled `<tool> stopped: no output for 30m0s`,
+and the project's output ends with `The tool wrote nothing for 30m0s, so
+turnip stopped it.`
+
+- The tool wrote nothing on stdout or stderr for the idle timeout. Only
+  the tool's own lines count; turnip's annotation lines do not. The Runner
+  sent the tool `SIGINT`, then `SIGKILL` 30 seconds later if it was still
+  running. Read the Runner's log and the output for where it went quiet
+  (see [Reading a Runner's log](#reading-a-runners-log)).
+- A tool that is healthy but silent longer than the timeout (a long
+  `--wait`, a slow provider) needs a larger `TURNIP_RUNNER_IDLE_TIMEOUT`.
+  Raise it on the Server and restart it; the value must stay shorter than
+  `TURNIP_RUNNER_DEADLINE`.
+
+### A Runner told to stop
+
+**Symptom**: the check is titled `<tool> stopped: the Runner was told to
+stop`, and the output ends with `The Runner was told to stop (its
+deadline, an eviction or a deletion), so turnip stopped the tool.`
+
+- The Runner received `SIGTERM`: the Job's deadline passed, the node
+  evicted the pod, or the pod was deleted. Check `kubectl get events` in
+  the Runner namespace, and the Job's conditions for `DeadlineExceeded`.
+  If operations legitimately run past the deadline, raise
+  `TURNIP_RUNNER_DEADLINE`.
+
+### A Runner that stopped without reporting
+
+**Symptom**: the check is titled with a diagnostic such as `Job <name>:
+stopped at its deadline of 4h0m0s`, `Job <name>: container <container>
+terminated (<reason>)`, `Job <name>: Pod evicted` or `Job <name>:
+finished without reporting a result`, and its summary is `The Runner
+stopped before reporting a result.`
+
+- The Runner had started, then its Job ended or its pod disappeared
+  without a result reaching the Server, and the sweep finalized the
+  operation, within about 30 seconds of the Job ending. The title is what
+  the sweep read from Kubernetes: a deadline, a container terminated with
+  a reason (`OOMKilled` means the Runner pod ran out of memory: turnip
+  sets no resources on the Runner, so its limit is whatever the Runner
+  namespace's LimitRange gives it, or else the node's memory), an
+  eviction, or a Job that ended quietly. `No Job/Pod found for this operation; it may have been deleted
+  or never successfully scheduled` means the Job or pod was removed.
+- This is different from the start timeout (the Runner never started; see
+  [Runner execution errors](#runner-execution-errors)).
+
 ## Redis connection and startup errors
 
 **Symptom**: the Server exits at startup with one of these messages

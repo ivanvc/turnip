@@ -2,11 +2,13 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ivanvc/turnip/internal/plugin"
 	"github.com/ivanvc/turnip/internal/rpc"
@@ -22,6 +24,23 @@ type resultReporter interface {
 	Follow(rec *plugin.Record, clean func(string) string)
 	Report(ctx context.Context, result OperationResult) error
 }
+
+// errStopRequested is the cause the Runner cancels the tool's context with
+// when it is told to stop (a SIGTERM, from cmd/runner).
+var errStopRequested = errors.New("stop requested")
+
+// reportBoundAfterStop is how long the Runner has to report once it was
+// told to stop: with the Pod's 60-second grace period, it leaves the tool
+// its 30 seconds to exit and a margin before the kubelet's kill. A
+// variable so tests can shorten it.
+var reportBoundAfterStop = 20 * time.Second
+
+// The error messages of a result whose tool turnip stopped. The idle
+// timeout is formatted into the first, as a Go duration ("30m0s").
+const (
+	idleStopMessage      = "The tool wrote nothing for %s, so turnip stopped it."
+	requestedStopMessage = "The Runner was told to stop (its deadline, an eviction or a deletion), so turnip stopped the tool."
+)
 
 type pluginSelector func(tool string) (plugin.Plugin, error)
 
@@ -55,10 +74,19 @@ func pathWithToolsDir(toolsDir, path string) string {
 	return toolsDir + string(os.PathListSeparator) + path
 }
 
-// Run executes cfg's Operation end-to-end — connect, clone, dispatch,
-// report — and returns the process exit code cmd/runner/main.go should
-// use.
+// Run executes cfg's Operation end-to-end (connect, dispatch, report) and
+// returns the process exit code. It is RunWithStop with no stop.
 func Run(ctx context.Context, cfg Config) int {
+	return RunWithStop(ctx, cfg, nil)
+}
+
+// RunWithStop is Run for a Runner that can be told to stop: once stop is
+// closed (cmd/runner closes it on SIGTERM), the tool's context is
+// cancelled, which interrupts the tool (see plugin.ExecuteOptions), and the
+// result is reported as stopped within reportBoundAfterStop. ctx itself is
+// never cancelled by the stop: connecting and reporting use it, so a stop
+// does not cut the Runner off from the Server it still has to report to.
+func RunWithStop(ctx context.Context, cfg Config, stop <-chan struct{}) int {
 	_ = os.Setenv("PATH", pathWithToolsDir(cfg.ToolsDir, os.Getenv("PATH")))
 
 	rep, closeConn, err := NewReporter(cfg.ServerAddr, cfg)
@@ -68,7 +96,7 @@ func Run(ctx context.Context, cfg Config) int {
 	}
 	defer func() { _ = closeConn() }()
 
-	return runWith(ctx, cfg, rep, selectPlugin, os.Stdout, os.Stderr)
+	return runWithStop(ctx, cfg, rep, selectPlugin, stop, os.Stdout, os.Stderr)
 }
 
 // RunClone performs one Operation's repository clone and returns the exit
@@ -133,7 +161,15 @@ func reportCloneFailure(ctx context.Context, rep resultReporter, message string,
 	return 1
 }
 
+// runWith is runWithStop for a Runner never told to stop.
 func runWith(ctx context.Context, cfg Config, rep resultReporter, selectPlugin pluginSelector, stdout, stderr io.Writer) int {
+	return runWithStop(ctx, cfg, rep, selectPlugin, nil, stdout, stderr)
+}
+
+// runWithStop is RunWithStop's testable core: stop is injected, so a test
+// stops the Runner without sending a signal to its own process. A nil stop
+// never fires.
+func runWithStop(ctx context.Context, cfg Config, rep resultReporter, selectPlugin pluginSelector, stop <-chan struct{}, stdout, stderr io.Writer) int {
 	p, err := selectPlugin(cfg.Tool)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "runner: %v\n", err)
@@ -149,7 +185,20 @@ func runWith(ctx context.Context, cfg Config, rep resultReporter, selectPlugin p
 		return 1
 	}
 
-	opResult, outputBytes := execute(ctx, cfg, p, rep, stdout, stderr)
+	// The stop cancels the tool's context only. Reporting below stays on
+	// ctx, so the result of a stopped tool can still be delivered.
+	toolCtx, cancelTool := context.WithCancelCause(ctx)
+	defer cancelTool(nil)
+	go func() {
+		select {
+		case <-stop:
+			_, _ = fmt.Fprintln(stderr, "runner: told to stop; interrupting the tool")
+			cancelTool(errStopRequested)
+		case <-toolCtx.Done():
+		}
+	}()
+
+	opResult, outputBytes := execute(toolCtx, cfg, p, rep, stdout, stderr)
 
 	// Checked here as well as in Report, so the summary below describes
 	// the result that is sent, not one that never will be.
@@ -161,11 +210,51 @@ func runWith(ctx context.Context, cfg Config, rep resultReporter, selectPlugin p
 	// mirrored every line of it, and waited for the last.
 	logResultSummary(stderr, opResult, outputBytes)
 
-	if err := rep.Report(ctx, opResult); err != nil {
+	if err := reportBounded(ctx, rep, opResult, stop); err != nil {
 		_, _ = fmt.Fprintf(stderr, "runner: report result: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// reportBounded reports result on a context of its own, derived from ctx
+// rather than from the tool's context, so a stop that interrupted the tool
+// does not also cancel the report. Once stop has fired, whether before the
+// report started or while it is under way, the report has
+// reportBoundAfterStop from then on, after which reportBounded returns
+// without waiting further: past it the Pod is about to be killed, and an
+// unreported Operation is the sweep's to finalize.
+func reportBounded(ctx context.Context, rep resultReporter, result OperationResult, stop <-chan struct{}) error {
+	reportCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
+	bound := reportBoundAfterStop
+	errBound := fmt.Errorf("no acknowledgment within %s of being told to stop", bound)
+	go func() {
+		select {
+		case <-stop:
+		case <-reportCtx.Done():
+			return
+		}
+		timer := time.NewTimer(bound)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			cancel(errBound)
+		case <-reportCtx.Done():
+		}
+	}()
+
+	// Report retries on its own budget and returns once reportCtx ends
+	// only between attempts; the select ends the wait at the bound itself.
+	reported := make(chan error, 1)
+	go func() { reported <- rep.Report(reportCtx, result) }()
+	select {
+	case err := <-reported:
+		return err
+	case <-reportCtx.Done():
+		return context.Cause(reportCtx)
+	}
 }
 
 // resolveWorkspace returns the directory to clone into, together with a
@@ -257,6 +346,7 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 		ExtraArgs:   cfg.ExtraArgs,
 		PlanData:    cfg.PlanData,
 		Record:      rec,
+		IdleTimeout: cfg.IdleTimeout,
 	})
 	// Execute closes the record of a command it ran. One it refused
 	// before running anything is closed here, so both readers end.
@@ -264,6 +354,11 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 	// The whole output is in this container's log before anything is said
 	// about the result.
 	<-mirrored
+	if err != nil && errors.Is(context.Cause(ctx), errStopRequested) {
+		// Told to stop before the tool could start: there is no tool to
+		// interrupt, and the result says why there is no output.
+		return OperationResult{Success: false, ExitCode: -1, ErrorMessage: requestedStopMessage, FailureCategory: rpc.FailureStopped}, 0
+	}
 	if err != nil {
 		// No tool process produced an exit code: the binary is missing, or
 		// the Plugin refused the Operation before running anything.
@@ -286,6 +381,19 @@ func execute(ctx context.Context, cfg Config, p plugin.Plugin, rep resultReporte
 	}
 	if result.ExitCode != 0 {
 		opResult.FailureCategory = rpc.FailureToolExited
+	}
+	// A tool turnip stopped failed, whatever it exited with: an exit 0 on
+	// the interrupt is not the Operation succeeding. Its exit code is
+	// kept, and the message says why it was stopped.
+	switch result.Stopped {
+	case plugin.StopIdle:
+		opResult.Success = false
+		opResult.FailureCategory = rpc.FailureTimedOut
+		opResult.ErrorMessage = fmt.Sprintf(idleStopMessage, cfg.IdleTimeout)
+	case plugin.StopRequested:
+		opResult.Success = false
+		opResult.FailureCategory = rpc.FailureStopped
+		opResult.ErrorMessage = requestedStopMessage
 	}
 	return opResult, len(output)
 }

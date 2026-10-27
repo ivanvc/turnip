@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"regexp"
 
 	"github.com/ivanvc/turnip/internal/github"
 	"github.com/ivanvc/turnip/internal/plugin"
@@ -45,7 +46,11 @@ func runningRecordedPlanTitle(changes github.ChangeCounts, scope []string) strin
 // failedTitle names the step that failed. Only "the tool exited" carries
 // an exit code, since only there is it the tool's; turnip's own -1 marker
 // never reaches a title.
-func failedTitle(tool string, category rpc.FailureCategory, exitCode int32) string {
+//
+// message is the result's error message. A timed out failure carries the
+// idle timeout there rather than in a field of its own, so the title reads
+// it back from the message the Runner worded.
+func failedTitle(tool string, category rpc.FailureCategory, exitCode int32, message string) string {
 	switch category {
 	case rpc.FailureToolExited:
 		return fmt.Sprintf("%s exited %d", tool, exitCode)
@@ -55,10 +60,21 @@ func failedTitle(tool string, category rpc.FailureCategory, exitCode int32) stri
 		return "workspace could not be prepared"
 	case rpc.FailureToolNotStarted:
 		return tool + " could not be started"
+	case rpc.FailureTimedOut:
+		if m := idleTimeoutPattern.FindStringSubmatch(message); m != nil {
+			return fmt.Sprintf("%s stopped: no output for %s", tool, m[1])
+		}
+		return tool + " stopped: no output"
+	case rpc.FailureStopped:
+		return tool + " stopped: the Runner was told to stop"
 	default:
 		return "failed"
 	}
 }
+
+// idleTimeoutPattern reads the duration out of the Runner's message
+// "The tool wrote nothing for <idle timeout>, so turnip stopped it."
+var idleTimeoutPattern = regexp.MustCompile(`wrote nothing for (\S+?),? so turnip stopped it`)
 
 // jobNotCreatedTitle is for an Operation whose Runner Job Kubernetes
 // refused. The cause is turnip's own and known, so it is named, rather

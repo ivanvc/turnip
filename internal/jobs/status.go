@@ -1,18 +1,22 @@
 package jobs
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // JobStatus reports what's known about a Runner Job's Kubernetes state,
-// used to diagnose why a Job never started (Requirement 8.4).
+// used to diagnose why a Job never started (Requirement 8.4), and why a
+// started Runner's Job ended without a result.
 type JobStatus struct {
 	JobFound   bool
 	Active     int32
@@ -31,6 +35,26 @@ type JobStatus struct {
 	// the runner container under RunInImage. Empty until the runtime has
 	// pulled it.
 	ImageID string
+
+	// Finished reports whether the Job carries a Failed or Complete
+	// condition: its Pod has ended, so a Runner that has not reported by
+	// now never will.
+	Finished bool
+	// FailedReason is the reason of the Job's Failed condition, such as
+	// "DeadlineExceeded", or, before that condition is set, of its
+	// FailureTarget condition (which the Job controller sets first while
+	// it terminates the Pod); empty while the Job has not failed.
+	FailedReason string
+	// Deadline is the Job's activeDeadlineSeconds, zero when it has none,
+	// so a deadline diagnostic names the deadline the Job actually had.
+	Deadline time.Duration
+	// TerminatedContainer and TerminatedReason name the first container
+	// that terminated with a non-zero exit code, init containers first,
+	// and the reason Kubernetes gave (such as "OOMKilled" or "Error").
+	TerminatedContainer string
+	TerminatedReason    string
+	// Evicted reports whether the Pod was evicted.
+	Evicted bool
 }
 
 // Status looks up jobName's Job and, if found, its Pod's status. A
@@ -51,6 +75,26 @@ func (c *Client) Status(ctx context.Context, jobName string) (*JobStatus, error)
 		Active:    job.Status.Active,
 		Succeeded: job.Status.Succeeded,
 		Failed:    job.Status.Failed,
+	}
+	if d := job.Spec.ActiveDeadlineSeconds; d != nil {
+		status.Deadline = time.Duration(*d) * time.Second
+	}
+	for _, c := range job.Status.Conditions {
+		if c.Status != corev1.ConditionTrue {
+			continue
+		}
+		switch c.Type {
+		case batchv1.JobFailed:
+			status.Finished = true
+			status.FailedReason = c.Reason
+		case batchv1.JobComplete:
+			status.Finished = true
+		case batchv1.JobFailureTarget:
+			// Not Finished: the Pod may still be terminating. Its reason
+			// still names why, for a tick that finds the Pod gone before
+			// the Failed condition is set.
+			status.FailedReason = cmp.Or(status.FailedReason, c.Reason)
+		}
 	}
 
 	// "job-name" is the Job controller's long-standing label, superseded
@@ -86,12 +130,33 @@ func (c *Client) Status(ctx context.Context, jobName string) (*JobStatus, error)
 		status.ToolWaiting = cs.Name == toolContainerName(pod.Status)
 	}
 
+	cs, ok = firstTerminated(pod.Status.InitContainerStatuses)
+	if !ok {
+		cs, ok = firstTerminated(pod.Status.ContainerStatuses)
+	}
+	if ok {
+		status.TerminatedContainer, status.TerminatedReason = cs.Name, cs.State.Terminated.Reason
+	}
+	status.Evicted = pod.Status.Reason == "Evicted"
+
 	return status, nil
 }
 
 func firstWaiting(statuses []corev1.ContainerStatus) (corev1.ContainerStatus, bool) {
 	for _, cs := range statuses {
 		if cs.State.Waiting != nil {
+			return cs, true
+		}
+	}
+	return corev1.ContainerStatus{}, false
+}
+
+// firstTerminated finds the first container that terminated with a
+// non-zero exit code. One that exited 0 (the clone, once it has checked
+// out) ended as it should and explains nothing.
+func firstTerminated(statuses []corev1.ContainerStatus) (corev1.ContainerStatus, bool) {
+	for _, cs := range statuses {
+		if t := cs.State.Terminated; t != nil && t.ExitCode != 0 {
 			return cs, true
 		}
 	}

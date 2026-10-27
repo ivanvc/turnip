@@ -216,7 +216,7 @@ func (p *HelmfilePlugin) Execute(ctx context.Context, operation string, opts Exe
 	if rec == nil {
 		rec = NewRecord()
 	}
-	exitCode, err := p.run(ctx, opts.WorkingDir, "helmfile", args, opts.ToolVersion, rec)
+	exitCode, stopped, err := p.run(ctx, opts.WorkingDir, "helmfile", args, opts.ToolVersion, opts.IdleTimeout, rec)
 	rec.Close()
 	if err != nil {
 		return nil, err
@@ -262,6 +262,7 @@ func (p *HelmfilePlugin) Execute(ctx context.Context, operation string, opts Exe
 		PlanData:      nil,
 		ExitCode:      exitCode,
 		Error:         nil,
+		Stopped:       stopped,
 	}, nil
 }
 

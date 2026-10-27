@@ -96,12 +96,27 @@ type Orchestrator struct {
 	// the sweep's start-timeout hint reads it.
 	runnerNamespace string
 
+	// runnerIdleTimeout/runnerDeadline come from Config.RunnerIdleTimeout
+	// and Config.RunnerDeadline, set by WithRunnerTimeouts. Zero (an unset
+	// test fixture) leaves BuildJob to apply the defaults.
+	runnerIdleTimeout time.Duration
+	runnerDeadline    time.Duration
+
 	startTimeout  time.Duration
 	sweepInterval time.Duration
 	// triggerRetryBackoff is the wait before the second attempt at a
 	// trigger step that Redis failed, doubled before each one after
 	// (retryTrigger). Zero, an unset test fixture, retries without waiting.
 	triggerRetryBackoff time.Duration
+}
+
+// WithRunnerTimeouts sets the idle timeout every Runner is told and the
+// deadline every Runner Job gets (Config.RunnerIdleTimeout and
+// Config.RunnerDeadline), and returns o.
+func (o *Orchestrator) WithRunnerTimeouts(idle, deadline time.Duration) *Orchestrator {
+	o.runnerIdleTimeout = idle
+	o.runnerDeadline = deadline
+	return o
 }
 
 // New constructs an Orchestrator. runnerServerAddr is the address a

@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -118,6 +120,18 @@ const (
 	CloneAudience  = "turnip.ivan.vc/clone"
 )
 
+const (
+	// DefaultIdleTimeout and DefaultDeadline apply when OperationParams
+	// leaves IdleTimeout or Deadline zero. They mirror the Server's
+	// TURNIP_RUNNER_IDLE_TIMEOUT and TURNIP_RUNNER_DEADLINE defaults.
+	DefaultIdleTimeout = 30 * time.Minute
+	DefaultDeadline    = 4 * time.Hour
+
+	// terminationGracePeriodSeconds leaves the Runner time to interrupt
+	// its tool (up to 30 seconds), wait for it, and report (up to 20).
+	terminationGracePeriodSeconds = int64(60)
+)
+
 var jobTTLSecondsAfterFinished = ptr.To(jobTTLSeconds)
 
 // RepositorySecretName is the name of the Secret a repository's Runner
@@ -149,6 +163,13 @@ type OperationParams struct {
 	// *out of*, while the vendor's image runs as the main container. One
 	// field rather than two, because a Job never needs two turnip images.
 	RunnerImage string
+	// IdleTimeout is how long the Runner lets the tool write nothing,
+	// carried to the runner container as TURNIP_IDLE_TIMEOUT. Zero means
+	// DefaultIdleTimeout.
+	IdleTimeout time.Duration
+	// Deadline becomes the Job's activeDeadlineSeconds. Zero means
+	// DefaultDeadline.
+	Deadline time.Duration
 	// ServiceAccount is the Kubernetes ServiceAccount the Runner Pod runs
 	// as — the identity cloud providers map to an IAM role (EKS Pod
 	// Identity/IRSA) and that in-cluster API calls authenticate with.
@@ -368,6 +389,10 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 		})
 	}
 
+	idleTimeout := cmp.Or(op.IdleTimeout, DefaultIdleTimeout)
+	deadline := cmp.Or(op.Deadline, DefaultDeadline)
+	mainEnv = append(mainEnv, corev1.EnvVar{Name: "TURNIP_IDLE_TIMEOUT", Value: idleTimeout.String()})
+
 	// A Project's own environment rides the Job spec rather than a
 	// transport of its own, so the Runner needs no code for it — the
 	// variables are simply present in the process it spawns. They come
@@ -407,11 +432,13 @@ func BuildJob(project config.Project, op OperationParams) (*batchv1.Job, error) 
 			// after this one fails, so both are set to disable retries.
 			BackoffLimit:            new(int32),
 			TTLSecondsAfterFinished: jobTTLSecondsAfterFinished,
+			ActiveDeadlineSeconds:   ptr.To(int64(deadline / time.Second)),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					ServiceAccountName: op.ServiceAccount,
-					RestartPolicy:      corev1.RestartPolicyNever,
-					InitContainers:     initContainers,
+					ServiceAccountName:            op.ServiceAccount,
+					RestartPolicy:                 corev1.RestartPolicyNever,
+					TerminationGracePeriodSeconds: ptr.To(terminationGracePeriodSeconds),
+					InitContainers:                initContainers,
 					Containers: []corev1.Container{
 						{
 							// Named "runner" under both strategies, so

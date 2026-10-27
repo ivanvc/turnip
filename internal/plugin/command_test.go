@@ -18,7 +18,7 @@ import (
 func run(t *testing.T, dir, name string, args []string, version string) (rec *Record, exitCode int, err error) {
 	t.Helper()
 	rec = NewRecord()
-	exitCode, err = execCommand(context.Background(), dir, name, args, version, rec)
+	exitCode, _, err = execCommand(context.Background(), dir, name, args, version, 0, rec)
 	return rec, exitCode, err
 }
 
@@ -179,9 +179,9 @@ func TestExecCommand_TheRecordCanBeFollowedWhileTheCommandRuns(t *testing.T) {
 	ended := make(chan error, 1)
 	go func() {
 		// Prints, then waits for the test to create the gate file.
-		_, err := execCommand(context.Background(), dir, "sh", []string{"-c",
+		_, _, err := execCommand(context.Background(), dir, "sh", []string{"-c",
 			"echo first; while [ ! -e gate ]; do sleep 0.01; done; echo second",
-		}, "", rec)
+		}, "", 0, rec)
 		ended <- err
 	}()
 

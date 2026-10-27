@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -20,15 +22,25 @@ import (
 // transcript header and closed by its trailer, after which it closes rec.
 // Whoever follows rec while the command runs sees each line as it is
 // recorded.
-type commandRunner func(ctx context.Context, dir, name string, args []string, version string, rec *Record) (exitCode int, err error)
+//
+// idle is the idle timeout (zero for none); stopped says whether, and why,
+// turnip stopped the tool rather than letting it exit on its own.
+type commandRunner func(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, rec *Record) (exitCode int, stopped StopReason, err error)
 
 // maxLineBytes is the longest line the capture records; a longer one fails
 // the command's capture with bufio.ErrTooLong.
 const maxLineBytes = 1024 * 1024
 
+// stopGrace is how long a stopped tool has, after its interrupt, to exit
+// before its process group is killed. A variable so tests can shorten it.
+var stopGrace = 30 * time.Second
+
+// errIdle is the cause the watchdog cancels the tool's context with.
+var errIdle = errors.New("idle")
+
 // execCommand is the default commandRunner, backed by os/exec.
 //
-// When the subprocess starts and runs — even to a non-zero exit — its
+// When the subprocess starts and runs, even to a non-zero exit, its
 // exit code is returned with a nil error: that's a normal tool failure,
 // not an execution error. err is only non-nil when the subprocess could
 // not be started at all (binary not found, invalid working directory), in
@@ -49,19 +61,36 @@ const maxLineBytes = 1024 * 1024
 // which stream each line came from, which a Plugin's output and its
 // change count may both need. Which of the two suits a tool is its
 // Plugin's choice; this is the capture that keeps the streams apart.
-func execCommand(ctx context.Context, dir, name string, args []string, version string, rec *Record) (exitCode int, err error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+//
+// Stopping. The tool runs in its own process group, so that whatever it
+// starts (Helmfile's helm) is stopped with it. turnip stops the tool when
+// it has written no line for idle (StopIdle), or when ctx ends
+// (StopRequested: the Runner was told to stop): it sends SIGINT to the
+// group and, if the tool is still running stopGrace later, SIGKILL to the
+// group. exec.Cmd.WaitDelay is not used for the kill because it kills the
+// tool's own process only, leaving its children running. A stopped tool's
+// exit code is still returned, -1 when it was killed by a signal.
+func execCommand(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, rec *Record) (exitCode int, stopped StopReason, err error) {
+	// The tool's own context: ctx ending, or the watchdog finding it
+	// silent, cancels it, and its cause tells the two apart.
+	toolCtx, cancelTool := context.WithCancelCause(ctx)
+	defer cancelTool(nil)
+
+	cmd := exec.CommandContext(toolCtx, name, args...)
 	cmd.Dir = dir
+	startProcessGroup(cmd)
+	var interrupted atomic.Bool
+	cmd.Cancel = func() error { return interruptGroup(cmd.Process, &interrupted) }
 
 	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
-		return -1, err
+		return -1, StopNone, err
 	}
 	stderrR, stderrW, err := os.Pipe()
 	if err != nil {
 		_ = stdoutR.Close()
 		_ = stdoutW.Close()
-		return -1, err
+		return -1, StopNone, err
 	}
 	// Small pipes: the tool can then never be more than a page ahead of
 	// the reader on either stream, which bounds how far a line can land
@@ -89,7 +118,7 @@ func execCommand(ctx context.Context, dir, name string, args []string, version s
 		// Nothing was written, so the reader finds both pipes at their end.
 		close(header)
 		<-read
-		return -1, err
+		return -1, StopNone, err
 	}
 	defer rec.Close()
 
@@ -108,27 +137,116 @@ func execCommand(ctx context.Context, dir, name string, args []string, version s
 	}
 	close(header)
 
+	// done is closed once the tool has exited and both pipes have ended;
+	// until then the watchdog watches and a stop can escalate to a kill.
+	done := make(chan struct{})
+	if idle > 0 {
+		go watchIdle(rec, idle, started, done, func() { cancelTool(errIdle) })
+	}
+	go killAfterGrace(toolCtx, cmd.Process, stopGrace, done)
+
 	readErr := <-read
 
 	// Both pipes are read to their end before Wait.
 	runErr := cmd.Wait()
+	close(done)
+
+	if interrupted.Load() {
+		stopped = StopRequested
+		if errors.Is(context.Cause(toolCtx), errIdle) {
+			stopped = StopIdle
+		}
+	}
 
 	// The trailer closes the record: appended only once both streams are
 	// exhausted, so no line of either can follow it.
-	rec.Append(Turnip, transcriptTrailer(started, cmd.ProcessState))
+	rec.Append(Turnip, transcriptTrailer(started, cmd.ProcessState, stopped, idle))
+
+	if stopped != StopNone {
+		// Wait reports the cancellation when the tool exited 0 on its
+		// interrupt; the exit code is what the tool did.
+		code := -1
+		if cmd.ProcessState != nil {
+			code = cmd.ProcessState.ExitCode()
+		}
+		return code, stopped, nil
+	}
 
 	if runErr == nil {
 		if readErr != nil {
-			return -1, readErr
+			return -1, StopNone, readErr
 		}
-		return 0, nil
+		return 0, StopNone, nil
 	}
 
 	if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
-		return exitErr.ExitCode(), nil
+		return exitErr.ExitCode(), StopNone, nil
 	}
 
-	return -1, runErr
+	return -1, StopNone, runErr
+}
+
+// interruptGroup sends SIGINT to the tool's process group, and records
+// the stop in interrupted only when the signal reached it. os/exec can
+// call Cancel after the tool has already exited and been reaped, when
+// toolCtx ends just before Wait collects the cancellation; the group is
+// then gone, and a tool that finished on its own keeps its own result.
+func interruptGroup(process *os.Process, interrupted *atomic.Bool) error {
+	err := signalGroup(process, syscall.SIGINT)
+	if err == nil {
+		interrupted.Store(true)
+	}
+	return err
+}
+
+// watchIdle calls stop once rec has had no line from the tool's own
+// streams for idle, counted from started. turnip's annotation lines never
+// count. It checks once a second, or more often for an idle timeout
+// shorter than ten seconds, and returns when done is closed or it has
+// called stop.
+func watchIdle(rec *Record, idle time.Duration, started time.Time, done <-chan struct{}, stop func()) {
+	tick := min(time.Second, max(idle/10, 10*time.Millisecond))
+	ticker := time.NewTicker(tick)
+	defer ticker.Stop()
+
+	last := started
+	seen := 0
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+		}
+		lines := rec.snapshot()
+		for _, l := range lines[seen:] {
+			if l.Stream != Turnip && l.At.After(last) {
+				last = l.At
+			}
+		}
+		seen = len(lines)
+		if time.Since(last) >= idle {
+			stop()
+			return
+		}
+	}
+}
+
+// killAfterGrace kills the tool's process group when it has not finished
+// grace after its context ended. It returns at once when done is closed
+// first.
+func killAfterGrace(toolCtx context.Context, process *os.Process, grace time.Duration, done <-chan struct{}) {
+	select {
+	case <-done:
+		return
+	case <-toolCtx.Done():
+	}
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		_ = signalGroup(process, syscall.SIGKILL)
+	}
 }
 
 // lineSplitter turns the bytes read from one stream into that stream's
@@ -242,10 +360,20 @@ func transcriptHeader(dir, name string, args []string, version string) []string 
 // transcriptTrailer records how the command ended. The duration answers
 // "was it slow?" without opening the check run, and the exit code puts the
 // reason at the bottom of the output rather than only in a mark beside it.
-func transcriptTrailer(started time.Time, state *os.ProcessState) string {
+// When turnip stopped the tool, the trailer says why in place of the exit
+// code, which the result still carries; its duration is to the second,
+// which is the watchdog's resolution.
+func transcriptTrailer(started time.Time, state *os.ProcessState, stopped StopReason, idle time.Duration) string {
+	elapsed := time.Since(started)
+	switch stopped {
+	case StopIdle:
+		return annotation(fmt.Sprintf("stopped: no output for %s, after %s", idle, elapsed.Round(time.Second)))
+	case StopRequested:
+		return annotation(fmt.Sprintf("stopped: the Runner was told to stop, after %s", elapsed.Round(time.Second)))
+	}
 	code := -1
 	if state != nil {
 		code = state.ExitCode()
 	}
-	return annotation(fmt.Sprintf("exit %d in %s", code, time.Since(started).Round(time.Millisecond)))
+	return annotation(fmt.Sprintf("exit %d in %s", code, elapsed.Round(time.Millisecond)))
 }

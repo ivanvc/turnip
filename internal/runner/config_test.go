@@ -3,6 +3,7 @@ package runner
 import (
 	"encoding/base64"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -120,4 +121,37 @@ func TestConfigFromEnv_InvalidPlanDataBase64(t *testing.T) {
 
 	_, err := ConfigFromEnv(lookup(env))
 	require.Error(t, err)
+}
+
+func TestConfigFromEnv_IdleTimeoutDefaultsToThirtyMinutes(t *testing.T) {
+	for _, value := range []string{"", "unset"} {
+		env := fullEnv()
+		if value != "unset" {
+			env["TURNIP_IDLE_TIMEOUT"] = value
+		}
+
+		cfg, err := ConfigFromEnv(lookup(env))
+		require.NoError(t, err)
+		assert.Equal(t, 30*time.Minute, cfg.IdleTimeout, "TURNIP_IDLE_TIMEOUT %q", value)
+	}
+}
+
+func TestConfigFromEnv_IdleTimeoutParsed(t *testing.T) {
+	env := fullEnv()
+	env["TURNIP_IDLE_TIMEOUT"] = "45m0s"
+
+	cfg, err := ConfigFromEnv(lookup(env))
+	require.NoError(t, err)
+	assert.Equal(t, 45*time.Minute, cfg.IdleTimeout)
+}
+
+func TestConfigFromEnv_MalformedIdleTimeoutFails(t *testing.T) {
+	for _, value := range []string{"soon", "30", "0s", "-5m"} {
+		env := fullEnv()
+		env["TURNIP_IDLE_TIMEOUT"] = value
+
+		_, err := ConfigFromEnv(lookup(env))
+		require.Error(t, err, value)
+		assert.Contains(t, err.Error(), "TURNIP_IDLE_TIMEOUT", value)
+	}
 }

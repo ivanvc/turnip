@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ivanvc/turnip/internal/config"
 	"github.com/ivanvc/turnip/internal/logging"
@@ -86,6 +87,34 @@ type Config struct {
 	// slog.LevelInfo rather than erroring (ParseLevel's own contract), so
 	// this field is never itself a source of a Config load error.
 	LogLevel slog.Level
+	// RunnerIdleTimeout is how long a Runner lets its tool write nothing
+	// before stopping it, from TURNIP_RUNNER_IDLE_TIMEOUT (default 30
+	// minutes). It reaches the Runner as TURNIP_IDLE_TIMEOUT.
+	RunnerIdleTimeout time.Duration
+	// RunnerDeadline is the Job's activeDeadlineSeconds, from
+	// TURNIP_RUNNER_DEADLINE (default 4 hours). Always longer than
+	// RunnerIdleTimeout.
+	RunnerDeadline time.Duration
+}
+
+// The Runner timeouts used when their settings are unset. They are safety
+// bounds, not sizing choices.
+const (
+	DefaultRunnerIdleTimeout = 30 * time.Minute
+	DefaultRunnerDeadline    = 4 * time.Hour
+)
+
+// parsePositiveDuration reads a Go duration setting, returning def when raw
+// is empty. A malformed or non-positive value is an error naming name.
+func parsePositiveDuration(name, raw string, def time.Duration) (time.Duration, error) {
+	if raw == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("orchestrator: %s must be a positive duration such as 30m or 4h, got %q", name, raw)
+	}
+	return d, nil
 }
 
 // The recognized Mutation_Requirement names for TURNIP_MUTATION_REQUIREMENTS.
@@ -167,6 +196,8 @@ func SettingNames() []string {
 		"TURNIP_CLONE_SUBMODULES",
 		"TURNIP_ALLOWED_IMAGES",
 		"TURNIP_MUTATION_REQUIREMENTS",
+		"TURNIP_RUNNER_IDLE_TIMEOUT",
+		"TURNIP_RUNNER_DEADLINE",
 	}
 }
 
@@ -290,6 +321,21 @@ func ConfigFromEnv(env func(string) string, plugins PluginRegistry) (Config, err
 		return Config{}, fmt.Errorf("orchestrator: parsing TURNIP_ALLOWED_IMAGES: %w", err)
 	}
 	cfg.Catalog = catalog
+
+	cfg.RunnerIdleTimeout, err = parsePositiveDuration("TURNIP_RUNNER_IDLE_TIMEOUT", env("TURNIP_RUNNER_IDLE_TIMEOUT"), DefaultRunnerIdleTimeout)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.RunnerDeadline, err = parsePositiveDuration("TURNIP_RUNNER_DEADLINE", env("TURNIP_RUNNER_DEADLINE"), DefaultRunnerDeadline)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.RunnerDeadline <= cfg.RunnerIdleTimeout {
+		return Config{}, fmt.Errorf(
+			"orchestrator: TURNIP_RUNNER_DEADLINE (%s) must be longer than TURNIP_RUNNER_IDLE_TIMEOUT (%s)",
+			cfg.RunnerDeadline, cfg.RunnerIdleTimeout,
+		)
+	}
 
 	return cfg, nil
 }

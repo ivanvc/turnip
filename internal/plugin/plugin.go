@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"time"
 
 	"github.com/ivanvc/turnip/internal/provisioning"
 )
@@ -78,7 +79,20 @@ type ExecuteOptions struct {
 	// change the order it is recorded in. Nil means no one follows, and
 	// Execute uses a Record of its own.
 	Record *Record
+
+	// IdleTimeout stops the tool once it has written nothing for this
+	// long; zero means no idle timeout.
+	IdleTimeout time.Duration
 }
+
+// StopReason says why turnip stopped the tool, if it did.
+type StopReason int
+
+const (
+	StopNone      StopReason = iota
+	StopIdle                 // no output for IdleTimeout
+	StopRequested            // the Runner was told to stop
+)
 
 // ExecuteResult carries the standardized outputs of a Plugin's Execute call.
 type ExecuteResult struct {
@@ -87,6 +101,10 @@ type ExecuteResult struct {
 	PlanData      []byte
 	ExitCode      int
 	Error         error
+
+	// Stopped is why turnip stopped the tool; StopNone when it exited
+	// on its own.
+	Stopped StopReason
 }
 
 // ChangeSummary reports the add/change/destroy counts extracted from a

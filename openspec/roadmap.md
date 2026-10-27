@@ -20,14 +20,15 @@ In the order discussed so far; reorder here.
 1. `fix-single-config-surface`: implemented, awaiting the pilot migration (guide in docs/internal)
 2. `fix-unlock-without-config`: implemented, awaiting deploy (then unlock the blocked pilot pull request)
 3. `fix-rendered-capitalization`: implemented, awaiting deploy
-4. `fix-team-collaborators`: implemented, awaiting deploy
-5. `fix-comment-part-split`: implemented, awaiting deploy
+4. `runner-timeouts`: implemented, awaiting deploy (archive after `fix-rendered-capitalization` and `fix-single-config-surface`)
+5. `fix-team-collaborators`: implemented, awaiting deploy
+6. `fix-comment-part-split`: implemented, awaiting deploy
 
 ## Open changes
 
 | Change | What it does | Depends on | Stage |
 |---|---|---|---|
-| [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized | | proposal |
+| [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized | archive after `fix-rendered-capitalization`, `fix-single-config-surface` | implemented; archived once deployed, after its two dependencies |
 | [`fix-plan-survives-push`](changes/fix-plan-survives-push/) | every push marks the pull request's ready plans stale, and says so | | proposal |
 | [`fix-concurrent-mutations`](changes/fix-concurrent-mutations/) | a second mutating command for a Project is refused while the first runs | | proposal |
 | [`fix-lock-release-on-close`](changes/fix-lock-release-on-close/) | closing a pull request releases every Lock it holds, whatever its configuration | `fix-unlock-without-config` (in part) | proposal |
@@ -145,6 +146,14 @@ is still fresh at apply).
   exists
 - The image-policy refusal's example names the Project's tool rather
   than the placeholder `<tool>:` (found 2026-10-20)
+- A `turnip.yaml` override of the Runner's idle timeout and deadline,
+  a `runner:` field at both levels; left out of `runner-timeouts`
+  (2026-10-24) since it lets a pull request hold a node longer and
+  nothing needs it yet
+- A line in the output warning before the idle timeout stops a tool
+  ("no output for N minutes"); worth it once the output can be watched
+  live (`live-operation-output`), left out of `runner-timeouts`
+  (2026-10-24)
 - The operator docs warn that separating the Runner namespace reaches
   the cloud identity bindings: an EKS Pod Identity association and any
   `kubernetes-namespace` condition in its role's trust policy, GKE

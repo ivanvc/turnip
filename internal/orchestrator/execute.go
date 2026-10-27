@@ -341,6 +341,8 @@ func (o *Orchestrator) executeOne(ctx context.Context, client github.GitHubClien
 		ExtraArgs:      execArgs,
 		PlanData:       planData,
 		RunnerImage:    o.runnerImage,
+		IdleTimeout:    o.runnerIdleTimeout,
+		Deadline:       o.runnerDeadline,
 		ServiceAccount: serviceAccount,
 		Submodules:     submodules,
 		Provisioning:   jobProvisioning(t.Project, p.Provisioning()),

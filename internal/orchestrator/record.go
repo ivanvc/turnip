@@ -172,18 +172,21 @@ return {0, ''}
 
 // claimForFinalizationScript atomically claims an Operation Record for
 // finalization, used by a genuine result (mode "result"), the timeout
-// sweep (mode "timeout") and the abandonment sweep (mode "abandon"), so
-// exactly one of them ever finalizes a given Operation (design.md's
-// Decision 1).
+// sweep (mode "timeout"), the sweep's finalization of a started Runner
+// whose Job ended (mode "stopped") and the abandonment sweep (mode
+// "abandon"), so exactly one of them ever finalizes a given Operation
+// (design.md's Decision 1).
 //
 // KEYS[1] = operation:{id}
-// ARGV[1] = mode: "result" | "timeout" | "abandon"
+// ARGV[1] = mode: "result" | "timeout" | "stopped" | "abandon"
 // ARGV[2] = now (unix seconds; only read when mode == "timeout")
 // Returns 1 if this call claimed it, 0 otherwise (gone, already
-// finalized, or — timeout mode only — started since last checked, or the
-// deadline hasn't passed yet, or, in abandon mode only, not started).
-// The 24-hour age of an abandon is checked by the caller against the
-// record's immutable created_at.
+// finalized, or, in timeout mode only, started since last checked or the
+// deadline hasn't passed yet, or, in stopped and abandon modes, not
+// started). That the Job ended is Kubernetes state this script cannot
+// see: the sweep reads it before a stopped claim. The 24-hour age of an
+// abandon is checked by the caller against the record's immutable
+// created_at.
 const claimForFinalizationScript = `
 local existing = redis.call('GET', KEYS[1])
 if not existing then
@@ -200,7 +203,7 @@ if ARGV[1] == 'timeout' then
     if tonumber(ARGV[2]) < data.start_deadline then
         return 0
     end
-elseif ARGV[1] == 'abandon' then
+elseif ARGV[1] == 'abandon' or ARGV[1] == 'stopped' then
     if not data.started then
         return 0
     end
@@ -259,6 +262,15 @@ func (s *recordStore) ClaimForTimeout(ctx context.Context, operationID string, n
 // already finalized, not started, or younger than abandonAfter.
 func (s *recordStore) ClaimForAbandon(ctx context.Context, operationID string, now time.Time) (rec *OperationRecord, claimed bool, err error) {
 	return s.claim(ctx, operationID, "abandon", now)
+}
+
+// ClaimForStopped claims a started, unfinalized record for the sweep
+// to finalize as stopped, once it has read that the record's Job ended.
+// It fails when a result, or another replica, claimed it first: the same
+// compare-and-set as the result's claim, so a Runner reporting on its way
+// out and the sweep seeing its Job end cannot both finalize it.
+func (s *recordStore) ClaimForStopped(ctx context.Context, operationID string) (rec *OperationRecord, claimed bool, err error) {
+	return s.claim(ctx, operationID, "stopped", time.Time{})
 }
 
 func (s *recordStore) claim(ctx context.Context, operationID, mode string, now time.Time) (*OperationRecord, bool, error) {

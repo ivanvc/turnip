@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -368,6 +369,25 @@ func TestBuildJob_ProjectEnvInSortedKeyOrder(t *testing.T) {
 	assert.Equal(t, []string{"ALPHA", "BRAVO", "CHARLIE"}, got)
 }
 
+// A Project's runner.env comes after every one of turnip's own
+// variables, TURNIP_IDLE_TIMEOUT included, so it can never shadow one.
+func TestBuildJob_ProjectEnvComesLast(t *testing.T) {
+	project := testProject("helmfile")
+	project.Runner.Env = map[string]string{"ALPHA": "1", "BRAVO": "2"}
+
+	job, err := BuildJob(project, testParams("helmfile"))
+	require.NoError(t, err)
+
+	env := mainContainer(t, job).Env
+	require.Greater(t, len(env), 2)
+	var names []string
+	for _, e := range env {
+		names = append(names, e.Name)
+	}
+	assert.Equal(t, []string{"ALPHA", "BRAVO"}, names[len(names)-2:])
+	assert.Contains(t, names[:len(names)-2], "TURNIP_IDLE_TIMEOUT")
+}
+
 func TestBuildJob_ServiceAccountFromParams(t *testing.T) {
 	params := testParams("helmfile")
 	params.ServiceAccount = "turnip-runner"
@@ -578,4 +598,35 @@ func TestBuildJob_IdentityPathReachesBothContainers(t *testing.T) {
 			assert.Equal(t, want, envMap(mainContainer(t, job))["TURNIP_TOKEN_FILE"])
 		})
 	}
+}
+
+func TestBuildJob_RunnerTimeouts(t *testing.T) {
+	params := testParams("helmfile")
+	params.IdleTimeout = 10 * time.Minute
+	params.Deadline = 2 * time.Hour
+	job, err := BuildJob(testProject("helmfile"), params)
+	require.NoError(t, err)
+
+	require.NotNil(t, job.Spec.ActiveDeadlineSeconds)
+	assert.EqualValues(t, 7200, *job.Spec.ActiveDeadlineSeconds)
+	require.NotNil(t, job.Spec.Template.Spec.TerminationGracePeriodSeconds)
+	assert.EqualValues(t, 60, *job.Spec.Template.Spec.TerminationGracePeriodSeconds)
+
+	for _, c := range job.Spec.Template.Spec.InitContainers {
+		assert.NotContains(t, envMap(c), "TURNIP_IDLE_TIMEOUT", "init container %s", c.Name)
+	}
+	var runner *corev1.Container
+	for i := range job.Spec.Template.Spec.Containers {
+		runner = &job.Spec.Template.Spec.Containers[i]
+	}
+	require.NotNil(t, runner)
+	assert.Equal(t, "10m0s", envMap(*runner)["TURNIP_IDLE_TIMEOUT"])
+}
+
+func TestBuildJob_RunnerTimeoutsDefault(t *testing.T) {
+	job, err := BuildJob(testProject("helmfile"), testParams("helmfile"))
+	require.NoError(t, err)
+	require.NotNil(t, job.Spec.ActiveDeadlineSeconds)
+	assert.EqualValues(t, 4*3600, *job.Spec.ActiveDeadlineSeconds)
+	assert.Equal(t, "30m0s", envMap(job.Spec.Template.Spec.Containers[0])["TURNIP_IDLE_TIMEOUT"])
 }

@@ -11,6 +11,7 @@ import (
 
 var allFailureCategories = []FailureCategory{
 	FailureUnspecified, FailureToolExited, FailureCloneFailed, FailureWorkspaceFailed, FailureToolNotStarted,
+	FailureTimedOut, FailureStopped,
 }
 
 func TestFailureCategory_RoundTripsThroughTheProtoEnum(t *testing.T) {

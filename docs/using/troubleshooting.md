@@ -102,9 +102,22 @@ are in the results comment.
   quota, an admission policy, or the Server's RBAC. The operation never
   ran, and this is whoever runs turnip's to fix. See
   [Runner execution errors](../operating/troubleshooting.md#runner-execution-errors).
-- **A description of a stuck Job or Pod**: the operation timed out, and
-  the title is what turnip found when it gave up. See
+- **`helmfile stopped: no output for 30m0s`** (the duration is the
+  Server's idle timeout): the tool wrote nothing for that long, so turnip
+  stopped it. See [A tool stopped for silence](#a-tool-stopped-for-silence).
+- **`helmfile stopped: the Runner was told to stop`**: the Runner was
+  stopped from outside while the tool ran (its deadline, an eviction or a
+  deletion), and turnip stopped the tool. See
+  [A Runner that was told to stop](#a-runner-that-was-told-to-stop).
+- **A description of a Job or Pod** (such as `Job <name>: Pod still
+  Pending after 5 minutes` or `Job <name>: stopped at its deadline of
+  4h0m0s`): the title is what turnip read from Kubernetes, and the
+  check's summary says which case applies. `The Runner never reported
+  back within the start timeout.` means the Runner never started; see
   [Runner execution errors](../operating/troubleshooting.md#runner-execution-errors).
+  `The Runner stopped before reporting a result.` means it started and
+  then ended without a result; see
+  [A Runner that stopped without reporting](#a-runner-that-stopped-without-reporting).
 - **`failed`** alone: the Runner reported a failure without saying which
   step. The results comment has its message.
 - **Queued, `locked by PR #5, re-plan once it's released`** (or `locked by
@@ -149,6 +162,53 @@ note says what the failure left in the PR's checks tab.
   [The `turnip` check](#the-turnip-check)). The error names the cause,
   often a GitHub rate limit or outage; if it recurs, ask whoever runs
   turnip.
+
+## A tool stopped for silence
+
+**Symptom**: a per-project check failed titled `helmfile stopped: no
+output for 30m0s`, and the project's output ends with `The tool wrote
+nothing for 30m0s, so turnip stopped it.`
+
+The tool printed nothing, on either of its output streams, for the
+Server's idle timeout, so turnip interrupted it, and killed it if it did
+not exit within 30 seconds. The check fails and the lock moves as for any
+failed operation: a stopped `apply` leaves its plan stale, so plan again
+before applying. Look at the last lines of the output to see where the
+tool went quiet (a hung connection to the cluster, a resource that never
+became ready). A tool that is slow but keeps printing is never stopped.
+If the operation legitimately stays silent longer than the timeout, ask
+whoever runs turnip to raise it; see
+[A tool stopped for silence](../operating/troubleshooting.md#a-tool-stopped-for-silence).
+
+## A Runner that was told to stop
+
+**Symptom**: a per-project check failed titled `helmfile stopped: the
+Runner was told to stop`, and the project's output ends with `The Runner
+was told to stop (its deadline, an eviction or a deletion), so turnip
+stopped the tool.`
+
+The Runner's pod was told to stop before the tool finished: it reached
+the Runner's absolute deadline, its node evicted it, or someone deleted
+it. turnip interrupted the tool first, so it could clean up. Treat the
+state as unknown, as for any failed `apply`: plan again before applying.
+If it recurs, ask whoever runs turnip; see
+[A Runner told to stop](../operating/troubleshooting.md#a-runner-told-to-stop).
+
+## A Runner that stopped without reporting
+
+**Symptom**: a per-project check failed with a description of a Job as
+its title, such as `Job <name>: stopped at its deadline of 4h0m0s`,
+`Job <name>: container runner terminated (OOMKilled)` or
+`Job <name>: Pod evicted`, and the summary says `The Runner stopped
+before reporting a result.`
+
+The operation had started, then its Runner ended without sending a
+result, so turnip finalized it as a failure within about 30 seconds of
+the Job ending. Unlike [a project that reports no result](#a-project-reports-no-result-from-the-runner),
+the check is not left in progress. What the operation changed is
+unknown; plan again before applying. The title says what turnip found;
+see
+[A Runner that stopped without reporting](../operating/troubleshooting.md#a-runner-that-stopped-without-reporting).
 
 ## A Project reports no result from the Runner
 
@@ -274,7 +334,7 @@ gives a shorter output that fits.
 ## A Project that lists `runner.secrets` never started
 
 **Symptom**: the check fails with a title like `Job <name>: container
-stuck (PodInitializing)`, and the Project's output ends with `This
+stuck (PodInitializing)`, and the project's output ends with `This
 project mounts keys <keys> of Secret <secret> in namespace <namespace>;
 if that Secret or one of those keys is missing, the Pod cannot start.`
 

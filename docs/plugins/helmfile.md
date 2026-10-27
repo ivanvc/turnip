@@ -442,6 +442,15 @@ A Helmfile project holds its lock, and needs its apply or sync for the
 `turnip` check, even when its diff is clean; see
 [`sync` acts even when the diff is empty](#sync-acts-even-when-the-diff-is-empty).
 
+#### A silent `--wait` is stopped
+
+turnip stops a tool that writes nothing for the idle timeout (30 minutes
+by default, set by the operator with `TURNIP_RUNNER_IDLE_TIMEOUT`). A
+`--wait` that stays silent for longer than that is stopped: the check
+fails titled `helmfile stopped: no output for 30m0s`. Helmfile is
+interrupted first, so it can release its locks. See
+[A tool stopped for silence](../using/troubleshooting.md#a-tool-stopped-for-silence).
+
 #### There is no `destroy`
 
 Remove a release with `installed: false` and apply; see

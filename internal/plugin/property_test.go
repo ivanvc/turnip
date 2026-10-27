@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
@@ -19,10 +20,10 @@ func TestProperty_PluginResultStructureCompleteness(t *testing.T) {
 		exitCode := rapid.IntRange(0, 255).Draw(t, "exitCode")
 
 		p := &HelmfilePlugin{
-			run: func(ctx context.Context, dir, name string, args []string, version string, rec *Record) (int, error) {
+			run: func(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, rec *Record) (int, StopReason, error) {
 				rec.Append(Stdout, stdout)
 				rec.Append(Stderr, stderr)
-				return exitCode, nil
+				return exitCode, StopNone, nil
 			},
 		}
 
@@ -42,10 +43,10 @@ func TestProperty_HelmfilePluginCommandExecution(t *testing.T) {
 		var gotName string
 		var gotArgs []string
 		p := &HelmfilePlugin{
-			run: func(ctx context.Context, dir, name string, args []string, version string, rec *Record) (int, error) {
+			run: func(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, rec *Record) (int, StopReason, error) {
 				gotName = name
 				gotArgs = args
-				return 0, nil
+				return 0, StopNone, nil
 			},
 		}
 

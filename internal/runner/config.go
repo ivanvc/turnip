@@ -5,7 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
+
+// DefaultIdleTimeout is the idle timeout when TURNIP_IDLE_TIMEOUT is unset
+// or empty: a Runner run outside a turnip-built Job, or one built by a
+// Server that does not send it.
+const DefaultIdleTimeout = 30 * time.Minute
 
 // Config carries everything the Runner needs to execute one Operation,
 // read from the environment variables internal/jobs.BuildJob sets on the
@@ -57,6 +63,12 @@ type Config struct {
 	// "off", so a Job built by an older Server still initializes
 	// submodules instead of silently producing an empty directory.
 	CloneSubmodules string
+
+	// IdleTimeout stops the tool once it has written nothing for this
+	// long (see plugin.ExecuteOptions.IdleTimeout). It is read from
+	// TURNIP_IDLE_TIMEOUT, set on the container that runs the tool only;
+	// unset or empty means DefaultIdleTimeout.
+	IdleTimeout time.Duration
 }
 
 // MissingEnvVarsError names every required environment variable that was
@@ -130,6 +142,20 @@ func ConfigFromEnv(env func(string) string) (Config, error) {
 	// clone reads it. Empty means top-level, not "off"; see
 	// initSubmodules.
 	cfg.CloneSubmodules = env("TURNIP_CLONE_SUBMODULES")
+
+	cfg.IdleTimeout = DefaultIdleTimeout
+	if raw := env("TURNIP_IDLE_TIMEOUT"); raw != "" {
+		idle, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("runner: parse TURNIP_IDLE_TIMEOUT: %w", err)
+		}
+		// Zero would mean no idle timeout at all, which the Server never
+		// sends: it is a malformed value, not a way to turn the timer off.
+		if idle <= 0 {
+			return Config{}, fmt.Errorf("runner: TURNIP_IDLE_TIMEOUT must be positive, got %q", raw)
+		}
+		cfg.IdleTimeout = idle
+	}
 
 	if raw := env("TURNIP_TOOL_CONFIG"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &cfg.ToolConfig); err != nil {
