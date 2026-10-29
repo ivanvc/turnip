@@ -19,15 +19,13 @@ In the order discussed so far; reorder here.
 
 1. `fix-single-config-surface`: implemented, awaiting the pilot migration (guide in docs/internal)
 2. `fix-unlock-without-config`: implemented, awaiting deploy (then unlock the blocked pilot pull request)
-3. `fix-rendered-capitalization`: implemented, awaiting deploy
-4. `runner-timeouts`: implemented, awaiting deploy (archive after `fix-rendered-capitalization` and `fix-single-config-surface`)
-5. `fix-comment-part-split`: implemented, awaiting deploy
+3. `runner-timeouts`: implemented, awaiting deploy (archive after `fix-single-config-surface`)
 
 ## Open changes
 
 | Change | What it does | Depends on | Stage |
 |---|---|---|---|
-| [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized | archive after `fix-rendered-capitalization`, `fix-single-config-surface` | implemented; archived once deployed, after its two dependencies |
+| [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized | archive after `fix-single-config-surface` | implemented; archived once deployed, after its dependency |
 | [`fix-plan-survives-push`](changes/fix-plan-survives-push/) | every push marks the pull request's ready plans stale, and says so | | proposal |
 | [`fix-concurrent-mutations`](changes/fix-concurrent-mutations/) | a second mutating command for a Project is refused while the first runs | | proposal |
 | [`fix-lock-release-on-close`](changes/fix-lock-release-on-close/) | closing a pull request releases every Lock it holds, whatever its configuration | `fix-unlock-without-config` (in part) | proposal |
@@ -36,10 +34,8 @@ In the order discussed so far; reorder here.
 | [`operation-scheduling`](changes/operation-scheduling/) | a cap on how many Operations run at once, with a fair queue, and per-Project dependencies that order applies | `fix-concurrent-mutations`, `fix-invalid-config-check-on-comment`, `runner-timeouts` (in part) | proposal |
 | [`runner-server-tls`](changes/runner-server-tls/) | TLS on the Runner's gRPC channel, and a Runner that verifies the Server; where the certificate comes from is still open | | proposal |
 | [`org-images`](changes/org-images/) | the project under its organization, and multi-architecture images published on every push to `main` | | proposal |
-| [`fix-comment-part-split`](changes/fix-comment-part-split/) | an output part ends at a whole line, never inside a line or a character | | implemented; archived once deployed |
 | [`fix-single-config-surface`](changes/fix-single-config-surface/) | settings in one ConfigMap, secret material in one Secret, no Deployment patches, under Kustomize and Helmfile alike | | implemented; archived once the pilot runs on one ConfigMap and one Secret |
 | [`fix-unlock-without-config`](changes/fix-unlock-without-config/) | `unlock` works whatever the configuration says | | implemented; archived once the blocked pull request unlocks |
-| [`fix-rendered-capitalization`](changes/fix-rendered-capitalization/) | rendered text writes project, lock and operation in lowercase mid-sentence | | implemented; archived once deployed |
 
 Changes that overlap without depending on each other are best done
 one at a time: `fix-plan-survives-push`, `fix-lock-release-on-close` and

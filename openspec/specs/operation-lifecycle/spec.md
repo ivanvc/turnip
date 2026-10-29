@@ -119,13 +119,13 @@ Every Server replica SHALL sweep the Operation Records every 30 seconds and time
 
 | Kubernetes state | Diagnostic |
 |---|---|
-| no Job name recorded, the Job is gone, or its status cannot be read | `No Job/Pod found for this Operation; it may have been deleted or never successfully scheduled` |
+| no Job name recorded, the Job is gone, or its status cannot be read | `No Job/Pod found for this operation; it may have been deleted or never successfully scheduled` |
 | a mutating Operation's tool container cannot pull its image | the recorded-digest diagnostic (see the `tool-images` capability) |
 | a container is waiting with a reason (init containers first) | `Job <name>: container stuck (<reason>)` |
 | a Pod exists | `Job <name>: Pod still <phase> after 5 minutes` |
 | no Pod yet | `Job <name>: no Pod found yet after 5 minutes` |
 
-When the Operation's Project lists keys of the repository's Secret (see the `runner-access` capability) and the diagnostic was read from a Pod still `Pending`, the Project's output in the results comment SHALL be the diagnostic followed by a line reading `This Project mounts keys <keys> of Secret <secret> in namespace <namespace>; if that Secret or one of those keys is missing, the Pod cannot start.`, with the keys joined by `, ` in the order listed. The check's title SHALL remain the diagnostic alone.
+When the Operation's Project lists keys of the repository's Secret (see the `runner-access` capability) and the diagnostic was read from a Pod still `Pending`, the Project's output in the results comment SHALL be the diagnostic followed by a line reading `This project mounts keys <keys> of Secret <secret> in namespace <namespace>; if that Secret or one of those keys is missing, the Pod cannot start.`, with the keys joined by `, ` in the order listed. The check's title SHALL remain the diagnostic alone.
 
 Once an Operation is marked started, the sweep SHALL NOT time it out. Instead, 24 hours after dispatch the sweep SHALL abandon it: the check stays in progress, the Lock stays as it was, the record is deleted, and its trigger receives `No result was received from the Runner within 24 hours.` as the Project's output.
 
@@ -151,7 +151,7 @@ Known issue: once started, nothing bounds an Operation short of its abandonment 
 #### Scenario: A missing repository Secret
 - **WHEN** Project `lab` of repository id `123456789` lists `lab-kubeconfig`, no Secret `turnip-repository-123456789` exists in namespace `turnip-runners`, and the Pod is still `Pending` at the start deadline
 - **THEN** the check fails titled with the diagnostic alone
-- **AND** `lab`'s output in the results comment ends with `This Project mounts keys lab-kubeconfig of Secret turnip-repository-123456789 in namespace turnip-runners; if that Secret or one of those keys is missing, the Pod cannot start.`
+- **AND** `lab`'s output in the results comment ends with `This project mounts keys lab-kubeconfig of Secret turnip-repository-123456789 in namespace turnip-runners; if that Secret or one of those keys is missing, the Pod cannot start.`
 
 ### Requirement: Exactly-once finalization
 Each Operation SHALL be finalized exactly once, by whichever comes first of its result, its start timeout and its abandonment (see Start timeout and sweep), through an atomic claim on its record. A result SHALL be accepted whether or not the Operation was marked started. A timeout SHALL be applied only to an Operation not yet started and past its start deadline, and an abandonment only to one marked started and 24 hours past dispatch. A result, timeout or abandonment for an Operation already finalized, or whose record no longer exists, SHALL be ignored, and the Runner's stream SHALL still close successfully.

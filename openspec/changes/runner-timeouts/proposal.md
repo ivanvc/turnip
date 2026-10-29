@@ -67,6 +67,7 @@ Out of scope, kept in the backlog:
   `fix-single-config-surface`.** This change modifies "Start timeout and
   sweep" and "Settings index", which those also modify; its deltas are
   written on their versions, so archiving it last keeps their edits.
+  (`fix-rendered-capitalization` was archived 2026-10-29.)
 
 - **`operation-scheduling` depends on this, in part.** It leaves
   completing a queued check stranded by a replica that stopped to this

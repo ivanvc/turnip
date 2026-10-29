@@ -96,7 +96,7 @@ After the fenced output, the final piece of a Project's section SHALL carry, in 
 - **THEN** the section does not offer `Apply just this project`
 
 ### Requirement: Footer
-The last comment body SHALL end with a footer only when at least one Project in the comment is still locked by this pull request. The footer SHALL read `This pull request holds locks on `a`, `b` until applied or released.`, followed, when any locked Project's Operation ran with arguments, by `Applying replays the scope each plan recorded, which may be narrower than the whole Project.`, and then `` `/turnip apply` or `/turnip unlock` ``. The footer SHALL never print a command carrying arguments.
+The last comment body SHALL end with a footer only when at least one Project in the comment is still locked by this pull request. The footer SHALL read `This pull request holds locks on `a`, `b` until applied or released.`, followed, when any locked Project's Operation ran with arguments, by `Applying replays the scope each plan recorded, which may be narrower than the whole project.`, and then `` `/turnip apply` or `/turnip unlock` ``. The footer SHALL never print a command carrying arguments.
 
 #### Scenario: Nothing locked
 - **WHEN** every Project in the comment released or never held its Lock
@@ -107,11 +107,27 @@ The last comment body SHALL end with a footer only when at least one Project in 
 - **THEN** the footer names `web`, carries the replay sentence, and ends with `` `/turnip apply` or `/turnip unlock` ``
 
 ### Requirement: Size limits, splitting and dropping
-No comment body SHALL exceed 65536 characters. A Project section too large for one body SHALL be split into several self-contained sections, each closing its own fence and `<details>`, with ` (output part N/M)` appended to the summary; the trailer SHALL appear only on the last part. A Project's output SHALL take at most as many parts as `TURNIP_MAX_COMMENTS_PER_PROJECT` allows (5 by default): when it would need more, the start of the output after its leading annotation lines SHALL be cut so that it fits, keeping the end, and the line `…(<K> earlier lines omitted)` put right after those annotation lines. Sections SHALL be packed greedily into as many bodies as needed; the first body opens with the notices and verdict line, every later body with `_(continued N/M)_`, and the footer appears only at the end of the last body. If a body still exceeds the limit, whole sections SHALL be dropped from its start, with `_(1 earlier section omitted because this comment reached GitHub's size limit)_` (or `_(K earlier sections omitted ...)_`) placed after the header; if a single remaining section still does not fit, the start of its output SHALL be cut and replaced with `…(earlier output omitted)`, keeping the end.
+No comment body SHALL exceed 65536 characters. A Project section too large for one body SHALL be split into several self-contained sections, each closing its own fence and `<details>`, with ` (output part N/M)` appended to the summary; the trailer SHALL appear only on the last part. Each part SHALL end at the end of the last whole line of output that fits it, and the next part SHALL start with the line after it; only a line longer than a whole part SHALL be split inside, and then between two characters, never inside one. A Project's output SHALL take at most as many parts as `TURNIP_MAX_COMMENTS_PER_PROJECT` allows (5 by default): when it would need more, the start of the output after its leading annotation lines SHALL be cut so that it fits, keeping the end, and the line `…(<K> earlier lines omitted)` put right after those annotation lines. Sections SHALL be packed greedily into as many bodies as needed; the first body opens with the notices and verdict line, every later body with `_(continued N/M)_`, and the footer appears only at the end of the last body. If a body still exceeds the limit, whole sections SHALL be dropped from its start, with `_(1 earlier section omitted because this comment reached GitHub's size limit)_` (or `_(K earlier sections omitted ...)_`) placed after the header; if a single remaining section still does not fit, the start of its output SHALL be cut and replaced with `…(earlier output omitted)`, keeping the end from the start of a whole line, or from a character boundary when the last line alone is too long.
 
 #### Scenario: One very large plan
 - **WHEN** one Project's plan output is several times the comment limit
 - **THEN** turnip posts several comments, the first with the verdict line, the rest headed `_(continued 2/3)_` and so on, each carrying one `(output part N/M)` piece, and every fence closed within its comment
+
+#### Scenario: A line where a part ends
+- **WHEN** a Project's output is split into parts and the space left in a part ends in the middle of the line `port: 8888`
+- **THEN** that part ends with the line before it, and the next part begins with `port: 8888` whole
+
+#### Scenario: A multi-byte character where a part ends
+- **WHEN** the space left in a part ends in the middle of a multi-byte character, such as `é` or `💡`
+- **THEN** the character appears whole in exactly one part, and no part contains a broken character
+
+#### Scenario: A line longer than a part
+- **WHEN** a single line of output is longer than a whole part
+- **THEN** that line alone is split across parts, each piece ending between two characters
+
+#### Scenario: Every line kept
+- **WHEN** a Project's output is split into parts and not cut by the cap
+- **THEN** joining the parts' outputs gives the output exactly, with no line lost, repeated or joined to another
 
 #### Scenario: Output beyond the cap
 - **WHEN** one Project's output would take 80 parts and `TURNIP_MAX_COMMENTS_PER_PROJECT` is unset
@@ -120,6 +136,10 @@ No comment body SHALL exceed 65536 characters. A Project section too large for o
 #### Scenario: A raised cap
 - **WHEN** `TURNIP_MAX_COMMENTS_PER_PROJECT=8` and one Project's output would take 80 parts
 - **THEN** its section takes 8 parts
+
+#### Scenario: A section cut to fit a body
+- **WHEN** a single section is cut to fit one body, and the cut would fall in the middle of a line
+- **THEN** the kept output starts at the beginning of the next whole line, after `…(earlier output omitted)`
 
 ### Requirement: Minimizing outdated plan comments
 When `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` is true (default false), before posting a plan comment turnip SHALL mark every comment of the previous plan comment on the same pull request as outdated (GitHub's minimize, classifier OUTDATED), and after posting SHALL remember the new comment's bodies as the pull request's latest plan comment. Apply comments SHALL never be minimized or remembered. A failure to minimize or remember SHALL be logged and SHALL NOT stop the new comment from being posted. The remembered plan comment SHALL be forgotten when the pull request closes (see the `pull-request-lifecycle` capability), and otherwise expires 90 days after it was last written. When the setting is false, nothing is minimized or remembered.

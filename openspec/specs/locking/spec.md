@@ -153,7 +153,7 @@ Known issue: two mutating commands for one Project are both admitted, since the 
 ### Requirement: What releases a Lock
 A Lock SHALL be released by: a successful mutating command; a plan that succeeds with nothing to apply from `planning` or `plan_stale`; a plan that fails from `planning`; `/turnip unlock` from a writer on the holding pull request (targeting, permission and replies are the `commands` and `authorization` capabilities'); and the holding pull request closing or merging (which events trigger it is the `pull-request-lifecycle` capability's). Unlock and close SHALL release from any state. Releasing a Lock SHALL NOT change the `turnip` check (see the `merge-check` capability).
 
-On close, the Server SHALL release, for each Project in the configuration at the pull request's head commit, the Lock that pull request holds, and SHALL post one comment listing them: `Unlocked the following Projects since this PR closed:` followed by `- <project>` per line. No comment SHALL be posted when nothing was released. A Lock another pull request holds SHALL be left alone.
+On close, the Server SHALL release, for each Project in the configuration at the pull request's head commit, the Lock that pull request holds, and SHALL post one comment listing them: `Unlocked the following projects since this PR closed:` followed by `- <project>` per line. No comment SHALL be posted when nothing was released. A Lock another pull request holds SHALL be left alone.
 
 Known issue: close walks the head commit's configuration, so renamed or removed Projects keep their Locks, and an unreadable configuration at close releases nothing (it is only logged). Fix proposed in change `fix-lock-release-on-close`.
 
@@ -178,12 +178,12 @@ After applying an Operation's result or start timeout to the Lock, the Server SH
 
 | Transition | Note |
 |---|---|
-| released after a failed plan | `Lock released: the plan failed, so nothing was recorded. This Project is free for another pull request to plan against.` |
-| released after a plan with nothing to apply | `Lock released: the plan found nothing to apply. This Project is free for another pull request to plan against.` |
-| released after a successful mutating command | `Lock released: the operation completed. This Project is free for another pull request to plan against.` |
-| into `plan_stale` after a failed mutating command | `The stored plan is no longer valid: this operation failed part-way, so infrastructure may have changed since it was planned. Re-plan before retrying. The Lock is still held, so no other pull request can act on this Project meanwhile.` |
-| into `plan_stale` after a mutating command that did not start in time | `The stored plan is no longer valid: no result arrived, and the operation may still be running. Re-plan before retrying. The Lock is still held.` |
-| a failed plan leaving `plan_stale` | `The plan failed, so the previously stored plan is still unusable. The Lock is still held; a successful plan is required before applying.` |
+| released after a failed plan | `Lock released: the plan failed, so nothing was recorded. This project is free for another pull request to plan against.` |
+| released after a plan with nothing to apply | `Lock released: the plan found nothing to apply. This project is free for another pull request to plan against.` |
+| released after a successful mutating command | `Lock released: the operation completed. This project is free for another pull request to plan against.` |
+| into `plan_stale` after a failed mutating command | `The stored plan is no longer valid: this operation failed part-way, so infrastructure may have changed since it was planned. Re-plan before retrying. The lock is still held, so no other pull request can act on this project meanwhile.` |
+| into `plan_stale` after a mutating command that did not start in time | `The stored plan is no longer valid: no result arrived, and the operation may still be running. Re-plan before retrying. The lock is still held.` |
+| a failed plan leaving `plan_stale` | `The plan failed, so the previously stored plan is still unusable. The lock is still held; a successful plan is required before applying.` |
 
 Every other transition SHALL carry no note. A timed-out Operation SHALL still report its Lock as held when it is.
 
