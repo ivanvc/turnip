@@ -7,10 +7,12 @@ Read once, at startup, by `internal/orchestrator.ConfigFromEnv`, which
 fails fast, naming every missing required variable together rather than
 one restart-and-discover-the-next-one at a time.
 
-**A changed setting takes effect after a restart.** Change a setting in
-`turnip-server-config` (the ConfigMap is named that under every install
-method) and then run `kubectl rollout restart deployment/turnip-server`.
-Nothing restarts the Server for you. For where to make the change, see
+**A changed setting takes effect after a restart.** The Server reads its
+environment once, so a changed `turnip-server-config` ConfigMap or
+`turnip-server-secrets` Secret does nothing until the Pod restarts. With
+a Kustomize `configMapGenerator`, a changed value renames the ConfigMap
+and rolls the Deployment by itself; in any other case, nothing restarts
+the Server for you: run `kubectl rollout restart deployment/turnip-server`. For where to make the change, see
 [Installing turnip](deployment.md#installing-turnip).
 
 **An unknown `TURNIP_*` variable is reported, not obeyed.** At startup
@@ -29,14 +31,14 @@ out of the warning.
 | `TURNIP_REDIS_PASSWORD_PATH` | no | unset | path to a file holding the Redis AUTH password, typically the `redis-password` key of the mounted `turnip-server-secrets` Secret, at `/etc/turnip/secrets/redis-password`. Re-read for each new connection, so a rotated token needs no restart; a trailing newline is trimmed. The file must exist at startup. Recommended over the value form. Setting this and `TURNIP_REDIS_PASSWORD` is a startup error |
 | `TURNIP_REDIS_PASSWORD` | no | unset | the Redis AUTH password as a literal value. Prefer `TURNIP_REDIS_PASSWORD_PATH`; if you use this, deliver it from a Secret, never a ConfigMap. Not logged and never shown by `/readyz` |
 | `TURNIP_REDIS_CA_PATH` | no | unset | path to a PEM bundle of CA certificates (a key of the mounted `turnip-server-secrets` Secret, under `/etc/turnip/secrets`, or a file you mount) that replaces the system roots when verifying a `rediss://` server. It must hold at least one certificate. Setting it with a bare or `redis://` address is a startup error |
-| `TURNIP_HTTP_ADDR` | yes, preset by `deploy/base` (`:8080`) | | HTTP bind address (webhooks, `/healthz`, `/readyz`, `/metrics`) |
-| `TURNIP_GRPC_ADDR` | yes, preset by `deploy/base` (`:9090`) | | gRPC bind address (Runner to Server log/result streaming) |
-| `TURNIP_RUNNER_SERVER_ADDR` | yes, set by `deploy/base` in the Deployment's `env` (`turnip-server.<Server namespace>.svc:9090`) | | address a Runner Pod dials to reach this Server: a Service DNS name, not the bind address above. `deploy/base` builds it from the Pod's own namespace, so a value merged into the ConfigMap is ignored; to change it, patch that `env` entry (see [Choosing namespaces](deployment.md#choosing-namespaces)) |
-| `TURNIP_RUNNER_IMAGE` | yes, preset by `deploy/base` (`ghcr.io/ivanvc/turnip-runner:latest`) | | the Runner container image a deployed Server creates Jobs with |
+| `TURNIP_HTTP_ADDR` | no | `:8080` | HTTP bind address (webhooks, `/healthz`, `/readyz`, `/metrics`). The default is the port `deploy/base` exposes; set it only if you also change that port |
+| `TURNIP_GRPC_ADDR` | no | `:9090` | gRPC bind address (Runner to Server log/result streaming). The default is the port `deploy/base` exposes; set it only if you also change that port |
+| `TURNIP_RUNNER_SERVER_ADDR` | yes, set by `deploy/base` in the Deployment's `env` (`turnip-server.<Server namespace>.svc:9090`) | | address a Runner Pod dials to reach this Server: a Service DNS name, not the bind address above. `deploy/base` builds it from the Pod's own namespace, so a value in `turnip-server-config` has no effect; to change it, patch that `env` entry (see [Choosing namespaces](deployment.md#choosing-namespaces)) |
+| `TURNIP_RUNNER_IMAGE` | yes | | the Runner container image a deployed Server creates Jobs with; pin it to the Server's release tag |
 | `TURNIP_LOG_LEVEL` | no | `info` | [the Server's own log level](#log-level): `debug`, `info`, `warn` or `error`, case-insensitive; unset or unrecognized defaults to `info` |
 | `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` | no | `false` | collapse an older plan comment on the same pull request once a newer one supersedes it |
 | `TURNIP_MAX_COMMENTS_PER_PROJECT` | no | `5` | [the most comment bodies one project's output may take](#comment-size) in a results comment; a positive integer |
-| `TURNIP_RUNNER_NAMESPACE` | no | the Server's own namespace | namespace Runner Jobs are created in. `deploy/base` leaves it unset, so Runners run beside the Server; separating them is recommended, and with Kustomize also needs the `runner-namespace` transformer (see [Choosing namespaces](deployment.md#choosing-namespaces)) |
+| `TURNIP_RUNNER_NAMESPACE` | no | the Server's own namespace | namespace Runner Jobs are created in. `deploy/base` sets it in the Deployment's `env` (from `POD_NAMESPACE`), so a value in `turnip-server-config` has no effect. With Kustomize the `runner-namespace` transformer copies the namespace of the Server's Role into it; to separate the Runners, set that Role's namespace (see [Choosing namespaces](deployment.md#choosing-namespaces)) |
 | `TURNIP_RUNNER_SERVICE_ACCOUNT` | no | unset | [ServiceAccount every Runner Pod runs as](runner-access.md#which-serviceaccount): how a Runner gets cloud credentials (EKS Pod Identity/IRSA) and in-cluster API permissions. Unset leaves Pods on the namespace's `default` ServiceAccount, which normally has neither |
 | `TURNIP_CLONE_SUBMODULES` | no | `top-level` | [how far the clone initializes submodules](#clone-submodules): `none`, `top-level`, or `recursive` |
 | `TURNIP_ALLOWED_OVERRIDES` | no | permits nothing | [comma-separated list of the fields a repository's own config file may set](#allowed-overrides) |
@@ -46,27 +48,25 @@ out of the warning.
 | `TURNIP_RUNNER_DEADLINE` | no | `4h` | the longest a Runner Job may live, set as the Job's `activeDeadlineSeconds` so Kubernetes stops it even when no Server is running; a positive Go duration that must be longer than `TURNIP_RUNNER_IDLE_TIMEOUT`, so a silent tool is stopped with the clearer idle message first |
 
 "Default" is what the Server uses when the variable is unset; a
-required setting has none. "Preset by `deploy/base`" means the base's
-ConfigMap already supplies a value, and "set by `deploy/base` in the
-Deployment's `env`" means the base's Deployment does; either way the
-setting is required by the Server but not something you must write
-yourself. Of those,
-`TURNIP_RUNNER_IMAGE` should be pinned to the same release tag as the
-Server. To install outside the base's namespaces, see the namespace
-guidance in [Installing turnip](deployment.md#installing-turnip).
+required setting has none. "Set by `deploy/base` in the Deployment's
+`env`" means the base's Deployment supplies the value, so the setting is
+required by the Server but not something you write yourself. To install
+outside the base's namespaces, see the namespace guidance in
+[Installing turnip](deployment.md#installing-turnip).
 
 In `deploy/base`, the two credential-shaped values
 (`TURNIP_GITHUB_WEBHOOK_SECRET`, `TURNIP_GITHUB_PRIVATE_KEY`) come from
-the `turnip-server-secrets` Secret; everything else comes from the
-`turnip-server-config` ConfigMap an overlay fills in. The base also
-mounts the whole `turnip-server-secrets` Secret at `/etc/turnip/secrets`, so a
-setting that names a file points into it (for example
-`TURNIP_REDIS_PASSWORD_PATH=/etc/turnip/secrets/redis-password`, with
-`redis-password` a key of that Secret); see
-[Installing turnip](deployment.md#installing-turnip) for the two values
-(`TURNIP_REDIS_ADDR`, `TURNIP_GITHUB_APP_ID`) that have no preset and a
-real deployment always needs to set itself, whichever install path you
-use.
+the `turnip-server-secrets` Secret, and `TURNIP_RUNNER_SERVER_ADDR` and
+`TURNIP_RUNNER_NAMESPACE` from the Deployment's `env`; everything else
+comes from the `turnip-server-config` ConfigMap, which you create beside
+the base. The base also mounts the whole `turnip-server-secrets` Secret
+at `/etc/turnip/secrets`, so a setting that names a file points into it
+(for example `TURNIP_REDIS_PASSWORD_PATH=/etc/turnip/secrets/redis-password`,
+with `redis-password` a key of that Secret); see
+[Installing turnip](deployment.md#installing-turnip) for the three values
+(`TURNIP_REDIS_ADDR`, `TURNIP_GITHUB_APP_ID`, `TURNIP_RUNNER_IMAGE`) that
+have no default and a real deployment always needs to set itself,
+whichever install path you use.
 
 The Runner container's own environment variables (`TURNIP_OPERATION_ID`,
 `TURNIP_REPO_URL`, and so on) are internal plumbing the Server sets

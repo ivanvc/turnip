@@ -29,13 +29,15 @@ step links to the page that explains it; this page only orders them.
 4. **Set the required settings**: `TURNIP_REDIS_ADDR`,
    `TURNIP_GITHUB_APP_ID`, the GitHub App credentials from step 1, and
    `TURNIP_RUNNER_IMAGE` pinned to the same release tag as the Server.
-   The other required settings come preset by `deploy/base`, and the rest
-   are optional; see [Server settings](../operating/server-settings.md).
+   The listen addresses default in the Server, and the rest are optional;
+   see [Server settings](../operating/server-settings.md).
    Put the GitHub App's webhook secret and private key in the
-   `turnip-server-secrets` Secret, and every setting in `turnip-server-config`;
-   after changing either, run
-   `kubectl rollout restart deployment/turnip-server`. Installing with
-   Helmfile instead of Kustomize:
+   `turnip-server-secrets` Secret, and every setting in `turnip-server-config`.
+   The base ships neither: you create both, with a `configMapGenerator`
+   and a `secretGenerator` in Kustomize, which also roll the Server when
+   they change. Where you create them any other way (Helmfile, the quick
+   install), run `kubectl rollout restart deployment/turnip-server` after
+   a change. Installing with Helmfile instead of Kustomize:
    [Installing with Helmfile](../operating/deployment.md#installing-with-helmfile).
 5. **Create a ServiceAccount for the Runner** in the Runner namespace, set
    `TURNIP_RUNNER_SERVICE_ACCOUNT` to its name, and grant it whatever

@@ -9,10 +9,10 @@ transformers:
   - ../../../../deploy/transformers/namespaces
 configMapGenerator:
   - name: turnip-server-config
-    behavior: merge
     literals:
       - TURNIP_REDIS_ADDR=redis:6379
       - TURNIP_GITHUB_APP_ID=1
+      - TURNIP_RUNNER_IMAGE=ghcr.io/ivanvc/turnip-runner:latest
 secretGenerator:
   - name: turnip-server-secrets
     literals:

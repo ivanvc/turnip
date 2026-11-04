@@ -9,18 +9,24 @@ kind: Kustomization
 #     --from-literal=webhook-secret=<your-webhook-secret> \
 #     --from-file=private-key=<path-to-your-app-private-key.pem>
 #
+# The overlay generates turnip-server-config itself.
+#
 # This overlay assumes a Redis/Valkey Service named "redis" already exists
 # in the cluster (Requirement 1.3 — the base owns no Redis of its own);
 # ha-validation (Slice 11) is responsible for standing one up in its
 # kind-cluster test setup.
+
+namespace: turnip-system
 
 resources:
   - ../../base
 
 # Separates the Runner namespace (turnip-runners, which must exist), so
 # `make test-kind` exercises the layout docs/operating/deployment.md
-# recommends rather than the base's single namespace.
+# recommends rather than the base's single namespace. The Role's
+# namespace is the Runner namespace; the transformer copies it on.
 transformers:
+  - runner-role-namespace.yaml
   - ../../transformers/runner-namespace
 
 replicas:
@@ -33,9 +39,8 @@ images:
 
 configMapGenerator:
   - name: turnip-server-config
-    behavior: merge
     literals:
       - TURNIP_REDIS_ADDR=redis:6379
       # Placeholder — replace with your GitHub App's real numeric ID.
       - TURNIP_GITHUB_APP_ID=0
-      - TURNIP_RUNNER_NAMESPACE=turnip-runners
+      - TURNIP_RUNNER_IMAGE=ghcr.io/ivanvc/turnip-runner:dev

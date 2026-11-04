@@ -15,8 +15,8 @@ has neither.
 
 turnip creates no ServiceAccount for the Runner, so create one in the
 Runner namespace and point the setting at it. The Runner namespace is
-where Runner Jobs run: `TURNIP_RUNNER_NAMESPACE`, or the Server's own
-namespace while it is unset, as it is in `deploy/base` (see
+where Runner Jobs run: the namespace of the Server's Role, which is the
+Server's own unless you separate it (see
 [Choosing namespaces](deployment.md#choosing-namespaces)). The examples on these pages and the tool pages call it
 `turnip-runner`:
 
@@ -88,7 +88,7 @@ namespace. `cluster-admin`, which
 for a Runner that applies, includes all three.
 
 **Until you separate the Runner namespace, these grants also reach the
-Server.** `deploy/base` leaves `TURNIP_RUNNER_NAMESPACE` unset, so
+Server.** In `deploy/base` the Role is in the Server namespace, so
 Runners run beside the Server in `turnip-system`, and a Runner that can
 read Secrets or exec into Pods there reaches the GitHub App's private key
 (the `turnip-server-secrets` Secret), a key worth more than any GitHub
@@ -137,8 +137,8 @@ setting, and a repository without the Secret behaves as it always has.
 - **Name.** `turnip-repository-<id>`, where `<id>` is the repository's numeric
   GitHub id. The id survives renames and transfers, so the name does too.
   Look it up with `gh api repos/OWNER/REPO --jq .id`.
-- **Namespace.** The Runner namespace (`TURNIP_RUNNER_NAMESPACE`, or the
-  Server's own while it is unset).
+- **Namespace.** The Runner namespace (the namespace of the Server's
+  Role, the Server's own until you separate it).
 - **Creating it.** You create and fill it; turnip never reads, creates,
   changes or deletes a Secret, and the Server needs no permission on
   Secrets:
@@ -182,8 +182,8 @@ kubectl -n <runner-namespace> create secret generic "turnip-repository-$id" \
   namespace.
 - **turnip's own Secret is out of reach only once you separate the
   Runner namespace.** `turnip-server-secrets` lives in the Server namespace.
-  In `deploy/base`, with `TURNIP_RUNNER_NAMESPACE` unset, that is also
-  the Runner namespace, so a grant on its Secrets reaches the GitHub
+  In `deploy/base`, where the Role is in the Server namespace, that is
+  also the Runner namespace, so a grant on its Secrets reaches the GitHub
   App's private key. Once separated, the Runner namespace holds none of
   the Server's objects, and such a grant does not reach it. See
   [Grants that reach the GitHub credential](#grants-that-reach-the-github-credential).

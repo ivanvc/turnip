@@ -1,17 +1,19 @@
-# Moves the Server's Role and RoleBinding into TURNIP_RUNNER_NAMESPACE,
-# where Runner Jobs are created, after the operator's `namespace:` has
-# put them beside the Server.
+# The Runner namespace is the namespace of the Server's Role. This copies
+# it to the RoleBinding and to the Server's TURNIP_RUNNER_NAMESPACE, so
+# one patch of the Role's namespace (listed under `transformers:` before
+# this, as a `namespace:` would move it back) separates the Runner
+# namespace.
 apiVersion: builtin
 kind: ReplacementTransformer
 metadata:
   name: turnip-runner-namespace
 replacements:
   - source:
-      kind: ConfigMap
-      name: turnip-server-config
-      fieldPath: data.TURNIP_RUNNER_NAMESPACE
+      kind: Role
+      name: turnip-server
+      fieldPath: metadata.namespace
     targets:
-      - select: {kind: Role, name: turnip-server}
-        fieldPaths: [metadata.namespace]
       - select: {kind: RoleBinding, name: turnip-server}
         fieldPaths: [metadata.namespace]
+      - select: {kind: Deployment, name: turnip-server}
+        fieldPaths: ["spec.template.spec.containers.[name=server].env.[name=TURNIP_RUNNER_NAMESPACE].value"]

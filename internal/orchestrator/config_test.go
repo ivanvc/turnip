@@ -191,14 +191,45 @@ func TestConfigFromEnv_MissingRunnerImage(t *testing.T) {
 
 func TestConfigFromEnv_MissingVariablesNamedTogether(t *testing.T) {
 	_, err := ConfigFromEnv(envMap(map[string]string{
-		"TURNIP_REDIS_ADDR": "",
-		"TURNIP_HTTP_ADDR":  "",
+		"TURNIP_REDIS_ADDR":         "",
+		"TURNIP_RUNNER_SERVER_ADDR": "",
 	}), NewPluginRegistry())
 	require.Error(t, err)
 	var missing *MissingEnvVarsError
 	require.ErrorAs(t, err, &missing)
 	assert.Contains(t, missing.Names, "TURNIP_REDIS_ADDR")
-	assert.Contains(t, missing.Names, "TURNIP_HTTP_ADDR")
+	assert.Contains(t, missing.Names, "TURNIP_RUNNER_SERVER_ADDR")
+}
+
+func TestConfigFromEnv_BindAddressesDefault(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(map[string]string{
+		"TURNIP_HTTP_ADDR": "",
+		"TURNIP_GRPC_ADDR": "",
+	}), NewPluginRegistry())
+	require.NoError(t, err)
+	assert.Equal(t, ":8080", cfg.HTTPAddr)
+	assert.Equal(t, ":9090", cfg.GRPCAddr)
+}
+
+func TestConfigFromEnv_BindAddressesNotRequired(t *testing.T) {
+	_, err := ConfigFromEnv(envMap(map[string]string{
+		"TURNIP_HTTP_ADDR":  "",
+		"TURNIP_GRPC_ADDR":  "",
+		"TURNIP_REDIS_ADDR": "",
+	}), NewPluginRegistry())
+	var missing *MissingEnvVarsError
+	require.ErrorAs(t, err, &missing)
+	assert.Equal(t, []string{"TURNIP_REDIS_ADDR"}, missing.Names)
+}
+
+func TestConfigFromEnv_BindAddressesOverride(t *testing.T) {
+	cfg, err := ConfigFromEnv(envMap(map[string]string{
+		"TURNIP_HTTP_ADDR": ":1",
+		"TURNIP_GRPC_ADDR": ":2",
+	}), NewPluginRegistry())
+	require.NoError(t, err)
+	assert.Equal(t, ":1", cfg.HTTPAddr)
+	assert.Equal(t, ":2", cfg.GRPCAddr)
 }
 
 func TestConfigFromEnv_MissingAppID(t *testing.T) {

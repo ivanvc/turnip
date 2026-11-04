@@ -1,0 +1,15 @@
+# Moves the Server's Role to the Runner namespace. A JSON patch, because
+# a strategic merge patch naming another namespace does not match the
+# Role. Listed under `transformers:`, which run after the overlay's
+# `namespace:`.
+apiVersion: builtin
+kind: PatchTransformer
+metadata:
+  name: runner-role-namespace
+target:
+  kind: Role
+  name: turnip-server
+patch: |-
+  - op: replace
+    path: /metadata/namespace
+    value: turnip-runners

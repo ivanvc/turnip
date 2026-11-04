@@ -12,6 +12,14 @@ goes wrong beneath what a pull request sees.
 **Symptom**: `kubectl get pods` shows the Server Pod in
 `CreateContainerConfigError`, or in `ContainerCreating` for a long time.
 
+- **`configmap "turnip-server-config" not found`** (in `kubectl describe
+  pod`): the base ships no ConfigMap, and the Deployment reads every
+  setting from one named `turnip-server-config`. Create it in the Server
+  namespace with `TURNIP_REDIS_ADDR`, `TURNIP_GITHUB_APP_ID` and
+  `TURNIP_RUNNER_IMAGE`: a `configMapGenerator` in your kustomization, a
+  Helmfile release, or `kubectl create configmap`; see
+  [Installing turnip](deployment.md#installing-turnip). The Pod starts
+  once the object exists.
 - **`secret "turnip-server-secrets" not found`** (in `kubectl describe pod`): the
   Server reads the GitHub App's credentials from a Secret named
   `turnip-server-secrets`, which you create beside the base. Create it with the
@@ -66,7 +74,8 @@ or nothing happens for several minutes before a timeout is reported.
 - <a id="forbidden-creating-a-runner-job"></a>**`jobs.batch is forbidden`
   when creating a Runner Job** (the message names the Server's
   ServiceAccount and a namespace): the Server may not create Jobs in the
-  Runner namespace. Three causes, all in your `kustomization.yaml` (see
+  Runner namespace. Three causes, the first two in your
+  `kustomization.yaml` (see
   [Choosing namespaces](deployment.md#choosing-namespaces)):
   - **You renamed `namespace:` without a transformer line.** Both
     bindings' subjects still name `turnip-system`, so the Server may not
@@ -76,18 +85,20 @@ or nothing happens for several minutes before a timeout is reported.
     Runner stream. List the `namespaces` transformer under
     `transformers:`; that fixes both.
   - **You separated the Runner namespace but list `namespaces` instead
-    of `runner-namespace`.** The Role and RoleBinding stay in the Server
-    namespace. List `runner-namespace` in its place.
-  - **`TURNIP_RUNNER_NAMESPACE` names a namespace other than the one the
-    Role is in**, or one that does not exist. The Server's startup line
-    shows `runner_namespace`; check that
-    `kubectl get role,rolebinding -n <that namespace>` lists
-    `turnip-server`, and that the namespace exists.
+    of `runner-namespace`.** The patch moves the Role to the Runner
+    namespace, but the RoleBinding and the Server's `runner_namespace`
+    are the Server namespace, so the message names the Server
+    namespace: the RoleBinding there refers to a Role that is not
+    there. List `runner-namespace` in its place.
+  - **The Runner namespace does not exist.** The Role and RoleBinding
+    could not be created in it. The Server's startup line shows
+    `runner_namespace`; create that namespace, apply again, and check
+    that `kubectl get role,rolebinding -n <that namespace>` lists
+    `turnip-server`.
 
-  The opposite mistake, `runner-namespace` with no
-  `TURNIP_RUNNER_NAMESPACE` merged, never reaches the cluster: the build
-  fails with ``fieldPath `data.TURNIP_RUNNER_NAMESPACE` is missing``.
-  Merge the setting, or list `namespaces` instead.
+  A `TURNIP_RUNNER_NAMESPACE` in the ConfigMap changes nothing: the
+  Deployment's `env` wins over it, and the Runner namespace is the
+  namespace of the Role.
 - **Timeout ("didn't start within 5 minutes")**: the Job never got a Pod
   scheduled, or the Pod never reached the Server over gRPC in time. Check
   `kubectl get pods` in the Runner namespace for `Pending`/`ImagePullBackOff`
@@ -135,6 +146,20 @@ or nothing happens for several minutes before a timeout is reported.
   needs in the target cluster. What each tool needs, and what that grant
   means, is on its page; for Helmfile, see
   [What to grant it](../plugins/helmfile.md#what-to-grant-it).
+
+### Runner Jobs run in the Server namespace
+
+**Symptom**: you separated the Runner namespace, but Runner Jobs are
+created beside the Server, with no error, and the Server's startup line
+shows `runner_namespace` as the Server namespace.
+
+The Role patch is under `patches:` in your `kustomization.yaml`, or
+missing. A kustomization's `namespace:` runs after its patches and
+moves the Role back to the Server namespace, and `runner-namespace` then
+copies that namespace to the RoleBinding and the Server's
+`TURNIP_RUNNER_NAMESPACE`. List the patch under `transformers:`, before
+`runner-namespace` (see
+[Choosing namespaces](deployment.md#choosing-namespaces)).
 
 ### Reading a Runner's log
 

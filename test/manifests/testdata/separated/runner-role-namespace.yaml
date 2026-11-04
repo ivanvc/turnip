@@ -1,0 +1,11 @@
+apiVersion: builtin
+kind: PatchTransformer
+metadata:
+  name: runner-role-namespace
+target:
+  kind: Role
+  name: turnip-server
+patch: |-
+  - op: replace
+    path: /metadata/namespace
+    value: ops-runners

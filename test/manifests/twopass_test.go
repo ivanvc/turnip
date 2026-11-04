@@ -49,21 +49,17 @@ imageTag:
   name: ghcr.io/ivanvc/turnip-server
   newTag: v9.9.9
 `,
-		"settings.yaml": `apiVersion: builtin
+		"role-namespace.yaml": `apiVersion: builtin
 kind: PatchTransformer
 metadata:
-  name: settings
+  name: role-namespace
 target:
-  kind: ConfigMap
-  name: turnip-server-config
+  kind: Role
+  name: turnip-server
 patch: |-
-  apiVersion: v1
-  kind: ConfigMap
-  metadata:
-    name: turnip-server-config
-  data:
-    TURNIP_REDIS_ADDR: redis.example.com:6379
-    TURNIP_RUNNER_NAMESPACE: ops-runners
+  - op: replace
+    path: /metadata/namespace
+    value: ops-runners
 `,
 		"runner-namespace.yaml": string(runnerNS),
 		"kustomization.yaml": `apiVersion: kustomize.config.k8s.io/v1beta1
@@ -72,7 +68,7 @@ resources:
   - all.yaml
 transformers:
   - image.yaml
-  - settings.yaml
+  - role-namespace.yaml
   - runner-namespace.yaml
 `,
 	}
@@ -117,17 +113,16 @@ transformers:
 		}
 	}
 
-	cm := find(t, objs, "ConfigMap", "turnip-server-config")
-	assert.Equal(t, "turnip-server-config", cm.Metadata.Name)
-	assert.Equal(t, "redis.example.com:6379", cm.Data["TURNIP_REDIS_ADDR"])
-	assert.Equal(t, "ops-runners", cm.Data["TURNIP_RUNNER_NAMESPACE"])
-	assert.Equal(t, "info", cm.Data["TURNIP_LOG_LEVEL"], "base values are kept")
-
 	dep := find(t, objs, "Deployment", "turnip-server")
 	require.Len(t, dep.Spec.Template.Spec.Containers, 1)
-	require.Len(t, dep.Spec.Template.Spec.Containers[0].EnvFrom, 1)
-	require.NotNil(t, dep.Spec.Template.Spec.Containers[0].EnvFrom[0].ConfigMapRef)
-	assert.Equal(t, "turnip-server-config", dep.Spec.Template.Spec.Containers[0].EnvFrom[0].ConfigMapRef.Name)
+	found := 0
+	for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
+		if e.Name == "TURNIP_RUNNER_NAMESPACE" {
+			found++
+			assert.Equal(t, "ops-runners", e.Value)
+		}
+	}
+	require.Equal(t, 1, found, "TURNIP_RUNNER_NAMESPACE entry")
 	assert.Equal(t, []string{"ghcr.io/ivanvc/turnip-server:v9.9.9"}, images)
 
 	assert.Equal(t, "ops-runners", find(t, objs, "Role", "turnip-server").Metadata.Namespace)

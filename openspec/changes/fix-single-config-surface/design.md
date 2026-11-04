@@ -2,6 +2,10 @@
 
 ## Context
 
+Revised 2026-11-03 (proposal Decisions 3 to 5): the first version kept
+a fixed-name ConfigMap in the base for the operator to patch; the base
+now ships none. Decisions 1 and 5 to 8 below are the revision's.
+
 The specs settle the rule: settings in `turnip-server-config`, secret
 material in one Secret, `turnip-server-secrets`, and no Deployment patches. Two
 facts of the current base stand in the way:
@@ -26,45 +30,57 @@ Kustomize 5.8.1):
 
 | Behavior | Observed |
 |---|---|
-| A generator's `options.disableNameSuffixHash: true` in the base, then an operator's `behavior: merge` into it | the merged ConfigMap keeps the name `turnip-server-config` |
+| An operator's `configMapGenerator` named `turnip-server-config` | generates `turnip-server-config-<hash>`, and Kustomize rewrites the base's `envFrom` reference to it |
 | An operator's `secretGenerator` named `turnip-server-secrets` | generates `turnip-server-secrets-<hash>`, and Kustomize rewrites the base's two `secretKeyRef` entries and the volume's `secretName` to it |
-| A patch selecting `turnip-server-config` by name, applied to the rendered base | finds it, and the `runner-namespace` transformer reads it |
+| A `PatchTransformer` setting the Role's namespace, in a kustomization with its own `namespace:` | under `patches:` it runs before `namespace:`, which moves the Role back; under `transformers:` it runs after, and the Role keeps the patched namespace |
+| A replacement copying the Role's namespace to the RoleBinding and the container's `TURNIP_RUNNER_NAMESPACE` | works in one pass, and on the rendered base in Helmfile's second pass |
 
 ## Where each value lives
 
 | What the operator sets | Where | How it reaches the Server |
 |---|---|---|
-| Every `TURNIP_*` setting | `turnip-server-config` | `envFrom` (unchanged) |
+| Every `TURNIP_*` setting | the operator's ConfigMap `turnip-server-config` (a `configMapGenerator`, or their own resource) | `envFrom` (unchanged) |
 | The GitHub App's webhook secret and private key | Secret `turnip-server-secrets`, keys `webhook-secret` and `private-key` | two `secretKeyRef` entries (renamed from `turnip-github-app`) |
 | Any other secret (the Redis password) | another key of `turnip-server-secrets` | the whole Secret mounted at `/etc/turnip/secrets`, read through a `_PATH` setting |
 | The Server image | Kustomize's `images:` field, or an `ImageTagTransformer` in a Helmfile release | no patch |
 | The replica count | Kustomize's `replicas:` field, or a `ReplicaCountTransformer` | no patch |
+| The Runner namespace | the namespace of the Server's Role, set by one patch listed under `transformers:` | the `runner-namespace` transformer copies it to the RoleBinding and to the container's `TURNIP_RUNNER_NAMESPACE` |
 | The Runner's address for the Server, when not its own Service | a patch of the Deployment's `env` | the one exception the spec keeps |
 
 ## Decisions
 
-### 1. The ConfigMap's name is fixed by a generator option
+### 1. The base ships no ConfigMap
 
-The base keeps its `configMapGenerator` and gives it
-`options.disableNameSuffixHash: true`. Operators' existing
-`behavior: merge` keeps working and keeps the fixed name (tested), and
-under Helmfile a patch or transformer selecting `turnip-server-config`
-by name finds it in the second pass.
+`deploy/base` loses its `configMapGenerator`. The Deployment keeps its
+`envFrom` reference to `turnip-server-config`, and a comment there
+states what the ConfigMap must hold (`TURNIP_REDIS_ADDR`,
+`TURNIP_GITHUB_APP_ID`, `TURNIP_RUNNER_IMAGE`) and points at the
+settings Reference for the rest. The operator creates it as they create
+the Secret:
 
-What the hash gave is a restart whenever the settings changed; that is
-now the operator's `kubectl rollout restart`, as the proposal decided.
+| Install | ConfigMap | Secret |
+|---|---|---|
+| Kustomize | `configMapGenerator` (creates; hash-suffixed, and Kustomize rewrites the base's reference) | `secretGenerator` (the same) |
+| Helmfile | a release of its own (`incubator/raw`), fixed name | a release of its own, fixed name |
+| `turnip-install.yaml` | `kubectl create configmap` | `kubectl create secret` |
 
-- **Alternative considered:** keeping the hash and documenting, for
-  Helmfile, patches that select the ConfigMap by a pattern
-  (`turnip-server-config-.*`). **Rejected because:** the pilot's
-  workaround, and it cannot carry the `runner-namespace` transformer,
-  whose replacement source must name its resource exactly; and a
-  pattern-selected change no longer restarts the Server either, so the
-  hash's one benefit is gone under Helmfile anyway.
-- **Alternative considered:** `generatorOptions` for the whole base.
-  **Rejected because:** it would also affect any generator added to the
-  base later, where a hash may be wanted; the option belongs to this
-  one generator.
+Of the old presets, `TURNIP_HTTP_ADDR` and `TURNIP_GRPC_ADDR` become
+defaults in `ConfigFromEnv` (Decision 7), `TURNIP_LOG_LEVEL` and
+`TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` already defaulted there, and
+`TURNIP_RUNNER_IMAGE`'s `:latest` goes, the setting staying required.
+The hash suffix comes back for Kustomize installs: a changed setting
+renames the ConfigMap and rolls the Deployment by itself.
+
+- **Alternative considered:** the first version of this change, a
+  fixed-name ConfigMap in the base for the operator to patch.
+  **Rejected because:** it still left two ways to configure turnip
+  (patching a base object for settings, creating an object for
+  secrets), and none of its presets needed the base.
+- **Alternative considered:** an optional ConfigMap reference
+  (`optional: true`), so the base starts without one. **Rejected
+  because:** the Server cannot start without `TURNIP_REDIS_ADDR` and
+  `TURNIP_GITHUB_APP_ID` anyway; a required reference fails at the
+  Pod, with the object's name, instead of at the Server's startup.
 
 ### 2. One Secret: two keys in the environment, all keys as files
 
@@ -130,14 +146,14 @@ the list, the code and the Reference cannot drift apart.
 
 ### 5. The Helmfile recipe, and a test that builds it as Helmfile does
 
-`docs/operating/deployment.md` gains "Installing with Helmfile": one
-release whose chart is `deploy/base` at a pinned ref, with
-`transformers:` holding an `ImageTagTransformer` for the Server image,
-one `PatchTransformer` merging the settings into `turnip-server-config`
-(where Helmfile's templating can fill in values), and, when separating
-the Runner namespace, the `runner-namespace` replacement inline, since a
-release's transformers are inline objects; the Secret is a second
-release (or any resource) named `turnip-server-secrets` beside it.
+`docs/operating/deployment.md` gains "Installing with Helmfile": the
+ConfigMap and the Secret as two releases of their own (where
+Helmfile's templating fills in values), and a `turnip` release whose
+chart is `deploy/base` at a pinned ref, with `transformers:` holding an
+`ImageTagTransformer` for the Server image and, when separating the
+Runner namespace, the Role's namespace patch and the `runner-namespace`
+replacement inline, since a release's transformers are inline objects.
+The `turnip` release `needs` both object releases.
 
 `test/manifests` gains a two-pass case: render `deploy/base`, write the
 result into a temporary directory beside a kustomization that lists it
@@ -148,27 +164,66 @@ cannot drift from what ships), and render that.
 ```mermaid
 flowchart LR
   B["kubectl kustomize deploy/base"] --> F["all.yaml in a temp dir"]
-  F --> K["kustomization: resources all.yaml,<br/>transformers: image, settings patch, runner-namespace"]
+  F --> K["kustomization: resources all.yaml,<br/>transformers: image, Role namespace patch, runner-namespace"]
   K --> R["kubectl kustomize: assertions"]
 ```
 
-### 6. Restarting is documented where settings change
+### 6. The Runner namespace is the namespace of the Server's Role
 
-Every place the docs show a setting or a secret being changed (the
-Kustomize steps, the Helmfile recipe, quick install, the settings
-Reference's introduction, Redis and TLS) ends with
-`kubectl rollout restart deployment/turnip-server`. Quick install no
-longer uses `kubectl set env`, which patches the Deployment: it sets
-values in the fixed-name ConfigMap (`kubectl patch configmap`) and
-creates `turnip-server-secrets`.
+The Runner namespace is needed when the manifests are built (to place
+the Role and RoleBinding) and when the Server runs (to create Jobs).
+With the ConfigMap the operator's own resource, possibly in another
+Helmfile release, a transformer can no longer read it during the build,
+so the value is stated where the build needs it, and the Server is
+told from there:
+
+- The base's container `env` gains `TURNIP_RUNNER_NAMESPACE` with the
+  value `$(POD_NAMESPACE)`, after `POD_NAMESPACE`: the Server namespace,
+  where the base places the Role.
+- `deploy/transformers/runner-namespace` becomes a replacement whose
+  source is the Role's `metadata.namespace`, with targets the
+  RoleBinding's `metadata.namespace` and that `env` entry's value; it
+  still includes `../namespaces` for the subjects.
+- To separate, the operator lists under `transformers:` a
+  `PatchTransformer` setting the Role's namespace, then the
+  `runner-namespace` transformer. Under `transformers:` it runs after
+  the kustomization's own `namespace:`; under `patches:` it would run
+  before it, and `namespace:` would move the Role back (tested). The
+  same two objects work in a Helmfile release's `transformers:`.
+
+A `TURNIP_RUNNER_NAMESPACE` in the ConfigMap is overridden by the
+container's `env`, as `TURNIP_RUNNER_SERVER_ADDR` already is; the docs
+say so where they list the setting.
+
+- **Alternative considered:** keeping `TURNIP_RUNNER_NAMESPACE` a
+  ConfigMap setting and repeating its value in the Role patch.
+  **Rejected because:** two places holding one value, the drift that
+  broke the pilot's first namespace move.
+
+### 7. Listen addresses default in the Server
+
+`ConfigFromEnv` defaults `TURNIP_HTTP_ADDR` to `:8080` and
+`TURNIP_GRPC_ADDR` to `:9090` and drops both from the required list.
+They are fixed by the manifests (container ports, probes, the Service,
+the Runner's `:9090` address), so a value an operator sets only matters
+when they also change those.
+
+### 8. Restarting is documented where it is needed
+
+A Kustomize-generated ConfigMap or Secret restarts the Server by itself
+on a change. Where the docs show one created any other way (the
+Helmfile recipe, quick install), and in the settings Reference's
+introduction, they say to run
+`kubectl rollout restart deployment/turnip-server` after a change.
 
 ## Verification
 
 | What | How |
 |---|---|
-| The base | `test/manifests`: the ConfigMap is named `turnip-server-config`; `enableServiceLinks` is false; both `secretKeyRef` entries and the volume name `turnip-server-secrets`; the mount is `/etc/turnip/secrets`, read-only |
-| An operator kustomization | the existing fixtures gain a `secretGenerator` for `turnip-server-secrets` with a `redis-password` key: the generated name appears in both `secretKeyRef` entries and the volume, and a merged setting keeps the ConfigMap's fixed name |
-| A Helmfile release | the two-pass case of Decision 5: the settings and `TURNIP_RUNNER_NAMESPACE` land in `turnip-server-config`, the Deployment still references it, the image is replaced, the Role and RoleBinding are in the Runner namespace |
+| The base | `test/manifests`: no ConfigMap and no Secret rendered; `enableServiceLinks` false; the `envFrom` reference to `turnip-server-config`; both `secretKeyRef` entries and the volume naming `turnip-server-secrets`; the read-only mount; `TURNIP_RUNNER_NAMESPACE` set to `$(POD_NAMESPACE)` after `POD_NAMESPACE` |
+| An operator kustomization | the fixtures generate both objects: the generated names appear in `envFrom`, both `secretKeyRef` entries and the volume; the separated fixture's Role and RoleBinding and the Deployment's `TURNIP_RUNNER_NAMESPACE` all read the Runner namespace, with `namespace:` set |
+| A Helmfile release | the two-pass case of Decision 5: the image replaced; the Role and RoleBinding in the Runner namespace and the Deployment's `TURNIP_RUNNER_NAMESPACE` matching |
+| The defaults | `ConfigFromEnv` with neither address set uses `:8080` and `:9090`; the settings Reference test |
 | The warning | unit tests: unknown names are reported once, in order; known names and Service-variable shapes are not; no warning when every name is known; the docs reference test checks `SettingNames()` |
 | A real cluster | `make test-kind` creates `turnip-server-secrets` (with a `redis-password` key the test Redis does not need), and checks the Server starts and its log has no `unknown settings` warning |
 | The docs | `make docs-check`; every snippet matches a fixture apart from remote refs |

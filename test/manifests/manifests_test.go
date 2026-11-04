@@ -105,17 +105,19 @@ func find(t *testing.T, objs []object, kind, name string) object {
 func TestRenderedNamespaces(t *testing.T) {
 	cases := []struct {
 		name, dir, server, runner string
-		// secret is true where the kustomization generates the
-		// turnip-server-secrets Secret, as the documented one does; its name then
-		// carries a hash, which Kustomize propagates to the references.
-		secret bool
+		// config and secret are true where the kustomization generates the
+		// turnip-server-config ConfigMap and the turnip-server-secrets
+		// Secret; their names then carry a hash, which Kustomize
+		// propagates to the references. The base and the release overlay
+		// hold neither, and the kind overlay expects its Secret to exist.
+		config, secret bool
 	}{
-		{"base", "../../deploy/base", "turnip-system", "turnip-system", false},
-		{"release", "../../deploy/overlays/release", "turnip-system", "turnip-system", false},
-		{"kind", "../../deploy/overlays/kind", "turnip-system", "turnip-runners", false},
-		{"operator", "testdata/operator", "turnip-system", "turnip-system", true},
-		{"renamed", "testdata/renamed", "ops", "ops", true},
-		{"separated", "testdata/separated", "ops", "ops-runners", true},
+		{"base", "../../deploy/base", "turnip-system", "turnip-system", false, false},
+		{"release", "../../deploy/overlays/release", "turnip-system", "turnip-system", false, false},
+		{"kind", "../../deploy/overlays/kind", "turnip-system", "turnip-runners", true, false},
+		{"operator", "testdata/operator", "turnip-system", "turnip-system", true, true},
+		{"renamed", "testdata/renamed", "ops", "ops", true, true},
+		{"separated", "testdata/separated", "ops", "ops-runners", true, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,7 +127,6 @@ func TestRenderedNamespaces(t *testing.T) {
 				{"Deployment", "turnip-server"},
 				{"Service", "turnip-server"},
 				{"ServiceAccount", "turnip-server"},
-				{"ConfigMap", "turnip-server-config"},
 			} {
 				assert.Equal(t, tc.server, find(t, objs, r[0], r[1]).Metadata.Namespace, "%s %s", r[0], r[1])
 			}
@@ -141,17 +142,30 @@ func TestRenderedNamespaces(t *testing.T) {
 			assert.Equal(t, tc.server, crb.Subjects[0].Namespace)
 			assert.Empty(t, find(t, objs, "ClusterRole", "turnip-server-token-review").Metadata.Namespace)
 
-			cm := find(t, objs, "ConfigMap", "turnip-server-config")
-			// The name is fixed, with no hash, merged or not.
-			assert.Equal(t, "turnip-server-config", cm.Metadata.Name)
-			// Unset unless the Runner namespace is separated: the Server
-			// then uses its own namespace.
-			if tc.runner == tc.server {
+			cmName := "turnip-server-config"
+			secretName := "turnip-server-secrets"
+			if tc.config {
+				cm := find(t, objs, "ConfigMap", "turnip-server-config")
+				assert.Equal(t, tc.server, cm.Metadata.Namespace)
+				cmName = cm.Metadata.Name
+				assert.NotEqual(t, "turnip-server-config", cmName, "generated name carries a hash")
 				assert.NotContains(t, cm.Data, "TURNIP_RUNNER_NAMESPACE")
-			} else {
-				assert.Equal(t, tc.runner, cm.Data["TURNIP_RUNNER_NAMESPACE"])
+				assert.NotContains(t, cm.Data, "TURNIP_RUNNER_SERVER_ADDR")
 			}
-			assert.NotContains(t, cm.Data, "TURNIP_RUNNER_SERVER_ADDR")
+			if tc.secret {
+				secret := find(t, objs, "Secret", "turnip-server-secrets")
+				assert.Equal(t, tc.server, secret.Metadata.Namespace)
+				secretName = secret.Metadata.Name
+				assert.NotEqual(t, "turnip-server-secrets", secretName, "generated name carries a hash")
+			}
+			for _, o := range objs {
+				if !tc.config {
+					assert.NotEqual(t, "ConfigMap", o.Kind, "no ConfigMap here")
+				}
+				if !tc.secret {
+					assert.NotEqual(t, "Secret", o.Kind, "no Secret here")
+				}
+			}
 
 			dep := find(t, objs, "Deployment", "turnip-server")
 			require.Len(t, dep.Spec.Template.Spec.Containers, 1)
@@ -168,23 +182,23 @@ func TestRenderedNamespaces(t *testing.T) {
 			assert.Equal(t, "metadata.namespace", env[i].ValueFrom.FieldRef.FieldPath)
 			assert.Equal(t, "TURNIP_RUNNER_SERVER_ADDR", env[i+1].Name)
 			assert.Equal(t, "turnip-server.$(POD_NAMESPACE).svc:9090", env[i+1].Value)
+			// Right after: the Runner namespace, the Role's namespace
+			// once rendered, $(POD_NAMESPACE) in the base.
+			require.Less(t, i+2, len(env))
+			assert.Equal(t, "TURNIP_RUNNER_NAMESPACE", env[i+2].Name)
+			if tc.runner == tc.server {
+				assert.Equal(t, "$(POD_NAMESPACE)", env[i+2].Value)
+			} else {
+				assert.Equal(t, tc.runner, env[i+2].Value)
+			}
 
 			podSpec := dep.Spec.Template.Spec
 			require.NotNil(t, podSpec.EnableServiceLinks)
 			assert.False(t, *podSpec.EnableServiceLinks, "enableServiceLinks")
 			require.Len(t, podSpec.Containers[0].EnvFrom, 1)
 			require.NotNil(t, podSpec.Containers[0].EnvFrom[0].ConfigMapRef)
-			assert.Equal(t, "turnip-server-config", podSpec.Containers[0].EnvFrom[0].ConfigMapRef.Name)
+			assert.Equal(t, cmName, podSpec.Containers[0].EnvFrom[0].ConfigMapRef.Name)
 
-			// The Secret's name: turnip-server-secrets as the base writes it, or
-			// the generated name where the kustomization generates it.
-			secretName := "turnip-server-secrets"
-			if tc.secret {
-				secret := find(t, objs, "Secret", "turnip-server-secrets")
-				assert.Equal(t, tc.server, secret.Metadata.Namespace)
-				secretName = secret.Metadata.Name
-				assert.NotEqual(t, "turnip-server-secrets", secretName, "generated name carries a hash")
-			}
 			var refs int
 			for _, e := range env {
 				if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {

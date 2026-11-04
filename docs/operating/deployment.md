@@ -119,14 +119,16 @@ The `namespace:` and `transformers:` lines are both required, even if you
 keep the default name. Create the namespace before you apply
 (`kubectl create namespace turnip-system`). Out of the box the Server and
 its Runner Jobs share it; separating the Runner namespace is recommended
-and changes two lines. See [Choosing namespaces](#choosing-namespaces)
-below for both.
+and adds a Role patch and one transformer line. See
+[Choosing namespaces](#choosing-namespaces) below for both.
 
 **Step 2**: set your Server's own image tag to match, and three
-ConfigMap values: the two that have no sane shared default (every
-environment's Redis and GitHub App are different, so the base ships
-neither), and the Runner image, which the base presets to `:latest` and
-you pin to the same release tag as the Server:
+ConfigMap values: the Redis address, the GitHub App's id and the Runner
+image, which have no sane shared default (every environment's Redis and
+GitHub App are different, and the Runner image is pinned to the same
+release tag as the Server). The base ships no ConfigMap, so you create
+`turnip-server-config` with a generator, the way you create the Secret in
+step 3:
 
 ```yaml
 images:
@@ -135,20 +137,18 @@ images:
 
 configMapGenerator:
   - name: turnip-server-config
-    behavior: merge
     literals:
       - TURNIP_REDIS_ADDR=<your-redis-host>:6379
       - TURNIP_GITHUB_APP_ID=<your-github-app-id>
       - TURNIP_RUNNER_IMAGE=ghcr.io/ivanvc/turnip-runner:vX.Y.Z
 ```
 
-The ConfigMap keeps the name `turnip-server-config` (no hash of its
-contents is appended), and every setting goes in it; you never patch the
-Deployment for one. The Server reads its settings once, at startup, so a
-changed value takes effect after `kubectl rollout restart
-deployment/turnip-server` (add `-n` with your Server namespace).
+Every setting goes in this ConfigMap; you never patch the Deployment for
+one. Kustomize appends a hash of the contents to the generated name and
+rewrites the Deployment's reference to match, so a changed value renames
+the ConfigMap and rolls the Server by itself; there is no restart to run.
 
-Every other setting either comes preset by `deploy/base` or is optional;
+Every other setting either has a default in the Server or is optional;
 [Server settings](server-settings.md) lists them all. Two of the optional ones are opt-ins the base
 leaves deliberately unset, and each widens what a pull request can
 choose: `TURNIP_ALLOWED_OVERRIDES` (letting `turnip.yaml` pick the
@@ -160,11 +160,11 @@ after reading what each costs in [`SECURITY.md`](../../SECURITY.md).
 #### Choosing namespaces
 
 Out of the box, turnip uses one namespace, `turnip-system`. The Server
-(its Deployment, Service, ServiceAccount and ConfigMap), your
-`turnip-server-secrets` Secret, the Server's Role and RoleBinding, and the
-Runner Jobs all run there: `deploy/base` leaves `TURNIP_RUNNER_NAMESPACE`
-unset, so the Server creates Runner Jobs in its own namespace. turnip
-does not create the namespace:
+(its Deployment, Service and ServiceAccount), your `turnip-server-config`
+ConfigMap and `turnip-server-secrets` Secret, the Server's Role and
+RoleBinding, and the Runner Jobs all run there: the Server's Runner
+namespace is the namespace of its Role, which is its own unless you
+separate it. turnip does not create the namespace:
 
 ```sh
 kubectl create namespace turnip-system
@@ -209,22 +209,37 @@ reach neither. See
 [Runner access](runner-access.md#grants-that-reach-the-github-credential)
 for what a Runner's grants mean.
 
-Separating changes two lines of your kustomization: merge
-`TURNIP_RUNNER_NAMESPACE` into the Server's ConfigMap, and list the
-`runner-namespace` transformer in place of `namespaces`:
+Separating adds one file and one line to your kustomization. The Runner
+namespace is the namespace of the Server's Role, so you state it once, in
+a patch of the Role, and list the `runner-namespace` transformer in place
+of `namespaces`. Both go under `transformers:`, not `patches:`: a
+kustomization's patches run before its `namespace:`, which would move the
+Role back, while transformers run after it.
 
 ```yaml
-namespace: turnip-system
+# kustomization.yaml
+namespace: ops
 resources:
   - github.com/ivanvc/turnip//deploy/base?ref=vX.Y.Z
 transformers:
+  - runner-role-namespace.yaml
   - github.com/ivanvc/turnip//deploy/transformers/runner-namespace?ref=vX.Y.Z
-configMapGenerator:
-  - name: turnip-server-config
-    behavior: merge
-    literals:
-      # ...the values from step 2, plus:
-      - TURNIP_RUNNER_NAMESPACE=turnip-runners
+# ...the configMapGenerator and secretGenerator of steps 2 and 3
+```
+
+```yaml
+# runner-role-namespace.yaml
+apiVersion: builtin
+kind: PatchTransformer
+metadata:
+  name: runner-role-namespace
+target:
+  kind: Role
+  name: turnip-server
+patch: |-
+  - op: replace
+    path: /metadata/namespace
+    value: ops-runners
 ```
 
 Create the Runner namespace before you apply. turnip does not create it:
@@ -232,40 +247,45 @@ it is where you attach your own policies, quotas and cloud identity
 bindings, and its lifetime should not be tied to turnip's manifests.
 
 ```sh
-kubectl create namespace turnip-runners
+kubectl create namespace ops-runners
 ```
 
-`runner-namespace` does what `namespaces` does and also moves the
-Server's Role and RoleBinding into `TURNIP_RUNNER_NAMESPACE`, so the
-Server's permissions on Jobs and Pods are granted there and nowhere in
-its own namespace. The Runner's ServiceAccount and your repositories'
-Secrets go in the Runner namespace too (see
-[Runner access](runner-access.md)). Any names work: `namespace: ops` with
-`TURNIP_RUNNER_NAMESPACE=ops-runners` separates the same way.
+`runner-namespace` does what `namespaces` does and also copies the Role's
+namespace to the RoleBinding and to the Server's `TURNIP_RUNNER_NAMESPACE`
+variable, so the Server's permissions on Jobs and Pods are granted in the
+Runner namespace and nowhere in its own, and it creates Jobs there. The
+Runner's ServiceAccount and your repositories' Secrets go in the Runner
+namespace too (see [Runner access](runner-access.md)). Any names work.
 
-**A missing or wrong transformer line** shows up only when the Server
-first creates a Runner Job, as a Forbidden error (see
+**A missing or wrong transformer line** builds without an error. The
+first two cases below show up as a Forbidden error when the Server
+creates its first Runner Job (see
 [Troubleshooting](troubleshooting.md#forbidden-creating-a-runner-job)),
-except for the last case below, which fails the build:
+and the last raises no error at all:
 
 - **A renamed `namespace:` with no transformer line.** Both bindings'
   subjects still name `turnip-system`, so the Server is forbidden from
   creating Runner Jobs, and from the token reviews that authenticate a
   Runner.
 - **A separated Runner namespace with `namespaces` instead of
-  `runner-namespace`.** The Role and RoleBinding stay in the Server
-  namespace, so the Server is forbidden from creating Jobs in the Runner
-  namespace.
-- **`runner-namespace` without `TURNIP_RUNNER_NAMESPACE`.** `kubectl
-  apply -k` fails with ``fieldPath `data.TURNIP_RUNNER_NAMESPACE` is
-  missing``. Merge the setting, or list `namespaces` instead.
+  `runner-namespace`.** The patch moves the Role, but the RoleBinding
+  and the Server's `TURNIP_RUNNER_NAMESPACE` stay in the Server
+  namespace, so the Server tries to create Jobs in its own namespace and
+  is forbidden there.
+- **The Role patch listed under `patches:`.** `namespace:` runs after
+  it and moves the Role back to the Server namespace, with the
+  RoleBinding and `TURNIP_RUNNER_NAMESPACE` following it: Runner Jobs
+  silently run beside the Server (see
+  [Troubleshooting](troubleshooting.md#runner-jobs-run-in-the-server-namespace)).
+  List the patch under `transformers:`.
 
 **The Runner's address follows the Server namespace.** The Deployment
 sets `TURNIP_RUNNER_SERVER_ADDR` from the Pod's own namespace
 (`turnip-server.<namespace>.svc:9090`, using the Downward API), so
-renaming the Server namespace needs no edit. The ConfigMap does not carry
-the address, and a value merged into it is ignored, because the
-Deployment's `env` wins over the ConfigMap. To point Runners somewhere
+renaming the Server namespace needs no edit. The Deployment's `env` wins
+over the ConfigMap, so a `TURNIP_RUNNER_SERVER_ADDR` or
+`TURNIP_RUNNER_NAMESPACE` in the ConfigMap is ignored; the Runner
+namespace is set only through the Role, as above. To point Runners somewhere
 else, patch the `TURNIP_RUNNER_SERVER_ADDR` entry in the Deployment's
 `env`. The Server logs the address at startup (`runner_server_addr`), and
 the Runner namespace it resolved (`runner_namespace`).
@@ -289,9 +309,9 @@ secretGenerator:
 ```
 
 The base mounts the whole Secret, read-only, at `/etc/turnip/secrets`, so
-any key you add is a file there. To use the Redis password, merge
-`TURNIP_REDIS_PASSWORD_PATH=/etc/turnip/secrets/redis-password` into
-`turnip-server-config` with the values from step 2. A further secret is a
+any key you add is a file there. To use the Redis password, add
+`TURNIP_REDIS_PASSWORD_PATH=/etc/turnip/secrets/redis-password` to the
+`literals:` of the step 2 `configMapGenerator`. A further secret is a
 new key in the Secret and a line in the ConfigMap, never a patch. The
 Secret is the Server's alone: every key in it is readable by the Server's
 container.
@@ -305,30 +325,68 @@ by hand:
 kubectl apply -k .
 ```
 
-After changing a setting or a secret and applying again, restart the
-Server so it reads them:
-
-```sh
-kubectl rollout restart deployment/turnip-server -n turnip-system
-```
+Both generated names carry a hash, so changing a setting or a secret and
+applying again renames the object and rolls the Server by itself.
 
 ### Installing with Helmfile
 
 Helmfile installs `deploy/base` as one release and applies the release's
-`transformers:` to the rendered base, in a second pass. That works because
-the ConfigMap is always named `turnip-server-config`: a transformer
-selecting it by name finds it. The `chart:` uses Helmfile's `git::`
-form (`<repository>.git@<path>?ref=<tag>`), not Kustomize's `//` remote
-base syntax, which Helmfile rejects. Pin it to a real release tag, as
-with Kustomize. Helmfile renders a Kustomize directory through chartify,
-which needs `kustomize` or `kubectl` on `PATH`.
+`transformers:` to the rendered base, in a second pass. The base ships
+neither the ConfigMap nor the Secret, so each is a release of its own,
+under the fixed names `turnip-server-config` and `turnip-server-secrets`
+that the Deployment references; the `turnip` release `needs` both. The
+`chart:` uses Helmfile's `git::` form (`<repository>.git@<path>?ref=<tag>`),
+not Kustomize's `//` remote base syntax, which Helmfile rejects. Pin it to
+a real release tag, as with Kustomize. Helmfile renders a Kustomize
+directory through chartify, which needs `kustomize` or `kubectl` on
+`PATH`.
+
+Name the file `helmfile.yaml.gotmpl`: the Secret release reads its values
+with `requiredEnv`, and Helmfile v1 renders templates only in a file with
+the `.gotmpl` extension. A plain `helmfile.yaml` fails to parse.
 
 ```yaml
-# helmfile.yaml
+# helmfile.yaml.gotmpl
+repositories:
+  - name: incubator
+    url: https://charts.helm.sh/incubator
+
 releases:
-  - name: turnip-server
+  - name: turnip-config
+    namespace: turnip-system
+    chart: incubator/raw
+    values:
+      - resources:
+          - apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: turnip-server-config
+            data:
+              TURNIP_REDIS_ADDR: <your-redis-host>:6379
+              TURNIP_GITHUB_APP_ID: "<your-github-app-id>"
+              TURNIP_RUNNER_IMAGE: ghcr.io/ivanvc/turnip-runner:vX.Y.Z
+              TURNIP_REDIS_PASSWORD_PATH: /etc/turnip/secrets/redis-password
+
+  - name: turnip-secrets
+    namespace: turnip-system
+    chart: incubator/raw
+    values:
+      - resources:
+          - apiVersion: v1
+            kind: Secret
+            metadata:
+              name: turnip-server-secrets
+            stringData:
+              webhook-secret: {{ requiredEnv "TURNIP_WEBHOOK_SECRET" | quote }}
+              private-key: {{ requiredEnv "TURNIP_PRIVATE_KEY" | quote }}
+              redis-password: {{ requiredEnv "TURNIP_REDIS_PASSWORD" | quote }}
+
+  - name: turnip
     namespace: turnip-system
     chart: git::https://github.com/ivanvc/turnip.git@deploy/base?ref=vX.Y.Z
+    needs:
+      - turnip-system/turnip-config
+      - turnip-system/turnip-secrets
     transformers:
       - apiVersion: builtin
         kind: ImageTagTransformer
@@ -337,60 +395,47 @@ releases:
         imageTag:
           name: ghcr.io/ivanvc/turnip-server
           newTag: vX.Y.Z
+      # Only when separating the Runner namespace (see Choosing
+      # namespaces): the Role's namespace, then the contents of
+      # deploy/transformers/runner-namespace/runner-namespace.yaml, inline.
       - apiVersion: builtin
         kind: PatchTransformer
         metadata:
-          name: settings
+          name: runner-role-namespace
         target:
-          kind: ConfigMap
-          name: turnip-server-config
+          kind: Role
+          name: turnip-server
         patch: |-
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: turnip-server-config
-          data:
-            TURNIP_REDIS_ADDR: <your-redis-host>:6379
-            TURNIP_GITHUB_APP_ID: "<your-github-app-id>"
-            TURNIP_RUNNER_IMAGE: ghcr.io/ivanvc/turnip-runner:vX.Y.Z
-            TURNIP_REDIS_PASSWORD_PATH: /etc/turnip/secrets/redis-password
-            TURNIP_RUNNER_NAMESPACE: turnip-runners
-      # Only when separating the Runner namespace (see Choosing
-      # namespaces): the contents of deploy/transformers/runner-namespace/
-      # runner-namespace.yaml, inline.
+          - op: replace
+            path: /metadata/namespace
+            value: turnip-runners
       - apiVersion: builtin
         kind: ReplacementTransformer
         metadata:
           name: turnip-runner-namespace
         replacements:
           - source:
-              kind: ConfigMap
-              name: turnip-server-config
-              fieldPath: data.TURNIP_RUNNER_NAMESPACE
+              kind: Role
+              name: turnip-server
+              fieldPath: metadata.namespace
             targets:
-              - select: {kind: Role, name: turnip-server}
-                fieldPaths: [metadata.namespace]
               - select: {kind: RoleBinding, name: turnip-server}
                 fieldPaths: [metadata.namespace]
+              - select:
+                  kind: Deployment
+                  name: turnip-server
+                fieldPaths:
+                  - spec.template.spec.containers.[name=server].env.[name=TURNIP_RUNNER_NAMESPACE].value
 ```
 
-The image transformer chooses the Server image, and the one patch sets
-every setting. Nothing patches the Deployment. Drop `TURNIP_RUNNER_NAMESPACE`
-and the replacement to keep Runners in the Server namespace, and drop
-`TURNIP_REDIS_PASSWORD_PATH` if Redis has no password. Create the
-namespaces before you sync.
-
-The `turnip-server-secrets` Secret is the other half. It is not part of the
-release; create it beside it, named `turnip-server-secrets` in the same namespace,
-with the keys from [Kustomize step 3](#with-kustomize-recommended): as a
-second release, from your secrets manager's operator, or applied directly:
-
-```sh
-kubectl create secret generic turnip-server-secrets -n turnip-system \
-  --from-file=webhook-secret=./secrets/webhook-secret.txt \
-  --from-file=private-key=./secrets/private-key.pem \
-  --from-file=redis-password=./secrets/redis-password.txt
-```
+The image transformer chooses the Server image, and the ConfigMap release
+holds every setting. Nothing patches the Deployment. Drop the last two
+transformers to keep Runners in the Server namespace, and drop
+`TURNIP_REDIS_PASSWORD_PATH` and the `redis-password` key if Redis has no
+password. Create the namespaces before you sync. The Secret release can
+instead be your secrets manager's operator, or an object applied directly,
+as long as it is named `turnip-server-secrets` in the Server namespace
+with the keys from [Kustomize step 3](#with-kustomize-recommended).
 
 Nothing restarts the Server when a setting or the Secret changes. After
 `helmfile apply`, run:
@@ -417,16 +462,18 @@ kubectl apply -f https://github.com/ivanvc/turnip/releases/latest/download/turni
 
 Unlike the Kustomize path above, this one *does* need follow-up
 imperative commands: a single static file can't generate anything at
-apply time, so the two required ConfigMap values and the `turnip-server-secrets`
-Secret have to be layered on afterward. The settings go in the ConfigMap,
-which keeps its fixed name `turnip-server-config`, and the Server is
-restarted to read them:
+apply time, so the file carries neither the `turnip-server-config`
+ConfigMap nor the `turnip-server-secrets` Secret, and you create both
+afterward. The ConfigMap holds the three settings with no default, and the
+Server is restarted to read them:
 
 ```sh
 kubectl create namespace turnip-system
 
-kubectl patch configmap turnip-server-config -n turnip-system --type merge \
-  -p '{"data":{"TURNIP_REDIS_ADDR":"<your-redis-host>:6379","TURNIP_GITHUB_APP_ID":"<your-github-app-id>"}}'
+kubectl create configmap turnip-server-config -n turnip-system \
+  --from-literal=TURNIP_REDIS_ADDR=<your-redis-host>:6379 \
+  --from-literal=TURNIP_GITHUB_APP_ID=<your-github-app-id> \
+  --from-literal=TURNIP_RUNNER_IMAGE=ghcr.io/ivanvc/turnip-runner:vX.Y.Z
 
 kubectl create secret generic turnip-server-secrets -n turnip-system \
   --from-literal=webhook-secret=<your-webhook-secret> \
@@ -436,13 +483,14 @@ kubectl rollout restart deployment/turnip-server -n turnip-system
 ```
 
 A Redis password is one more key, `--from-file=redis-password=<path>`, with
-`TURNIP_REDIS_PASSWORD_PATH=/etc/turnip/secrets/redis-password` in the
-same ConfigMap patch. To change a setting or the Secret later, patch or
-recreate it and run the `rollout restart` again.
+`--from-literal=TURNIP_REDIS_PASSWORD_PATH=/etc/turnip/secrets/redis-password`
+on the ConfigMap. Nothing restarts the Server when either object changes:
+to change a setting or the Secret later, recreate or patch it and run the
+`rollout restart` again.
 
 Create the namespace first; after that, the Pod won't come up `Ready`
 until the settings and the Secret are in place, and it'll retry on its own
-until then. The restart makes it read the settings you just patched.
+until then. The restart makes it read the settings you just created.
 
 The single file uses one namespace, `turnip-system`, as `deploy/base`
 does, and runs Runner Jobs beside the Server. Use the Kustomize path to

@@ -28,7 +28,6 @@ jobs:
         run: |
           sed -i \
             -e "s/newTag: latest/newTag: ${GITHUB_REF_NAME}/" \
-            -e "s/turnip-runner:latest/turnip-runner:${GITHUB_REF_NAME}/" \
             deploy/overlays/release/kustomization.yaml
           mkdir -p dist-manifests
           kubectl kustomize deploy/overlays/release > dist-manifests/turnip-install.yaml

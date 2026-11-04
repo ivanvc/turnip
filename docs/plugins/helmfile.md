@@ -677,7 +677,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: turnip-runner
-    namespace: turnip-runners   # the Runner namespace: TURNIP_RUNNER_NAMESPACE, or the Server's namespace when unset
+    namespace: turnip-runners   # the Runner namespace: where the Server's Role is (the Server's namespace unless you separate it)
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole

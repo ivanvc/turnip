@@ -104,6 +104,13 @@ const (
 	DefaultRunnerDeadline    = 4 * time.Hour
 )
 
+// The bind addresses used when TURNIP_HTTP_ADDR and TURNIP_GRPC_ADDR are
+// unset: the ports the deployment base exposes.
+const (
+	DefaultHTTPAddr = ":8080"
+	DefaultGRPCAddr = ":9090"
+)
+
 // parsePositiveDuration reads a Go duration setting, returning def when raw
 // is empty. A malformed or non-positive value is an error naming name.
 func parsePositiveDuration(name, raw string, def time.Duration) (time.Duration, error) {
@@ -221,6 +228,13 @@ func ConfigFromEnv(env func(string) string, plugins PluginRegistry) (Config, err
 		LogLevel:             logging.ParseLevel(env("TURNIP_LOG_LEVEL")),
 	}
 
+	if cfg.HTTPAddr == "" {
+		cfg.HTTPAddr = DefaultHTTPAddr
+	}
+	if cfg.GRPCAddr == "" {
+		cfg.GRPCAddr = DefaultGRPCAddr
+	}
+
 	var missing []string
 	for _, req := range []struct {
 		name  string
@@ -228,8 +242,6 @@ func ConfigFromEnv(env func(string) string, plugins PluginRegistry) (Config, err
 	}{
 		{"TURNIP_GITHUB_WEBHOOK_SECRET", cfg.GitHubWebhookSecret},
 		{"TURNIP_REDIS_ADDR", cfg.RedisAddr},
-		{"TURNIP_HTTP_ADDR", cfg.HTTPAddr},
-		{"TURNIP_GRPC_ADDR", cfg.GRPCAddr},
 		{"TURNIP_RUNNER_SERVER_ADDR", cfg.RunnerServerAddr},
 		{"TURNIP_RUNNER_IMAGE", cfg.RunnerImage},
 	} {

@@ -1,30 +1,30 @@
 ## MODIFIED Requirements
 
 ### Requirement: Kustomize base
-`deploy/base` SHALL contain exactly: a Deployment `turnip-server` (1 replica, label `app.kubernetes.io/name: turnip-server`, ServiceAccount `turnip-server`, Kubernetes' Service environment variables turned off (`enableServiceLinks: false`), one container `server` running `ghcr.io/ivanvc/turnip-server:latest` with ports `http` 8080 and `grpc` 9090); a `ClusterIP` Service `turnip-server` exposing ports 8080 (`http`) and 9090 (`grpc`); the ServiceAccount, Role, RoleBinding, ClusterRole and ClusterRoleBinding below; and a ConfigMap `turnip-server-config`, loaded whole into the container's environment. The ConfigMap's name SHALL be exactly `turnip-server-config`, with no suffix derived from its contents, so that a patch or transformer selecting it by name finds it whether it runs in the operator's kustomization or on the base already rendered, as Helmfile applies a release's transformers.
+`deploy/base` SHALL contain exactly: a Deployment `turnip-server` (1 replica, label `app.kubernetes.io/name: turnip-server`, ServiceAccount `turnip-server`, Kubernetes' Service environment variables turned off (`enableServiceLinks: false`), one container `server` running `ghcr.io/ivanvc/turnip-server:latest` with ports `http` 8080 and `grpc` 9090); a `ClusterIP` Service `turnip-server` exposing ports 8080 (`http`) and 9090 (`grpc`); and the ServiceAccount, Role, RoleBinding, ClusterRole and ClusterRoleBinding below. The base SHALL ship no ConfigMap and no Secret, and no placeholder value for any setting: a value only the operator can give has no default in the base, and every other default lives in the Server (see the `server` capability).
 
-All of the Server's secret material SHALL come from one Secret, `turnip-server-secrets`, which the base SHALL NOT create: the container SHALL take `TURNIP_GITHUB_WEBHOOK_SECRET` and `TURNIP_GITHUB_PRIVATE_KEY` from its keys `webhook-secret` and `private-key`, and SHALL mount the whole Secret read-only at `/etc/turnip/secrets`, so a setting naming a file reads any further key from there (for the Redis password, key `redis-password` with `TURNIP_REDIS_PASSWORD_PATH=/etc/turnip/secrets/redis-password`). Where the base references the Secret, it SHALL state the Secret's name, its required keys and where the rest are mounted. The operator creates the Secret in their own files, next to the base: with a `secretGenerator` in their kustomization, or as their own resource.
+The operator SHALL configure the Server through two objects they create next to the base, by name, the same way: a ConfigMap `turnip-server-config` holding every setting they set, which the container loads whole into its environment; and a Secret `turnip-server-secrets` holding all of the Server's secret material. Under Kustomize they are a `configMapGenerator` and a `secretGenerator` in the operator's kustomization; under Helmfile, or any other tool, they are the operator's own resources. The container SHALL take `TURNIP_GITHUB_WEBHOOK_SECRET` and `TURNIP_GITHUB_PRIVATE_KEY` from the Secret's keys `webhook-secret` and `private-key`, and SHALL mount the whole Secret read-only at `/etc/turnip/secrets`, so a setting naming a file reads any further key from there (for the Redis password, key `redis-password` with `TURNIP_REDIS_PASSWORD_PATH=/etc/turnip/secrets/redis-password`). Where the base references each object, it SHALL state its name and what it must hold. Neither is optional: without either, the Server container is never created.
 
-The container SHALL also set `TURNIP_RUNNER_SERVER_ADDR` in its own `env`, formed from the namespace the Server Pod runs in: an earlier entry SHALL take that namespace from the Downward API (`metadata.namespace`), and `TURNIP_RUNNER_SERVER_ADDR` SHALL be `turnip-server.$(<that entry>).svc:9090`, so the Runner's address for the Server follows the Server namespace with nothing for the operator to set. The ConfigMap SHALL preset `TURNIP_LOG_LEVEL=info`, `TURNIP_HTTP_ADDR=:8080`, `TURNIP_GRPC_ADDR=:9090`, `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS=false` and `TURNIP_RUNNER_IMAGE=ghcr.io/ivanvc/turnip-runner:latest`, and SHALL leave `TURNIP_REDIS_ADDR`, `TURNIP_GITHUB_APP_ID`, `TURNIP_RUNNER_NAMESPACE`, `TURNIP_RUNNER_SERVICE_ACCOUNT`, `TURNIP_CLONE_SUBMODULES`, `TURNIP_ALLOWED_OVERRIDES`, `TURNIP_ALLOWED_IMAGES` and `TURNIP_MUTATION_REQUIREMENTS` unset, so every opt-in is off.
+The container SHALL set three values in its own `env`, which the operator does not set: `POD_NAMESPACE`, the namespace the Pod runs in (Downward API, `metadata.namespace`); `TURNIP_RUNNER_SERVER_ADDR`, `turnip-server.$(POD_NAMESPACE).svc:9090`, so the Runner's address for the Server follows the Server namespace; and `TURNIP_RUNNER_NAMESPACE`, the namespace holding the Server's Role, which is `$(POD_NAMESPACE)` in the base and which the `runner-namespace` transformer sets when the Role moves (below). A container's own `env` takes precedence over its `envFrom`, so either value set in `turnip-server-config` SHALL have no effect.
 
-An operator SHALL be able to configure the Server without patching the Deployment: every setting in `turnip-server-config`, every secret in `turnip-server-secrets`, the Server image through Kustomize's image transformer, and the replica count through Kustomize's replica transformer. The one exception SHALL be pointing Runners at an address other than the Server's own Service (below). The Server reads its settings once, at startup (see the `server` capability), so a changed ConfigMap or Secret SHALL take effect only once the Server restarts; nothing in the base restarts it, and the operator documentation SHALL say to run `kubectl rollout restart deployment/turnip-server` wherever it shows a setting or secret being changed.
+An operator SHALL be able to configure the Server without patching the Deployment: every setting in `turnip-server-config`, every secret in `turnip-server-secrets`, and where turnip runs through Kustomize's transformers (the Server image through the image transformer, the replica count through the replica transformer, the Runner namespace through the Role's namespace, below). The one exception SHALL be pointing Runners at an address other than the Server's own Service. The Server reads its settings once, at startup (see the `server` capability), so a changed ConfigMap or Secret SHALL take effect only once the Server restarts. A ConfigMap or Secret generated by Kustomize is named with a hash of its contents, so a change gives it a new name and the Deployment restarts by itself; one created any other way keeps its name, and the operator documentation SHALL say to run `kubectl rollout restart deployment/turnip-server` after changing it.
 
-The base SHALL place every namespaced resource in `turnip-system`, which it SHALL NOT create, and SHALL bind its subjects to `turnip-server` there; with `TURNIP_RUNNER_NAMESPACE` unset, Runner Jobs run in that same namespace, so the base runs with one namespace and nothing else to create. turnip SHALL ship two Kustomize transformers for an operator's kustomization: `deploy/transformers/namespaces`, which points the bindings' subjects at the namespace of the `turnip-server` ServiceAccount and needs no setting; and `deploy/transformers/runner-namespace`, which does the same and also places the Role and RoleBinding in the namespace named by the `TURNIP_RUNNER_NAMESPACE` the operator sets in `turnip-server-config`. An operator SHALL be able to choose the Server namespace with their kustomization's `namespace:` and the first transformer, and to separate the Runner namespace by also setting `TURNIP_RUNNER_NAMESPACE` and using the second transformer in place of the first; `TURNIP_RUNNER_SERVER_ADDR` follows the Server namespace on its own. The operator creates every namespace they name. The base SHALL create no ServiceAccount or RBAC for the Runner (see the `runner-access` capability).
+The base SHALL place every namespaced resource in `turnip-system`, which it SHALL NOT create, and SHALL bind its subjects to `turnip-server` there; the Server's Role is there too, so Runner Jobs run in that same namespace, and the base runs with one namespace and nothing else to create. turnip SHALL ship two Kustomize transformers for an operator's kustomization, each needing no value of its own: `deploy/transformers/namespaces`, which points the bindings' subjects at the namespace of the `turnip-server` ServiceAccount; and `deploy/transformers/runner-namespace`, which does the same and also copies the namespace of the Server's Role to its RoleBinding and to the Server's `TURNIP_RUNNER_NAMESPACE`. An operator SHALL choose the Server namespace with their kustomization's `namespace:` and the first transformer, and SHALL separate the Runner namespace by listing, under `transformers:`, a patch setting the Role's namespace, followed by the second transformer in place of the first; the Runner namespace is then stated once, as the namespace of the Server's Role. The operator creates every namespace they name. The base SHALL create no ServiceAccount or RBAC for the Runner (see the `runner-access` capability).
 
 #### Scenario: Remote base with operator values
-- **WHEN** an operator's `kustomization.yaml` references `github.com/ivanvc/turnip//deploy/base?ref=vX.Y.Z`, merges `TURNIP_REDIS_ADDR`, `TURNIP_GITHUB_APP_ID` and a pinned `TURNIP_RUNNER_IMAGE` into `turnip-server-config`, generates `turnip-server-secrets` with a `secretGenerator`, and runs `kubectl apply -k .`
-- **THEN** the Server starts with every required setting present, reading the GitHub App's credentials from the generated Secret
+- **WHEN** an operator's `kustomization.yaml` references `github.com/ivanvc/turnip//deploy/base?ref=vX.Y.Z`, generates `turnip-server-config` with `TURNIP_REDIS_ADDR`, `TURNIP_GITHUB_APP_ID` and a pinned `TURNIP_RUNNER_IMAGE` with a `configMapGenerator`, generates `turnip-server-secrets` with a `secretGenerator`, and runs `kubectl apply -k .`
+- **THEN** the Server starts with every required setting present, reading both generated objects under their hashed names
 
 #### Scenario: Secret missing
 - **WHEN** the base is applied without a `turnip-server-secrets` Secret
 - **THEN** the Server container is never created and the Pod reports `CreateContainerConfigError`
 
 #### Scenario: Required values missing
-- **WHEN** the base is applied with the Secret but without `TURNIP_REDIS_ADDR` or `TURNIP_GITHUB_APP_ID`
+- **WHEN** the base is applied with both objects, but `turnip-server-config` lacks `TURNIP_REDIS_ADDR` or `TURNIP_GITHUB_APP_ID`
 - **THEN** the Server exits at startup naming them and the Pod enters `CrashLoopBackOff`
 
 #### Scenario: The default namespaces
-- **WHEN** an operator creates the namespace `turnip-system` and applies the base with their values
+- **WHEN** an operator creates the namespace `turnip-system` and applies the base with their two objects
 - **THEN** the Server and its Runner Jobs both run in `turnip-system`, and Runner Pods reach the Server at `turnip-server.turnip-system.svc:9090`
 
 #### Scenario: Renaming the Server namespace
@@ -32,8 +32,8 @@ The base SHALL place every namespaced resource in `turnip-system`, which it SHAL
 - **THEN** the Server, the Role and RoleBinding and Runner Jobs are in `ops`, and both bindings' subjects are `turnip-server` in `ops`
 
 #### Scenario: Installing outside default
-- **WHEN** an operator's kustomization sets `namespace: ops`, merges `TURNIP_RUNNER_NAMESPACE=ops-runners` and lists `deploy/transformers/runner-namespace`
-- **THEN** the Server runs in `ops`, `TURNIP_RUNNER_NAMESPACE` is `ops-runners`, the Server's `TURNIP_RUNNER_SERVER_ADDR` is `turnip-server.ops.svc:9090` without the operator setting it, the Role and RoleBinding are in `ops-runners`, and the bindings' subjects are `turnip-server` in `ops`
+- **WHEN** an operator's kustomization sets `namespace: ops` and lists, under `transformers:`, a patch setting the Server's Role's namespace to `ops-runners` followed by `deploy/transformers/runner-namespace`
+- **THEN** the Server runs in `ops`, the Role and RoleBinding are in `ops-runners`, the Server's `TURNIP_RUNNER_NAMESPACE` is `ops-runners` and its `TURNIP_RUNNER_SERVER_ADDR` is `turnip-server.ops.svc:9090`, neither set by the operator, and the bindings' subjects are `turnip-server` in `ops`
 
 #### Scenario: Pointing Runners at another address
 - **WHEN** an operator needs Runners to reach the Server at an address other than its Service in its own namespace
@@ -44,8 +44,8 @@ The base SHALL place every namespaced resource in `turnip-system`, which it SHAL
 - **THEN** the apply fails for the Role and RoleBinding in it, and no Runner Job can be created until the operator creates it
 
 #### Scenario: Transformers applied to the rendered base
-- **WHEN** the base is rendered first, and a patch setting `TURNIP_REDIS_ADDR` and `TURNIP_RUNNER_NAMESPACE=ops-runners` in the ConfigMap selected by the name `turnip-server-config`, followed by `deploy/transformers/runner-namespace`, is then applied to the rendered output, as Helmfile does
-- **THEN** the ConfigMap holds both values under the name `turnip-server-config`, the Deployment still references it, and the Role and RoleBinding are in `ops-runners`
+- **WHEN** the base is rendered first, and a patch setting the Server's Role's namespace to `ops-runners`, followed by `deploy/transformers/runner-namespace`, is then applied to the rendered output, as Helmfile does
+- **THEN** the Role and RoleBinding are in `ops-runners` and the Deployment's `TURNIP_RUNNER_NAMESPACE` is `ops-runners`
 
 #### Scenario: The Redis password from the Secret
 - **WHEN** `turnip-server-secrets` holds a key `redis-password` and `turnip-server-config` sets `TURNIP_REDIS_PASSWORD_PATH=/etc/turnip/secrets/redis-password`
@@ -60,15 +60,31 @@ The base SHALL place every namespaced resource in `turnip-system`, which it SHAL
 - **THEN** the Deployment runs that image, with no patch to the Deployment
 
 #### Scenario: A changed setting
-- **WHEN** an operator changes `TURNIP_MAX_COMMENTS_PER_PROJECT` in `turnip-server-config` while the Server runs
+- **WHEN** an operator changes `TURNIP_MAX_COMMENTS_PER_PROJECT` in a `turnip-server-config` they created as their own resource, while the Server runs
 - **THEN** the running Server keeps the old value, and uses the new one after `kubectl rollout restart deployment/turnip-server`
 
+#### Scenario: A changed generated setting
+- **WHEN** an operator changes `TURNIP_MAX_COMMENTS_PER_PROJECT` in their kustomization's `configMapGenerator` and applies it
+- **THEN** the ConfigMap gets a new hashed name, the Deployment rolls, and the Server uses the new value
+
+#### Scenario: ConfigMap missing
+- **WHEN** the base is applied with `turnip-server-secrets` but without `turnip-server-config`
+- **THEN** the Server container is never created and the Pod reports `CreateContainerConfigError`
+
+#### Scenario: The base alone
+- **WHEN** `deploy/base` is rendered on its own
+- **THEN** it holds no ConfigMap and no Secret
+
+#### Scenario: The Runner namespace set in the ConfigMap
+- **WHEN** an operator sets `TURNIP_RUNNER_NAMESPACE` in `turnip-server-config`
+- **THEN** it has no effect: Runner Jobs are created in the namespace of the Server's Role
+
 ### Requirement: Overlays and release manifest
-`deploy/overlays/release` SHALL be the base with the Server image tag and `TURNIP_RUNNER_IMAGE` set to the release tag; each GitHub Release SHALL attach it rendered as a single file, `turnip-install.yaml`, which, like the base, carries no `TURNIP_REDIS_ADDR`, no `TURNIP_GITHUB_APP_ID` and no Secret, uses the base's single namespace, `turnip-system`, and therefore needs the operator to create it before applying it, and to set those values in `turnip-server-config` and create `turnip-server-secrets` after. `deploy/overlays/kind` SHALL be a local-testing example only: one replica, the Server image tagged `dev`, `TURNIP_REDIS_ADDR=redis:6379`, the placeholder `TURNIP_GITHUB_APP_ID=0`, and the Runner namespace separated as `turnip-runners` through `deploy/transformers/runner-namespace`, so local testing exercises the separated layout; it expects a pre-existing `redis` Service and `turnip-server-secrets` Secret. `deploy/components/grafana-dashboard` SHALL be an opt-in Kustomize component adding a ConfigMap `turnip-grafana-dashboard` labeled `grafana_dashboard: "1"` (the dashboard's content is owned by the `observability` capability); neither the base nor `turnip-install.yaml` SHALL include it.
+`deploy/overlays/release` SHALL be the base with the Server image tag set to the release tag; each GitHub Release SHALL attach it rendered as a single file, `turnip-install.yaml`, which, like the base, holds no ConfigMap and no Secret, uses the base's single namespace, `turnip-system`, and therefore needs the operator to create that namespace before applying it and to create `turnip-server-config` (with `TURNIP_REDIS_ADDR`, `TURNIP_GITHUB_APP_ID` and `TURNIP_RUNNER_IMAGE`, the Runner image of the same release) and `turnip-server-secrets` there. `deploy/overlays/kind` SHALL be a local-testing example only: one replica, the Server image tagged `dev`, a generated `turnip-server-config` with `TURNIP_REDIS_ADDR=redis:6379`, the placeholder `TURNIP_GITHUB_APP_ID=0` and the Runner image tagged `dev`, and the Runner namespace separated as `turnip-runners` through a patch of the Role's namespace and `deploy/transformers/runner-namespace`, so local testing exercises the separated layout; it expects a pre-existing `redis` Service and `turnip-server-secrets` Secret. `deploy/components/grafana-dashboard` SHALL be an opt-in Kustomize component adding a ConfigMap `turnip-grafana-dashboard` labeled `grafana_dashboard: "1"` (the dashboard's content is owned by the `observability` capability); neither the base nor `turnip-install.yaml` SHALL include it.
 
 #### Scenario: Quick install
-- **WHEN** an operator creates `turnip-system`, applies `turnip-install.yaml` from release `vX.Y.Z`, sets `TURNIP_REDIS_ADDR` and `TURNIP_GITHUB_APP_ID` in `turnip-server-config`, creates `turnip-server-secrets` and restarts the Deployment
-- **THEN** the Server and the Runner image both run tag `vX.Y.Z`
+- **WHEN** an operator creates `turnip-system`, applies `turnip-install.yaml` from release `vX.Y.Z`, and creates `turnip-server-config` (with `TURNIP_RUNNER_IMAGE=ghcr.io/ivanvc/turnip-runner:vX.Y.Z`) and `turnip-server-secrets`
+- **THEN** the Server starts once both exist, and the Server and the Runner image both run tag `vX.Y.Z`
 
 #### Scenario: Dashboard opt-in
 - **WHEN** an operator applies `deploy/components/grafana-dashboard`
