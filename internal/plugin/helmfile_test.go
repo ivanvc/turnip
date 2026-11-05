@@ -16,6 +16,8 @@ type recordedCall struct {
 	dir  string
 	name string
 	args []string
+
+	warnings []string
 }
 
 // fakeRunner records lines as the command's record. Fixtures state their
@@ -23,8 +25,8 @@ type recordedCall struct {
 // what a Plugin is handed.
 func fakeRunner(t *testing.T, calls *[]recordedCall, lines []Line, exitCode int, err error) commandRunner {
 	t.Helper()
-	return func(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, rec *Record) (int, StopReason, error) {
-		*calls = append(*calls, recordedCall{dir: dir, name: name, args: args})
+	return func(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, warnings []string, rec *Record) (int, StopReason, error) {
+		*calls = append(*calls, recordedCall{dir: dir, name: name, args: args, warnings: warnings})
 		for _, l := range lines {
 			rec.Append(l.Stream, l.Text)
 		}
@@ -95,6 +97,71 @@ func TestHelmfilePlugin_UnknownWithKeyChangesNothing(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"--no-color", "--environment", "staging", "diff"}, calls[0].args)
+}
+
+const supportedKeys = "(supported: environment, file, kube-context, kubeconfig)"
+
+const misspelledEnvironment = "enviroment" //nolint:misspell // the misspelling is the case under test
+
+func TestHelmfilePlugin_WithKeysBecomeFlags(t *testing.T) {
+	tests := []struct {
+		name      string
+		operation string
+		config    map[string]string
+		extra     []string
+		args      []string
+		warnings  []string
+	}{
+		{"kube context", "diff", map[string]string{"environment": "staging", "kube-context": "stg"}, nil,
+			[]string{"--no-color", "--environment", "staging", "--kube-context", "stg", "diff"}, nil},
+		{"file and kubeconfig on sync", "sync", map[string]string{"kubeconfig": "/turnip/repository-secrets/web-kubeconfig", "file": "helmfile.d/web.yaml"}, nil,
+			[]string{"--no-color", "--file", "helmfile.d/web.yaml", "--kubeconfig", "/turnip/repository-secrets/web-kubeconfig", "sync"}, nil},
+		{"all four, extra args after operation", "diff", map[string]string{"kubeconfig": "k", "kube-context": "c", "file": "f", "environment": "e"}, []string{"-l", "name=ingress"},
+			[]string{"--no-color", "--environment", "e", "--file", "f", "--kube-context", "c", "--kubeconfig", "k", "diff", "-l", "name=ingress"}, nil},
+		{"misspelled key", "diff", map[string]string{misspelledEnvironment: "staging"}, nil,
+			[]string{"--no-color", "diff"},
+			[]string{"with: ignored unexpected key " + misspelledEnvironment + " " + supportedKeys}},
+		{"unknown keys sorted", "diff", map[string]string{"zeta": "1", "color": "blue", "alpha": ""}, nil,
+			[]string{"--no-color", "diff"},
+			[]string{
+				"with: ignored unexpected key alpha " + supportedKeys,
+				"with: ignored unexpected key color " + supportedKeys,
+				"with: ignored unexpected key zeta " + supportedKeys,
+			}},
+		{"empty known value", "diff", map[string]string{"kube-context": ""}, nil,
+			[]string{"--no-color", "diff"}, nil},
+		{"no keys", "diff", nil, nil, []string{"--no-color", "diff"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls []recordedCall
+			p := &HelmfilePlugin{run: fakeRunner(t, &calls, nil, 0, nil)}
+			_, err := p.Execute(context.Background(), tt.operation, ExecuteOptions{Config: tt.config, ExtraArgs: tt.extra})
+			require.NoError(t, err)
+			require.Len(t, calls, 1)
+			assert.Equal(t, tt.args, calls[0].args)
+			assert.Equal(t, tt.warnings, calls[0].warnings)
+		})
+	}
+}
+
+// A failed run keeps only standard error, and the warning, written by the
+// command runner among the leading annotation lines, survives with it.
+func TestHelmfilePlugin_AFailedRunKeepsTheWarning(t *testing.T) {
+	var calls []recordedCall
+	p := &HelmfilePlugin{run: fakeRunner(t, &calls, []Line{
+		turnipLine("@@ turnip: infra/web, helmfile v1.7.4 @@"),
+		turnipLine("@@ turnip: helmfile --no-color diff @@"),
+		turnipLine("@@ turnip: with: ignored unexpected key color " + supportedKeys + " @@"),
+		stdoutLine("out"),
+		stderrLine("Error: boom"),
+		turnipLine("@@ turnip: exit 1 in 1s @@"),
+	}, 1, nil)}
+	result, err := p.Execute(context.Background(), "diff", ExecuteOptions{Config: map[string]string{"color": "blue"}})
+	require.NoError(t, err)
+	lines := strings.Split(result.Output, "\n")
+	require.GreaterOrEqual(t, len(lines), 4)
+	assert.Equal(t, "@@ turnip: with: ignored unexpected key color "+supportedKeys+" @@", lines[2])
 }
 
 func TestHelmfilePlugin_NoEnvironmentFlagWhenAbsent(t *testing.T) {
@@ -744,7 +811,7 @@ func TestHelmfilePlugin_ChangeCountIgnoresStderrBetweenReleases(t *testing.T) {
 
 func TestHelmfilePlugin_PassesTheIdleTimeoutAndReportsTheStop(t *testing.T) {
 	var gotIdle time.Duration
-	p := &HelmfilePlugin{run: func(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, rec *Record) (int, StopReason, error) {
+	p := &HelmfilePlugin{run: func(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, warnings []string, rec *Record) (int, StopReason, error) {
 		gotIdle = idle
 		rec.Append(Stderr, "interrupted")
 		rec.Close()

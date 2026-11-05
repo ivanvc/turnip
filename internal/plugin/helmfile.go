@@ -191,6 +191,39 @@ func argsSilenceTables(args []string) bool {
 	return false
 }
 
+// withKeys are the `with:` keys the plugin reads, in the order their flags
+// go on the command line, and the Helmfile global flag each becomes. It
+// drives both the arguments and the warning's list of supported keys, so
+// the two cannot fall out of step.
+var withKeys = []struct{ key, flag string }{
+	{"environment", "--environment"},
+	{"file", "--file"},
+	{"kube-context", "--kube-context"},
+	{"kubeconfig", "--kubeconfig"},
+}
+
+// withWarnings returns one warning line for each key of config not in
+// withKeys, sorted by key so the record is the same on every run. A key is
+// unexpected whatever its value.
+func withWarnings(config map[string]string) []string {
+	supported := make([]string, len(withKeys))
+	for i, k := range withKeys {
+		supported[i] = k.key
+	}
+	var unexpected []string
+	for key := range config {
+		if !slices.Contains(supported, key) {
+			unexpected = append(unexpected, key)
+		}
+	}
+	slices.Sort(unexpected)
+	var warnings []string
+	for _, key := range unexpected {
+		warnings = append(warnings, fmt.Sprintf("with: ignored unexpected key %s (supported: %s)", key, strings.Join(supported, ", ")))
+	}
+	return warnings
+}
+
 func (p *HelmfilePlugin) Execute(ctx context.Context, operation string, opts ExecuteOptions) (*ExecuteResult, error) {
 	if !slices.Contains(p.GetOperations(), operation) {
 		return nil, &UnsupportedOperationError{
@@ -206,8 +239,10 @@ func (p *HelmfilePlugin) Execute(ctx context.Context, operation string, opts Exe
 	// line turnip annotates shows why the output has no color. It comes
 	// first: Helmfile refuses --color beside it, with its own message.
 	args := []string{"--no-color"}
-	if env := opts.Config["environment"]; env != "" {
-		args = append(args, "--environment", env)
+	for _, k := range withKeys {
+		if v := opts.Config[k.key]; v != "" {
+			args = append(args, k.flag, v)
+		}
 	}
 	args = append(args, operation)
 	args = append(args, opts.ExtraArgs...)
@@ -216,7 +251,7 @@ func (p *HelmfilePlugin) Execute(ctx context.Context, operation string, opts Exe
 	if rec == nil {
 		rec = NewRecord()
 	}
-	exitCode, stopped, err := p.run(ctx, opts.WorkingDir, "helmfile", args, opts.ToolVersion, opts.IdleTimeout, rec)
+	exitCode, stopped, err := p.run(ctx, opts.WorkingDir, "helmfile", args, opts.ToolVersion, opts.IdleTimeout, withWarnings(opts.Config), rec)
 	rec.Close()
 	if err != nil {
 		return nil, err

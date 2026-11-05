@@ -299,6 +299,13 @@ output attached.
   This is the tool telling you
   something real about your infrastructure code, not a turnip failure.
   Fix what the tool reports and push again.
+- **`@@ turnip: with: ignored unexpected key <key> (supported: ...) @@`**
+  right after the command line in a Helmfile project's output: the
+  project's `with:` sets a key the plugin does not read, often a
+  misspelling (`enviroment`, `kube-contxt`). The operation ran anyway,
+  without that key, so check the command line above the warning for the
+  flag you expected. Fix the key to one of those listed; see
+  [A key turnip does not read](../plugins/helmfile.md#a-key-turnip-does-not-read).
 - **Output parsing failed, but the comment shows zero changes**: the
   operation itself succeeded; turnip just couldn't extract a change count
   from the tool's output format. Check the comment's full output section

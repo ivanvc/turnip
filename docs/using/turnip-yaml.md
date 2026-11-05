@@ -276,7 +276,8 @@ key is passed to the plugin for that tool, which is why unrecognized keys
 inside `with` are accepted rather than rejected.
 
 Each tool's page lists the keys its plugin reads (see
-[Helmfile's](../plugins/helmfile.md#with)).
+[Helmfile's](../plugins/helmfile.md#with)) and what it does with a key it
+does not read: Helmfile's writes a warning line in the run's output.
 
 ## `runner`: where it runs
 

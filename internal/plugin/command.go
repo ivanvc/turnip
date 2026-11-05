@@ -23,9 +23,12 @@ import (
 // Whoever follows rec while the command runs sees each line as it is
 // recorded.
 //
+// warnings are annotation lines the runner records right after the two header
+// lines and before the tool's first output, in the order given.
+//
 // idle is the idle timeout (zero for none); stopped says whether, and why,
 // turnip stopped the tool rather than letting it exit on its own.
-type commandRunner func(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, rec *Record) (exitCode int, stopped StopReason, err error)
+type commandRunner func(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, warnings []string, rec *Record) (exitCode int, stopped StopReason, err error)
 
 // maxLineBytes is the longest line the capture records; a longer one fails
 // the command's capture with bufio.ErrTooLong.
@@ -70,7 +73,7 @@ var errIdle = errors.New("idle")
 // group. exec.Cmd.WaitDelay is not used for the kill because it kills the
 // tool's own process only, leaving its children running. A stopped tool's
 // exit code is still returned, -1 when it was killed by a signal.
-func execCommand(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, rec *Record) (exitCode int, stopped StopReason, err error) {
+func execCommand(ctx context.Context, dir, name string, args []string, version string, idle time.Duration, warnings []string, rec *Record) (exitCode int, stopped StopReason, err error) {
 	// The tool's own context: ctx ending, or the watchdog finding it
 	// silent, cancels it, and its cause tells the two apart.
 	toolCtx, cancelTool := context.WithCancelCause(ctx)
@@ -134,6 +137,9 @@ func execCommand(ctx context.Context, dir, name string, args []string, version s
 	started := time.Now()
 	for _, line := range transcriptHeader(dir, name, args, version) {
 		rec.Append(Turnip, line)
+	}
+	for _, w := range warnings {
+		rec.Append(Turnip, annotation(w))
 	}
 	close(header)
 

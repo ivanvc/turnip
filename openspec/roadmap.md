@@ -19,6 +19,7 @@ In the order discussed so far; reorder here.
 
 1. `fix-single-config-surface`: revision implemented (the base ships no ConfigMap; the Runner namespace is the Role's), awaiting the pilot migration (guide in docs/internal); `runner-timeouts` archives after it
 2. `runner-timeouts`: implemented, awaiting deploy (archive after `fix-single-config-surface`)
+3. `fix-helmfile-with-keys`: implemented, awaiting deploy of the Runner image (archive after `runner-timeouts`)
 
 ## Open changes
 
@@ -27,6 +28,7 @@ In the order discussed so far; reorder here.
 | [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized | archive after `fix-single-config-surface` | implemented; archived once deployed, after its dependency |
 | [`fix-plan-survives-push`](changes/fix-plan-survives-push/) | every push marks the pull request's ready plans stale, and says so | | proposal |
 | [`fix-concurrent-mutations`](changes/fix-concurrent-mutations/) | a second mutating command for a Project is refused while the first runs | | proposal |
+| [`fix-helmfile-with-keys`](changes/fix-helmfile-with-keys/) | `with:` passes `--file`, `--kube-context` and `--kubeconfig` to Helmfile; an unexpected key is warned about, not silently ignored | archive after `runner-timeouts` | implemented; archived once deployed, after its dependency |
 | [`fix-lock-release-on-close`](changes/fix-lock-release-on-close/) | closing a pull request releases every Lock it holds, whatever its configuration | | proposal |
 | [`fix-invalid-config-check-on-comment`](changes/fix-invalid-config-check-on-comment/) | a comment that finds an invalid `turnip.yaml` marks the `turnip` check, as a push does | | proposal |
 | [`helmfile-hook-policy`](changes/helmfile-hook-policy/) | an operator setting that refuses helmfiles declaring hooks | | proposal |
@@ -131,6 +133,13 @@ is still fresh at apply).
 - The Runner image following the Server's version, so a deployment
   states turnip's version once rather than in the Server image and
   `TURNIP_RUNNER_IMAGE` (raised 2026-10-19)
+- More Helmfile global flags as `with:` keys (`--namespace`,
+  `--state-values-file`, `--state-values-set`), the way
+  `fix-helmfile-with-keys` adds `--file`, `--kube-context` and
+  `--kubeconfig` (2026-11-05)
+- A results-comment notice for a `with:` key the tool does not read,
+  beside the transcript warning `fix-helmfile-with-keys` adds
+  (2026-11-05)
 - A tool's trigger word narrows `unlock` to that tool's Locks again,
   by recording each Lock's tool when its plan takes it; until then
   `/<tool> unlock` acts as `/turnip unlock` (decided 2026-10-20 in

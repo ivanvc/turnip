@@ -18,7 +18,7 @@ import (
 func run(t *testing.T, dir, name string, args []string, version string) (rec *Record, exitCode int, err error) {
 	t.Helper()
 	rec = NewRecord()
-	exitCode, _, err = execCommand(context.Background(), dir, name, args, version, 0, rec)
+	exitCode, _, err = execCommand(context.Background(), dir, name, args, version, 0, nil, rec)
 	return rec, exitCode, err
 }
 
@@ -181,7 +181,7 @@ func TestExecCommand_TheRecordCanBeFollowedWhileTheCommandRuns(t *testing.T) {
 		// Prints, then waits for the test to create the gate file.
 		_, _, err := execCommand(context.Background(), dir, "sh", []string{"-c",
 			"echo first; while [ ! -e gate ]; do sleep 0.01; done; echo second",
-		}, "", 0, rec)
+		}, "", 0, nil, rec)
 		ended <- err
 	}()
 
@@ -323,4 +323,37 @@ func TestProperty_EachStreamIsRecordedInOrderWhateverTheChunking(t *testing.T) {
 		require.Equal(t, wantLines(stdout), gotOut, "standard output's lines, whole and in order")
 		require.Equal(t, wantLines(stderr), gotErr, "standard error's lines, whole and in order")
 	})
+}
+
+func TestExecCommand_WarningsFollowTheHeaderAndPrecedeTheTool(t *testing.T) {
+	warnings := []string{"first warning", "second warning"}
+	rec := NewRecord()
+	// The tool writes the moment it starts.
+	_, _, err := execCommand(context.Background(), "", "sh", []string{"-c", "echo out; echo err >&2"}, "", 0, warnings, rec)
+	require.NoError(t, err)
+
+	lines := rec.snapshot()
+	require.GreaterOrEqual(t, len(lines), 6)
+	for i := range 4 {
+		assert.Equal(t, Turnip, lines[i].Stream, "line %d", i)
+	}
+	assert.Equal(t, annotation("first warning"), lines[2].Text)
+	assert.Equal(t, annotation("second warning"), lines[3].Text)
+	assert.ElementsMatch(t, []Line{stdoutLine("out"), stderrLine("err")}, toolLines(rec))
+	assert.NotEqual(t, Turnip, lines[4].Stream)
+	assert.NotEqual(t, Turnip, lines[5].Stream)
+}
+
+func TestExecCommand_NoWarningsLeavesTheRecordAsBefore(t *testing.T) {
+	rec := NewRecord()
+	_, _, err := execCommand(context.Background(), "", "sh", []string{"-c", "echo out"}, "", 0, nil, rec)
+	require.NoError(t, err)
+
+	lines := rec.snapshot()
+	require.Len(t, lines, 4, "two header lines, the tool's line, the trailer")
+	assert.Equal(t, Turnip, lines[0].Stream)
+	assert.Equal(t, Turnip, lines[1].Stream)
+	assert.Equal(t, Stdout, lines[2].Stream)
+	assert.Equal(t, "out", lines[2].Text)
+	assert.Equal(t, Turnip, lines[3].Stream)
 }

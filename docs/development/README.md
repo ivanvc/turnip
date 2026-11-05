@@ -248,9 +248,13 @@ failure you'd expect: `exec: "helm": executable file not found in $PATH`.
 releases that changed.
 
 **The command line** is `helmfile --no-color [--environment <env>]
+[--file <file>] [--kube-context <context>] [--kubeconfig <kubeconfig>]
 <operation> [arguments...]`. `--no-color` is a flag rather than
 `NO_COLOR` in the environment so the command line turnip annotates shows
-why the output has no color.
+why the output has no color. The `withKeys` table in `helmfile.go`
+drives both the flags and the warning lines for any other `with:` key;
+the warnings go to the command runner as its `warnings` input, which
+records them right after the two header lines.
 
 **The output** is `Record.Text()` when Helmfile exits 0 and
 `Record.Select(Stderr, ...)` otherwise. Helmfile's logger writes to

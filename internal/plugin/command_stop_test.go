@@ -27,7 +27,7 @@ func withStopGrace(t *testing.T, grace time.Duration) {
 func runStoppable(t *testing.T, ctx context.Context, script string, idle time.Duration, rec *Record) (exitCode int, stopped StopReason, elapsed time.Duration) {
 	t.Helper()
 	start := time.Now()
-	exitCode, stopped, err := execCommand(ctx, "", "sh", []string{"-c", script}, "", idle, rec)
+	exitCode, stopped, err := execCommand(ctx, "", "sh", []string{"-c", script}, "", idle, nil, rec)
 	require.NoError(t, err)
 	return exitCode, stopped, time.Since(start)
 }

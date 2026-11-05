@@ -40,8 +40,8 @@ replay the scope the `diff` recorded. See "Plan commands and mutating
 commands" in [`using/commands.md`](../using/commands.md#plan-commands-and-mutating-commands).
 
 turnip runs Helmfile as
-`helmfile --no-color [--environment <environment>] <operation> [arguments...]`,
-in the project's `directory`. Color is always off: a comment cannot
+`helmfile --no-color [--environment <environment>] [--file <file>] [--kube-context <context>] [--kubeconfig <kubeconfig>] <operation> [arguments...]`,
+in the project's `directory` (the flags come from [`with:`](#with)). Color is always off: a comment cannot
 render it, and its codes would show up as text such as `[1;34m`.
 
 #### `sync` acts even when the diff is empty
@@ -96,12 +96,64 @@ if the Server's operator allows it; see
 
 ### `with:`
 
-| Key | Meaning |
-|---|---|
-| `environment` | Helmfile's own `--environment` flag, passed before the operation (`helmfile --no-color --environment staging diff`) |
+| Key | Helmfile flag | What it selects |
+|---|---|---|
+| `environment` | `--environment` | the Helmfile environment |
+| `file` | `--file` | the helmfile to load, relative to the project's `directory` |
+| `kube-context` | `--kube-context` | the kubeconfig context |
+| `kubeconfig` | `--kubeconfig` | the kubeconfig file |
 
-Omitted, no `--environment` is passed and Helmfile uses its own default.
-Other keys under `with:` are accepted and ignored.
+```yaml
+projects:
+  - directory: infra/web
+    uses: helmfile@v1.7.4
+    with:
+      environment: staging
+      kube-context: stg
+```
+
+This runs `helmfile --no-color --environment staging --kube-context stg diff`.
+Each flag is passed only when its key is set to a non-empty value, in the
+order of the table, for every operation. Values are passed as written:
+turnip does not resolve or check them, a relative `file` or `kubeconfig`
+is resolved by Helmfile against the project's `directory`, and a wrong
+value fails in Helmfile, with its message, in the same output. For
+example, `with: {file: helmfile.d/web.yaml, kubeconfig:
+/turnip/repository-secrets/web-kubeconfig}` on a `sync` runs
+`helmfile --no-color --file helmfile.d/web.yaml --kubeconfig /turnip/repository-secrets/web-kubeconfig sync`.
+
+These are Helmfile's global flags, so they apply to every sub-helmfile
+a project's helmfile loads, which a `helmDefaults` entry in that
+helmfile would not. Omitted, a flag is not passed and Helmfile uses its
+own default.
+
+Set a kube context in one place only, `with.kube-context` or the
+helmfile's own `helmDefaults.kubeContext`: when both are set, Helmfile
+decides which wins, not turnip.
+
+#### A key turnip does not read
+
+Any other key under `with:` is accepted by validation and does not
+change the command line, but it is not silent. The output of the run
+carries a line right after the command line for each such key, in key
+order:
+
+```text
+@@ turnip: with: ignored unexpected key kube-contxt (supported: environment, file, kube-context, kubeconfig) @@
+```
+
+The operation still runs, without that key: a misspelled `enviroment`
+plans the default environment. An unexpected key is reported whatever its
+value; a known key set to an empty value is neither passed nor reported.
+
+#### `with.kubeconfig` or `KUBECONFIG`
+
+Both remain. `with.kubeconfig` is Helmfile's flag: it reaches Helmfile and
+the Helm it runs, and when both are set, Helmfile's flag wins for
+Helmfile. `KUBECONFIG` in `runner.env` reaches every process in the
+Runner (hooks, `kubectl`, the AWS CLI's `get-token`). Prefer `KUBECONFIG`
+when anything besides Helmfile and Helm must reach the cluster; use
+`with.kubeconfig` when only Helmfile does.
 
 ### Reaching a cluster
 
@@ -116,11 +168,13 @@ Secret instead (see
 [Keys from the repository's Secret](#keys-from-the-repositorys-secret)).
 List its key in `runner.secrets`, point `KUBECONFIG` at
 `/turnip/repository-secrets/<key>`, and select the context with
-helmfile's `kubeContext`, which passes `--kube-context`:
+`with.kube-context`, which passes `--kube-context`:
 
 ```yaml
 projects:
   - directory: web
+    with:
+      kube-context: <context>
     runner:
       secrets: [web-kubeconfig]
       env:

@@ -153,7 +153,7 @@ fix pass applies what it finds, before the checkpoint.
 - [x] 6.4 `make test-kind` passes with every check run and none
   skipped (`GOFLAGS="-v -count=1"`), the kind overlay now generating
   its ConfigMap and separating the Runner namespace the new way
-- [x] 6.5 The pilot: the `jaws` module (settings as a ConfigMap release
+- [x] 6.5 The pilot: its Helmfile module (settings as a ConfigMap release
   beside the Secret's; the Role namespace patch and the
   `runner-namespace` transformer in the `turnip` release) and the
   private guide in `docs/internal/`, rendered through the two-pass
@@ -256,7 +256,7 @@ fix pass applies what it finds, before the checkpoint.
   and a now-dead `turnip-runner:latest` substitution in
   `.github/workflows/release.yml`.
 - 2026-11-04: Task 6.5. The pilot already ran the first version
-  (`jaws` `5907a3f7`, turnip `2ae354e`), so its ConfigMap belongs to the
+  (turnip `2ae354e`), so its ConfigMap belongs to the
   `turnip` Helm release. The private guide hands it to the new
   `turnip-server-config` release with a `kubectl annotate` before the
   sync (release name, and `helm.sh/resource-policy: keep` so the
