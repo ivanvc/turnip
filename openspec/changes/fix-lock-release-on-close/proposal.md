@@ -30,9 +30,9 @@ event will ever release.
 
 ## Dependencies
 
-- **Depends in part on `fix-unlock-without-config`,** which builds the
-  way to find a pull request's Locks without the configuration first
-  (2026-10-20); close reuses it.
+- **Builds on the archived `fix-unlock-without-config`** (2026-11-04),
+  which added the way to find a pull request's Locks without the
+  configuration (`ListLocks`); close reuses it.
 - **`lock-overview` (planned) depends on this.** It lists held Locks
   too, with the same listing.
 - **Overlaps `fix-plan-survives-push` and `fix-concurrent-mutations`.**

@@ -26,7 +26,7 @@ turnip SHALL read a repository's configuration from the pull request's head comm
 - **THEN** turnip SHALL act on the configuration as written at that head commit, not on the base branch's
 
 ### Requirement: Replies for a missing, invalid or unreadable configuration
-When the configuration cannot be used, turnip SHALL run no Operation for the event. On the automatic path (a pull request opened, pushed to, reopened or marked ready) a missing configuration SHALL be silent, while an invalid one or a failed fetch SHALL post a pull request comment and mark the commit's configuration invalid for the `turnip` check (see the `merge-check` capability). On the comment path all three SHALL post a reply comment. The replies SHALL read:
+When the configuration cannot be used, turnip SHALL run no Operation for the event. On the automatic path (a pull request opened, pushed to, reopened or marked ready) a missing configuration SHALL be silent, while an invalid one or a failed fetch SHALL post a pull request comment and mark the commit's configuration invalid for the `turnip` check (see the `merge-check` capability). On the comment path all three SHALL post a reply comment, once per comment. The comment path SHALL read the configuration only for commands other than `unlock`, which never reads it (see the `commands` capability): a comment whose commands are all `unlock` SHALL NOT fetch the configuration and SHALL get none of these replies, and in a comment that also holds other commands, the reply SHALL answer those other commands while each `unlock` still runs. The replies SHALL read:
 
 | Situation | Comment |
 |---|---|
@@ -41,7 +41,7 @@ Known issue: an invalid `turnip.yaml` found on the comment path posts the reply 
 - **THEN** turnip SHALL post no comment and run nothing
 
 #### Scenario: Explicit command in a repository without configuration
-- **WHEN** a collaborator comments a trigger command on a pull request whose head commit has no configuration
+- **WHEN** a collaborator comments a trigger command other than `unlock` on a pull request whose head commit has no configuration
 - **THEN** turnip SHALL reply with the missing-configuration warning naming both accepted paths
 
 #### Scenario: Invalid file on the automatic path
@@ -50,13 +50,21 @@ Known issue: an invalid `turnip.yaml` found on the comment path posts the reply 
 - **AND** the `turnip` check for that commit SHALL report an invalid configuration
 
 #### Scenario: Invalid file on the comment path
-- **WHEN** a trigger comment is posted on a pull request whose `turnip.yaml` is invalid
+- **WHEN** a trigger comment other than `unlock` is posted on a pull request whose `turnip.yaml` is invalid
 - **THEN** turnip SHALL reply with the invalid-configuration warning
 - **AND** the `turnip` check SHALL be left as it was
 
 #### Scenario: GitHub refuses the fetch
 - **WHEN** reading the configuration fails for a reason other than the file not existing (authentication, permission, rate limit)
 - **THEN** turnip SHALL post the caution comment with the error in a collapsed section and run nothing
+
+#### Scenario: Unlock alone with an invalid file
+- **WHEN** a writer comments only `/turnip unlock` on a pull request whose `turnip.yaml` is invalid
+- **THEN** turnip SHALL NOT fetch the configuration, SHALL post no invalid-configuration warning, and SHALL answer with the unlock's own reply
+
+#### Scenario: Unlock beside another command with an invalid file
+- **WHEN** a writer comments `/turnip unlock` and `/turnip diff` on a pull request whose `turnip.yaml` is invalid
+- **THEN** the unlock runs and gets its own reply, the invalid-configuration warning is posted once for the diff, and no Operation runs
 
 ### Requirement: Schema version
 The file SHALL declare `schemaVersion: v1alpha3`, the only version this turnip accepts. A missing or different version SHALL be reported on its own, before and instead of any unrecognized-key or other validation error, since it explains them. turnip SHALL NOT upgrade or reinterpret a file written for another version.

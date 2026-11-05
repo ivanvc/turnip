@@ -18,8 +18,7 @@ new work gets a name, never a number.
 In the order discussed so far; reorder here.
 
 1. `fix-single-config-surface`: revision implemented (the base ships no ConfigMap; the Runner namespace is the Role's), awaiting the pilot migration (guide in docs/internal); `runner-timeouts` archives after it
-2. `fix-unlock-without-config`: implemented, awaiting deploy (then unlock the blocked pilot pull request)
-3. `runner-timeouts`: implemented, awaiting deploy (archive after `fix-single-config-surface`)
+2. `runner-timeouts`: implemented, awaiting deploy (archive after `fix-single-config-surface`)
 
 ## Open changes
 
@@ -28,14 +27,13 @@ In the order discussed so far; reorder here.
 | [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized | archive after `fix-single-config-surface` | implemented; archived once deployed, after its dependency |
 | [`fix-plan-survives-push`](changes/fix-plan-survives-push/) | every push marks the pull request's ready plans stale, and says so | | proposal |
 | [`fix-concurrent-mutations`](changes/fix-concurrent-mutations/) | a second mutating command for a Project is refused while the first runs | | proposal |
-| [`fix-lock-release-on-close`](changes/fix-lock-release-on-close/) | closing a pull request releases every Lock it holds, whatever its configuration | `fix-unlock-without-config` (in part) | proposal |
+| [`fix-lock-release-on-close`](changes/fix-lock-release-on-close/) | closing a pull request releases every Lock it holds, whatever its configuration | | proposal |
 | [`fix-invalid-config-check-on-comment`](changes/fix-invalid-config-check-on-comment/) | a comment that finds an invalid `turnip.yaml` marks the `turnip` check, as a push does | | proposal |
 | [`helmfile-hook-policy`](changes/helmfile-hook-policy/) | an operator setting that refuses helmfiles declaring hooks | | proposal |
 | [`operation-scheduling`](changes/operation-scheduling/) | a cap on how many Operations run at once, with a fair queue, and per-Project dependencies that order applies | `fix-concurrent-mutations`, `fix-invalid-config-check-on-comment`, `runner-timeouts` (in part) | proposal |
 | [`runner-server-tls`](changes/runner-server-tls/) | TLS on the Runner's gRPC channel, and a Runner that verifies the Server; where the certificate comes from is still open | | proposal |
 | [`org-images`](changes/org-images/) | the project under its organization, and multi-architecture images published on every push to `main` | | proposal |
 | [`fix-single-config-surface`](changes/fix-single-config-surface/) | settings in one ConfigMap, secret material in one Secret, no Deployment patches, under Kustomize and Helmfile alike | | implemented; archived once the pilot runs on its own ConfigMap |
-| [`fix-unlock-without-config`](changes/fix-unlock-without-config/) | `unlock` works whatever the configuration says | | implemented; archived once the blocked pull request unlocks |
 
 Changes that overlap without depending on each other are best done
 one at a time: `fix-plan-survives-push`, `fix-lock-release-on-close` and
