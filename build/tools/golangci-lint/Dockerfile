@@ -5,4 +5,4 @@
 # binary (verified against the release's checksums), as golangci-lint's
 # maintainers recommend over building it from source; the image is not
 # used.
-FROM docker.io/golangci/golangci-lint:v2.14.0
+FROM docker.io/golangci/golangci-lint:v2.15.0
