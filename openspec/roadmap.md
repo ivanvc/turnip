@@ -18,7 +18,6 @@ new work gets a name, never a number.
 In the order discussed so far; reorder here.
 
 1. `runner-timeouts`: implemented, awaiting deploy (its prerequisites are archived)
-2. `fix-helmfile-with-keys`: implemented, awaiting deploy of the Runner image (archive after `runner-timeouts`)
 
 ## Open changes
 
@@ -27,7 +26,6 @@ In the order discussed so far; reorder here.
 | [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized | | implemented; archived once deployed |
 | [`fix-plan-survives-push`](changes/fix-plan-survives-push/) | every push marks the pull request's ready plans stale, and says so | | proposal |
 | [`fix-concurrent-mutations`](changes/fix-concurrent-mutations/) | a second mutating command for a Project is refused while the first runs | | proposal |
-| [`fix-helmfile-with-keys`](changes/fix-helmfile-with-keys/) | `with:` passes `--file`, `--kube-context` and `--kubeconfig` to Helmfile; an unexpected key is warned about, not silently ignored | archive after `runner-timeouts` | implemented; archived once deployed, after its dependency |
 | [`fix-lock-release-on-close`](changes/fix-lock-release-on-close/) | closing a pull request releases every Lock it holds, whatever its configuration | | proposal |
 | [`fix-invalid-config-check-on-comment`](changes/fix-invalid-config-check-on-comment/) | a comment that finds an invalid `turnip.yaml` marks the `turnip` check, as a push does | | proposal |
 | [`helmfile-hook-policy`](changes/helmfile-hook-policy/) | an operator setting that refuses helmfiles declaring hooks | | proposal |

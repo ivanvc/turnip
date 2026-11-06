@@ -69,13 +69,14 @@ After a successful Operation, the tool SHALL judge from the run's whole transcri
 - **THEN** the Lock recorded that the counts were not reported, and the check `turnip/apply/web` is titled `running the recorded plan, succeeded, -q`, never `no changes`
 
 ### Requirement: Execution transcript and interleaved output
-Every tool run SHALL be recorded as one sequence of lines, each marked with the stream it was written to, with the tool's standard output and standard error interleaved rather than one after the other. Each stream's lines SHALL be in the order they were written. Across the two streams the record SHALL be in write order when the tool writes to one stream and then, later, to the other, however much it wrote to the first; lines the tool writes to both streams at the same moment, or within the time turnip takes to read one of them, can land either way round, close to where they were written. turnip SHALL open the record with two annotation lines and close it with one, each written `@@ turnip: <text> @@`:
+Every tool run SHALL be recorded as one sequence of lines, each marked with the stream it was written to, with the tool's standard output and standard error interleaved rather than one after the other. Each stream's lines SHALL be in the order they were written. Across the two streams the record SHALL be in write order when the tool writes to one stream and then, later, to the other, however much it wrote to the first; lines the tool writes to both streams at the same moment, or within the time turnip takes to read one of them, can land either way round, close to where they were written. turnip SHALL open the record with two annotation lines, followed by one more for each warning the tool raises about the Project's configuration, and close it with one, each written `@@ turnip: <text> @@`. The opening lines, warnings included, are the record's leading annotation lines:
 
 | Line | Text |
 |---|---|
 | first | `<directory>, <tool> <tag-spec>`, the directory repository-relative (`.` for the root) and the tag-spec as `uses:` wrote it |
 | second | the command's argument vector, `<tool> <args...>`, including arguments turnip supplied |
-| last | `exit <code> in <duration>`, written after both streams have ended |
+| after the second, if any | a warning about the Project's configuration, such as a `with:` key the tool does not read (see the `plugin-helmfile` capability) |
+| last | `exit <code> in <duration>`, written after both streams have ended; or, when turnip stopped the tool (see the `operation-lifecycle` capability), `stopped: no output for <idle timeout>, after <duration>` or `stopped: the Runner was told to stop, after <duration>` |
 
 The Operation's live log stream and the Runner's own log SHALL carry the record as it happened (see the `operation-lifecycle` and `observability` capabilities). The Operation's output in the pull request comment SHALL be what the tool makes of the record (see the requirement "Output chosen by the tool"). The annotations SHALL record arguments only, never the environment. A command that could not be started SHALL produce no transcript.
 
@@ -104,6 +105,14 @@ The Operation's live log stream and the Runner's own log SHALL carry the record 
 #### Scenario: Tool binary missing
 - **WHEN** the tool's binary cannot be found in the image
 - **THEN** the Operation SHALL fail with no transcript lines in its output
+
+#### Scenario: A tool stopped for silence
+- **WHEN** the Runner stops a tool after 30 minutes with no output, 41 minutes into the run
+- **THEN** the record SHALL end with `@@ turnip: stopped: no output for 30m0s, after 41m0s @@`
+
+#### Scenario: A configuration warning in the record
+- **WHEN** a Helmfile Project sets a `with:` key the tool does not read, and its `diff` fails
+- **THEN** the warning line follows the command line in the record, and the Operation's output, which keeps only standard error, still shows it among the leading annotation lines
 
 ### Requirement: Output chosen by the tool
 Each tool SHALL decide what an Operation's output is: the whole record of its run, or a selection of the record's lines by stream, kept in the record's order. Whatever the tool selects, the output SHALL open with the record's leading annotation lines and close with its closing one, so no tool can leave them out. The Server SHALL treat the output as text, knowing nothing of which stream a line was written to. Change counts SHALL be read from the record, never from a selection of it.

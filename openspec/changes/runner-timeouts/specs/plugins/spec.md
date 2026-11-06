@@ -1,12 +1,13 @@
 ## MODIFIED Requirements
 
 ### Requirement: Execution transcript and interleaved output
-Every tool run SHALL be recorded as one sequence of lines, each marked with the stream it was written to, with the tool's standard output and standard error interleaved rather than one after the other. Each stream's lines SHALL be in the order they were written. Across the two streams the record SHALL be in write order when the tool writes to one stream and then, later, to the other, however much it wrote to the first; lines the tool writes to both streams at the same moment, or within the time turnip takes to read one of them, can land either way round, close to where they were written. turnip SHALL open the record with two annotation lines and close it with one, each written `@@ turnip: <text> @@`:
+Every tool run SHALL be recorded as one sequence of lines, each marked with the stream it was written to, with the tool's standard output and standard error interleaved rather than one after the other. Each stream's lines SHALL be in the order they were written. Across the two streams the record SHALL be in write order when the tool writes to one stream and then, later, to the other, however much it wrote to the first; lines the tool writes to both streams at the same moment, or within the time turnip takes to read one of them, can land either way round, close to where they were written. turnip SHALL open the record with two annotation lines, followed by one more for each warning the tool raises about the Project's configuration, and close it with one, each written `@@ turnip: <text> @@`. The opening lines, warnings included, are the record's leading annotation lines:
 
 | Line | Text |
 |---|---|
 | first | `<directory>, <tool> <tag-spec>`, the directory repository-relative (`.` for the root) and the tag-spec as `uses:` wrote it |
 | second | the command's argument vector, `<tool> <args...>`, including arguments turnip supplied |
+| after the second, if any | a warning about the Project's configuration, such as a `with:` key the tool does not read (see the `plugin-helmfile` capability) |
 | last | `exit <code> in <duration>`, written after both streams have ended; or, when turnip stopped the tool (see the `operation-lifecycle` capability), `stopped: no output for <idle timeout>, after <duration>` or `stopped: the Runner was told to stop, after <duration>` |
 
 The Operation's live log stream and the Runner's own log SHALL carry the record as it happened (see the `operation-lifecycle` and `observability` capabilities). The Operation's output in the pull request comment SHALL be what the tool makes of the record (see the requirement "Output chosen by the tool"). The annotations SHALL record arguments only, never the environment. A command that could not be started SHALL produce no transcript.
@@ -40,3 +41,7 @@ The Operation's live log stream and the Runner's own log SHALL carry the record 
 #### Scenario: A tool stopped for silence
 - **WHEN** the Runner stops a tool after 30 minutes with no output, 41 minutes into the run
 - **THEN** the record SHALL end with `@@ turnip: stopped: no output for 30m0s, after 41m0s @@`
+
+#### Scenario: A configuration warning in the record
+- **WHEN** a Helmfile Project sets a `with:` key the tool does not read, and its `diff` fails
+- **THEN** the warning line follows the command line in the record, and the Operation's output, which keeps only standard error, still shows it among the leading annotation lines

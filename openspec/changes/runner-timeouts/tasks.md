@@ -196,3 +196,11 @@ checkpoint.
   to a sleeping container so it needs no repository or Server, and
   takes about 66 seconds because `sleep` ignores `SIGTERM` and uses the
   full 60-second grace.
+- 2026-11-05: Not implementation; archive order. `fix-helmfile-with-keys`
+  was archived first, though its `plugins` delta was written on this
+  change's version of "Execution transcript and interleaved output". The
+  main spec then held both changes' edits (this change's "stopped"
+  closing line and that change's warning line), so this change's delta
+  for that requirement was set to that text; archiving it leaves the
+  requirement as it is.
+
