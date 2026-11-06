@@ -65,7 +65,10 @@ written from them.
   is left. `fix-results-comment-on-replica-loss` (archived 2026-10-14)
   now keeps a trigger's progress in Redis, which a resume would build
   on; whether this change resumes is decided in its design
-- Completing stranded queued checks by a sweep: `runner-timeouts`
+- Completing stranded queued checks by a sweep: not covered by the
+  archived `runner-timeouts` (2026-11-05), which finalizes a started
+  Runner whose Job ended, not a queued check; whether this change
+  sweeps them or a follow-up does is decided in its design
 - Ordering plans, and dependencies between repositories
 - Execution-order groups
 
@@ -78,9 +81,10 @@ written from them.
   dependency graph is reported as any invalid `turnip.yaml` is, which
   on the comment path fails the `turnip` check only once that change
   lands.
-- **Depends on `runner-timeouts`, in part.** Completing a queued check
-  stranded by a replica that stopped is left to it (see Not in this
-  change); this change can land first and leave those checks queued.
+- **No longer depends on `runner-timeouts`**, archived 2026-11-05
+  without completing queued checks stranded by a replica that stopped;
+  whether this change does is decided in its design (see Not in this
+  change).
 
 ## Capabilities
 

@@ -6,7 +6,7 @@ Defines how the turnip Server process is configured, starts, serves GitHub webho
 ## Requirements
 
 ### Requirement: Settings loader
-The Server SHALL read its configuration once, at startup, from environment variables, and SHALL NOT reload it while running. An empty value SHALL count as unset. These settings SHALL be required, and every unset one SHALL be named together in a single startup error (`missing required environment variable(s): <names>`): `TURNIP_GITHUB_APP_ID`, `TURNIP_GITHUB_WEBHOOK_SECRET`, `TURNIP_REDIS_ADDR`, `TURNIP_RUNNER_SERVER_ADDR`, `TURNIP_RUNNER_IMAGE`, and one of `TURNIP_GITHUB_PRIVATE_KEY` (inline PEM) or `TURNIP_GITHUB_PRIVATE_KEY_PATH` (a file holding the PEM). When both key settings are set, `TURNIP_GITHUB_PRIVATE_KEY_PATH` SHALL be used. `TURNIP_HTTP_ADDR` and `TURNIP_GRPC_ADDR` SHALL default to `:8080` and `:9090`, the ports the deployment base exposes (see the `deployment` capability), so the operator sets neither unless they also change those ports. When `TURNIP_RUNNER_NAMESPACE` is unset, the Runner namespace SHALL be the namespace the Server runs in: in a cluster, `POD_NAMESPACE` when set, otherwise the namespace of the Server's ServiceAccount; outside one, the namespace of the current kubeconfig context, or `default` when it names none. The Server SHALL log the Runner namespace it resolved at startup. A malformed value SHALL stop the Server from starting with an error naming the setting; this includes a non-integer `TURNIP_GITHUB_APP_ID`, an unreadable key file, a `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` that is not a boolean, and an unrecognized value of any enumerated setting (`TURNIP_CLONE_SUBMODULES`, `TURNIP_ALLOWED_OVERRIDES`, `TURNIP_MUTATION_REQUIREMENTS`, `TURNIP_ALLOWED_IMAGES`). The one exception SHALL be `TURNIP_LOG_LEVEL`, where an unrecognized value falls back to `info`. A non-integer `TURNIP_GITHUB_APP_ID` or an unreadable key file SHALL be reported on its own, without the list of unset settings. The remaining values SHALL be checked only once no required setting is unset, and the first malformed one SHALL be reported on its own.
+The Server SHALL read its configuration once, at startup, from environment variables, and SHALL NOT reload it while running. An empty value SHALL count as unset. These settings SHALL be required, and every unset one SHALL be named together in a single startup error (`missing required environment variable(s): <names>`): `TURNIP_GITHUB_APP_ID`, `TURNIP_GITHUB_WEBHOOK_SECRET`, `TURNIP_REDIS_ADDR`, `TURNIP_RUNNER_SERVER_ADDR`, `TURNIP_RUNNER_IMAGE`, and one of `TURNIP_GITHUB_PRIVATE_KEY` (inline PEM) or `TURNIP_GITHUB_PRIVATE_KEY_PATH` (a file holding the PEM). When both key settings are set, `TURNIP_GITHUB_PRIVATE_KEY_PATH` SHALL be used. `TURNIP_HTTP_ADDR` and `TURNIP_GRPC_ADDR` SHALL default to `:8080` and `:9090`, the ports the deployment base exposes (see the `deployment` capability), so the operator sets neither unless they also change those ports. When `TURNIP_RUNNER_NAMESPACE` is unset, the Runner namespace SHALL be the namespace the Server runs in: in a cluster, `POD_NAMESPACE` when set, otherwise the namespace of the Server's ServiceAccount; outside one, the namespace of the current kubeconfig context, or `default` when it names none. The Server SHALL log the Runner namespace it resolved at startup. `TURNIP_RUNNER_IDLE_TIMEOUT` and `TURNIP_RUNNER_DEADLINE` SHALL be Go durations (`30m`, `4h`), defaulting to 30 minutes and 4 hours, documented as safety bounds rather than sizing choices; each SHALL be positive, and the deadline SHALL be longer than the idle timeout, so a silent tool is stopped with the clearer idle message before the deadline fires. A malformed value SHALL stop the Server from starting with an error naming the setting; this includes a non-integer `TURNIP_GITHUB_APP_ID`, an unreadable key file, a `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` that is not a boolean, a `TURNIP_RUNNER_IDLE_TIMEOUT` or `TURNIP_RUNNER_DEADLINE` that is not a positive duration, a deadline not longer than the idle timeout (an error naming both), and an unrecognized value of any enumerated setting (`TURNIP_CLONE_SUBMODULES`, `TURNIP_ALLOWED_OVERRIDES`, `TURNIP_MUTATION_REQUIREMENTS`, `TURNIP_ALLOWED_IMAGES`). The one exception SHALL be `TURNIP_LOG_LEVEL`, where an unrecognized value falls back to `info`. A non-integer `TURNIP_GITHUB_APP_ID` or an unreadable key file SHALL be reported on its own, without the list of unset settings. The remaining values SHALL be checked only once no required setting is unset, and the first malformed one SHALL be reported on its own.
 
 #### Scenario: Several required settings missing
 - **WHEN** the Server starts with `TURNIP_REDIS_ADDR` and `TURNIP_GITHUB_APP_ID` unset
@@ -36,6 +36,18 @@ The Server SHALL read its configuration once, at startup, from environment varia
 - **WHEN** the Server starts with neither `TURNIP_HTTP_ADDR` nor `TURNIP_GRPC_ADDR` set
 - **THEN** it serves HTTP on `:8080` and gRPC for Runners on `:9090`
 
+#### Scenario: Default timeouts
+- **WHEN** the Server starts with neither `TURNIP_RUNNER_IDLE_TIMEOUT` nor `TURNIP_RUNNER_DEADLINE` set
+- **THEN** Runners stop a tool after 30 minutes with no output, and Runner Jobs have a deadline of 4 hours
+
+#### Scenario: A deadline shorter than the idle timeout
+- **WHEN** `TURNIP_RUNNER_IDLE_TIMEOUT=2h` and `TURNIP_RUNNER_DEADLINE=1h`
+- **THEN** the Server exits at startup with an error naming both settings
+
+#### Scenario: A malformed duration
+- **WHEN** `TURNIP_RUNNER_DEADLINE=four hours`
+- **THEN** the Server exits at startup with an error naming `TURNIP_RUNNER_DEADLINE`
+
 ### Requirement: Settings index
 Every `TURNIP_*` setting the Server reads SHALL be one of those below, with its behavior owned by the named capability:
 
@@ -52,6 +64,8 @@ Every `TURNIP_*` setting the Server reads SHALL be one of those below, with its 
 | `TURNIP_RUNNER_NAMESPACE` | no (the Server's own namespace) | `runner-job` |
 | `TURNIP_RUNNER_SERVER_ADDR` | yes | `runner-job` |
 | `TURNIP_RUNNER_IMAGE` | yes | `runner-job` |
+| `TURNIP_RUNNER_IDLE_TIMEOUT` | no (30 minutes) | `operation-lifecycle` |
+| `TURNIP_RUNNER_DEADLINE` | no (4 hours) | `runner-job` |
 | `TURNIP_LOG_LEVEL` | no | `observability` |
 | `TURNIP_MINIMIZE_OUTDATED_PLAN_COMMENTS` | no | `pr-comment` |
 | `TURNIP_MAX_COMMENTS_PER_PROJECT` | no | `pr-comment` |

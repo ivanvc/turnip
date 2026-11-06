@@ -15,21 +15,18 @@ new work gets a name, never a number.
 
 ## Next
 
-In the order discussed so far; reorder here.
-
-1. `runner-timeouts`: implemented, awaiting deploy (its prerequisites are archived)
+Nothing is queued; the next is picked from the open changes below.
 
 ## Open changes
 
 | Change | What it does | Depends on | Stage |
 |---|---|---|---|
-| [`runner-timeouts`](changes/runner-timeouts/) | an idle timeout, an absolute deadline, and a Runner that ended without a result is finalized | | implemented; archived once deployed |
 | [`fix-plan-survives-push`](changes/fix-plan-survives-push/) | every push marks the pull request's ready plans stale, and says so | | proposal |
 | [`fix-concurrent-mutations`](changes/fix-concurrent-mutations/) | a second mutating command for a Project is refused while the first runs | | proposal |
 | [`fix-lock-release-on-close`](changes/fix-lock-release-on-close/) | closing a pull request releases every Lock it holds, whatever its configuration | | proposal |
 | [`fix-invalid-config-check-on-comment`](changes/fix-invalid-config-check-on-comment/) | a comment that finds an invalid `turnip.yaml` marks the `turnip` check, as a push does | | proposal |
 | [`helmfile-hook-policy`](changes/helmfile-hook-policy/) | an operator setting that refuses helmfiles declaring hooks | | proposal |
-| [`operation-scheduling`](changes/operation-scheduling/) | a cap on how many Operations run at once, with a fair queue, and per-Project dependencies that order applies | `fix-concurrent-mutations`, `fix-invalid-config-check-on-comment`, `runner-timeouts` (in part) | proposal |
+| [`operation-scheduling`](changes/operation-scheduling/) | a cap on how many Operations run at once, with a fair queue, and per-Project dependencies that order applies | `fix-concurrent-mutations`, `fix-invalid-config-check-on-comment` | proposal |
 | [`runner-server-tls`](changes/runner-server-tls/) | TLS on the Runner's gRPC channel, and a Runner that verifies the Server; where the certificate comes from is still open | | proposal |
 | [`org-images`](changes/org-images/) | the project under its organization, and multi-architecture images published on every push to `main` | | proposal |
 
@@ -55,7 +52,7 @@ depend on is complete.
 | `lock-overview` | every held Lock on one page, releasable from there | `fix-lock-release-on-close` | archived Slice 28 |
 | `runner-pod-placement` | node selectors and tolerations for Runner Pods | | archived Slice 31 |
 | `runner-pod-resources` | requests equal to limits for every Runner Pod | | archived Slice 39 |
-| `runner-pod-disruption` | nothing evicts a Runner partway through | `runner-pod-resources`, `runner-timeouts` | archived Slice 41 |
+| `runner-pod-disruption` | nothing evicts a Runner partway through | `runner-pod-resources` | archived Slice 41 |
 | `runner-workspace-volume` | an ephemeral volume for a heavy workspace | `runner-pod-resources` | archived Slice 42 |
 | `plugin-kustomize` | Kustomize overlays planned on the pull request and applied by comment | | archived Slice 46 |
 

@@ -8,8 +8,6 @@ The per-Project GitHub check runs named `turnip/<operation>/<project>`, which sh
 ### Requirement: Check name and lifecycle
 For each Operation it dispatches, turnip SHALL create a check run on the pull request's head commit named `turnip/<operation>/<project>` (for example `turnip/diff/web`), operation first. It SHALL be created `in_progress` before the Runner Job, with the summary ``Running `<operation>` for project `<project>`.``, and completed with conclusion `success` or `failure` when the Operation finishes. A check SHALL carry no details text, at creation or completion: the Operation's output is in the results comment (see the `pr-comment` capability), so a check's completion never depends on the output's size. Each new Operation SHALL create a new check run under the same name; an older run is never reused. Titles SHALL be plain text with parts joined by commas, and SHALL never repeat the status the icon already shows.
 
-Known issue: a Runner that starts and then dies without reporting a result leaves its check in progress, since nothing bounds a started Operation. Fix proposed in change `runner-timeouts`.
-
 #### Scenario: Plan runs and completes
 - **WHEN** an automatic plan dispatches `diff` for Project `web`
 - **THEN** a check `turnip/diff/web` appears in progress, titled `running`
@@ -42,7 +40,7 @@ A count text SHALL read `+A ~C -D` (additions, changes, destructions), `no chang
 - **THEN** its check's summary is `The operation failed.`, pointing nowhere else
 
 ### Requirement: Titles on completion
-A successful Operation's check SHALL be titled with its count text, followed by `, <args>` when it ran with arguments. A failed Operation's check SHALL be titled by the step that failed, as the Runner reports it: `<tool> exited <code>` when the tool ran and exited non-zero, `clone failed`, `workspace could not be prepared`, `<tool> could not be started`, or `failed` when the Runner named no step. turnip SHALL NOT interpret a tool's own failure beyond its exit code. An Operation whose Runner never started SHALL be completed as `failure`, titled with the diagnostic turnip found (worded by the `operation-lifecycle` capability), with the summary `The Runner never reported back within the start timeout.`
+A successful Operation's check SHALL be titled with its count text, followed by `, <args>` when it ran with arguments. A failed Operation's check SHALL be titled by the step that failed, as the Runner reports it: `<tool> exited <code>` when the tool ran and exited non-zero, `clone failed`, `workspace could not be prepared`, `<tool> could not be started`, `<tool> stopped: no output for <idle timeout>` when the Runner stopped a silent tool, `<tool> stopped: the Runner was told to stop` when the Runner stopped the tool on being told to stop, or `failed` when the Runner named no step. turnip SHALL NOT interpret a tool's own failure beyond its exit code. An Operation whose Runner never started SHALL be completed as `failure`, titled with the diagnostic turnip found (worded by the `operation-lifecycle` capability), with the summary `The Runner never reported back within the start timeout.` An Operation whose Runner started and then stopped without reporting SHALL be completed as `failure`, titled with the diagnostic turnip found (worded by the `operation-lifecycle` capability), with the summary `The Runner stopped before reporting a result.`
 
 #### Scenario: Tool exits non-zero
 - **WHEN** `helmfile diff` exits 1
@@ -55,6 +53,14 @@ A successful Operation's check SHALL be titled with its count text, followed by 
 #### Scenario: Runner never started
 - **WHEN** an Operation's Pod stays stuck pulling its image past the start timeout
 - **THEN** the check is completed as `failure` titled with a diagnostic such as `Job <name>: container stuck (ImagePullBackOff)`
+
+#### Scenario: A tool stopped for silence
+- **WHEN** a Helmfile `diff` is stopped after 30 minutes with no output
+- **THEN** its check is completed as `failure`, titled `helmfile stopped: no output for 30m0s`
+
+#### Scenario: A Runner that stopped without reporting
+- **WHEN** a started Runner is killed at its deadline before reporting
+- **THEN** its check is completed as `failure`, titled with the deadline diagnostic, with the summary `The Runner stopped before reporting a result.`
 
 ### Requirement: Refusal checks
 A refusal SHALL put a check in the list only where it tells the reader something, and SHALL carry the full refusal reason as its summary. When a plan is refused before its check exists: a plan waiting on another pull request's Lock SHALL get a `queued` check titled `locked by PR #N, re-plan once it's released`, or `locked by another pull request, re-plan once it's released` when the holder cannot be read; a plan refused because `turnip.yaml` sets an override the Server does not permit (see the `runner-access` capability) SHALL get a check completed as `failure` titled `runner.serviceAccount is not permitted` or `clone.submodules is not permitted`; a plan refused because turnip could not take the Lock SHALL get a check completed as `failure` titled `lock could not be acquired`. A refused mutating Operation, and any refusal not listed here (for example arguments on a mutating command, or no usable recorded plan), SHALL create no check. A check that already exists when the Operation is refused SHALL be completed as `failure`, never moved back to queued, titled `operation could not be recorded` when the Operation Record could not be saved, `Runner Job could not be built` when the Job spec could not be assembled, `Runner Job could not be created` when Kubernetes refused the Job, or `operation could not be started` otherwise. A re-plan after a queued check SHALL create a new check under the same name; turnip SHALL NOT complete the queued one.
